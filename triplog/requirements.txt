@@ -1,0 +1,16 @@
+flask==3.1.*
+flask-wtf==1.2.*
+flask-login==0.6.*
+influxdb-client==1.46.*
+cryptography>=42.0,<46
+pyotp>=2.9,<3
+webauthn>=2.7,<3
+qrcode[pil]>=7.4,<9
+paho-mqtt>=2.0,<3
+argon2-cffi>=23.1,<25
+waitress>=3.0,<4
+psycopg[binary]>=3.2,<4
+defusedxml>=0.7,<1
+pytesseract>=0.3,<1
+Pillow>=10,<12
+fpdf2>=2.7,<3

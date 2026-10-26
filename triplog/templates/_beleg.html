@@ -1,0 +1,18 @@
+{# Ladebeleg lesen: Screenshot der Lade-App oder kopierter Text -> Felder
+   (static/beleg.js, beleg.py). Erwartet beleg_schemata im Kontext; die
+   Seite ruft IDmateBeleg.einrichten() mit ihren Feld-IDs. #}
+<div id="extBeleg" style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px dashed var(--border)">
+  <div style="font-size:0.75rem;color:var(--text-2);margin-bottom:0.3rem">{{ t.charges_beleg_hint }} {{ t.charges_beleg_schemata }}: {{ beleg_schemata|join(', ') }}.</div>
+  <div class="add-row" style="display:flex;flex-wrap:wrap;gap:0.4rem;align-items:center">
+    <button type="button" class="mini-btn" style="padding:0.3rem 0.8rem" data-onclick="belegAusZwischenablage">{{ t.charges_beleg_paste }}</button>
+    <label class="mini-btn" style="padding:0.3rem 0.8rem;cursor:pointer">{{ t.charges_beleg_choose }}<input id="extBelegDatei" type="file" accept="image/*" data-onchange="belegDateiGewaehlt" style="display:none"></label>
+    <textarea id="extBelegText" rows="1" placeholder="{{ t.charges_beleg_textfeld }}" style="background:var(--bg);color:var(--text-1);border:1px solid var(--border);border-radius:4px;padding:0.2rem 0.3rem;font-size:0.75rem;flex:1;min-width:160px"></textarea>
+  </div>
+  <span id="extBelegStatus" style="display:block;margin-top:0.3rem;font-size:0.75rem;color:var(--text-2)"></span>
+</div>
+<script id="beleg-texte" type="application/json">{{ {
+  "lese": t.charges_beleg_lese, "speichern": t.charges_beleg_erkannt_speichern,
+  "fehlt": t.charges_beleg_unvollstaendig, "leer": t.charges_beleg_leer, "zugriff": t.charges_beleg_zugriff,
+  "schema": t.charges_beleg_schema, "unbekannt": t.charges_beleg_unbekannt, "fehler": t.common_error
+}|tojson }}</script>
+<script src="{{ url_for('static', filename='beleg.js') }}?v={{ app_version }}"></script>

@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+  <meta charset="UTF-8">
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0d1117">
+  <meta name="robots" content="noindex, nofollow">
+  <title>IDmate — {{ titel }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='idmate.css') }}?v={{ app_version }}">
+  <script nonce="{{ csp_nonce }}">
+  (function(){
+    var s = getComputedStyle(document.documentElement);
+    function g(n){ return s.getPropertyValue(n).trim(); }
+    window.TC = {bg:g('--bg'),bgCard:g('--bg-card'),border:g('--border'),borderSoft:g('--border-soft'),
+      text1:g('--text-1'),text2:g('--text-2'),accent:g('--accent'),success:g('--success'),warn:g('--warn')};
+  })();
+  </script>
+  {% include "_map_head.html" %}
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    html,body{height:100%}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text-1);overflow:hidden}
+    #map{position:fixed;inset:0;z-index:0}
+    .kopf{position:fixed;top:0;left:0;right:0;z-index:1000;display:flex;align-items:center;gap:0.6rem;padding:max(0.5rem,env(safe-area-inset-top)) 0.8rem 0.5rem;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(6px);border-bottom:1px solid var(--border-soft)}
+    .kopf .marke{color:var(--accent);font-weight:700;font-size:0.95rem;text-shadow:0 0 8px color-mix(in srgb,var(--accent) 40%,transparent)}
+    .kopf .titel{flex:1;min-width:0;font-size:0.95rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .kopf .daten{font-size:0.75rem;color:var(--text-2);white-space:nowrap}
+    .fuss{position:fixed;left:50%;bottom:max(0.8rem,env(safe-area-inset-bottom));transform:translateX(-50%);z-index:1000;display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0.8rem;border-radius:999px;background:color-mix(in srgb,var(--bg) 90%,transparent);border:1px solid var(--border);font-size:0.78rem;color:var(--text-2);white-space:nowrap;max-width:calc(100vw - 2rem);overflow:hidden;text-overflow:ellipsis}
+    .punkt{width:8px;height:8px;border-radius:50%;background:var(--text-2);flex-shrink:0}
+    .punkt.live{background:var(--success);box-shadow:0 0 6px var(--success)}
+    .zumauto{position:fixed;right:10px;bottom:max(3.4rem,calc(env(safe-area-inset-bottom) + 3rem));z-index:1000;width:34px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-1);box-shadow:0 2px 6px rgba(0,0,0,.35);display:grid;place-items:center;cursor:pointer}
+    .leaflet-top{top:calc(2.6rem + env(safe-area-inset-top))}
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="kopf">
+    <span class="marke">IDmate</span>
+    <span class="titel">{{ titel }}</span>
+    <span class="daten">{{ von_text }} – {{ bis_text }}</span>
+  </div>
+  <button type="button" class="zumauto" id="zumAuto" title="{{ t.share_guest_to_car }}" aria-label="{{ t.share_guest_to_car }}">
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>
+  </button>
+  <div class="fuss"><span class="punkt" id="punkt"></span><span id="status">{{ t.common_loading }}</span></div>
+
+  {% include "_map_scripts.html" %}
+  <script nonce="{{ csp_nonce }}">
+    const KEY = {{ key|tojson }};
+    const VERSATZ = {{ versatz_min }};
+    const KARTENAUTO = {{ kartenauto|tojson }};
+    const T = {
+      live: {{ t.share_guest_live|tojson }},
+      delayed: {{ t.share_guest_delayed|tojson }},
+      updated: {{ t.share_guest_updated|tojson }},
+      justNow: {{ t.share_guest_just_now|tojson }},
+      noPosition: {{ t.share_guest_no_position|tojson }},
+      ended: {{ t.share_guest_ended|tojson }},
+      expired: {{ t.share_guest_expired|tojson }},
+      error: {{ t.common_error|tojson }}
+    };
+
+    const map = L.map('map', { zoomControl: true, attributionControl: false }).setView([51.2, 10.4], 6);
+    IDmateMap.baseLayer('{{ map_tile_url }}', { maxZoom: 17 }).addTo(map);
+
+    let stand = null, since = null, marker = null, liveLine = null, eingepasst = false, timer = null;
+    let routenLagen = [];
+    const allePunkte = [];
+
+    // The car (owner's body style and colour) when standing, the arrow while
+    // driving — the same marker the owner sees on the dashboard.
+    function createArrowIcon(heading, speed) {
+      const moving = speed != null && speed >= 5;
+      if (!moving && KARTENAUTO && KARTENAUTO.typ && window.IDmateKartenauto) {
+        const auto = IDmateKartenauto.svg(KARTENAUTO.typ, KARTENAUTO.farbe, { halo: TC.bg, breite: 13.2, drehung: heading || 0 });
+        if (auto) {
+          return L.divIcon({ className: 'arrow-icon', html: `<div style="width:32px;height:32px;display:grid;place-items:center">${auto}</div>`, iconSize: [32, 32], iconAnchor: [16, 16] });
+        }
+      }
+      const svg = moving
+        ? `<svg viewBox="0 0 32 32" width="32" height="32" style="transform:rotate(${heading || 0}deg)"><polygon points="16,4 24,26 16,20 8,26" fill="${TC.accent}" stroke="${TC.bg}" stroke-width="1.5"/></svg>`
+        : `<svg viewBox="0 0 32 32" width="32" height="32"><circle cx="16" cy="16" r="10" fill="${TC.accent}" stroke="${TC.bg}" stroke-width="1.5"/></svg>`;
+      return L.divIcon({ className: 'arrow-icon', html: svg, iconSize: [32, 32], iconAnchor: [16, 16] });
+    }
+
+    function zeichneRoute(segments, source) {
+      routenLagen.forEach(l => map.removeLayer(l));
+      routenLagen = [];
+      if (liveLine) { map.removeLayer(liveLine); liveLine = null; }
+      const opts = source === 'coords'
+        ? { color: TC.accent, weight: 2.5, opacity: 0.6, lineJoin: 'round', dashArray: '6 4' }
+        : { color: TC.accent, weight: 3.5, opacity: 0.9, lineJoin: 'round' };
+      segments.forEach(seg => {
+        if (seg.length > 1) routenLagen.push(IDmateSpline.linie(map, seg, opts));
+        allePunkte.push(...seg);
+      });
+    }
+
+    function haengeSpur(pts) {
+      if (!pts || !pts.length) return;
+      if (!liveLine) liveLine = L.polyline(pts, { color: TC.accent, weight: 3.5, opacity: 0.9, lineJoin: 'round' }).addTo(map);
+      else pts.forEach(p => liveLine.addLatLng(p));
+      allePunkte.push(...pts);
+    }
+
+    function setzeAuto(pos) {
+      if (!pos || pos.lat == null || pos.lon == null) return;
+      const ll = [pos.lat, pos.lon];
+      const icon = createArrowIcon(pos.heading, pos.speed);
+      if (marker) { marker.setLatLng(ll); marker.setIcon(icon); }
+      else marker = L.marker(ll, { icon, zIndexOffset: 1000 }).addTo(map);
+      allePunkte.push(ll);
+    }
+
+    function zeigeStatus(d) {
+      const punkt = document.getElementById('punkt');
+      let text = VERSATZ ? T.delayed.replace('{0}', VERSATZ / 60) : T.live;
+      punkt.classList.toggle('live', !VERSATZ);
+      if (d.pos && d.pos.time) {
+        const min = Math.max(0, Math.round((new Date(d.jetzt).getTime() - new Date(d.pos.time).getTime()) / 60000) - VERSATZ);
+        text += ' · ' + (min < 2 ? T.justNow : T.updated.replace('{0}', min));
+      } else if (!d.pos) {
+        text += ' · ' + T.noPosition;
+      }
+      document.getElementById('status').textContent = text;
+    }
+
+    async function laden() {
+      const q = new URLSearchParams();
+      if (stand !== null) q.set('stand', stand);
+      if (since) q.set('since', since);
+      let d;
+      try {
+        const res = await fetch(`/s/${KEY}/data?` + q.toString(), { cache: 'no-store' });
+        if (res.status === 401) { location.reload(); return; }
+        if (res.status === 410) { d = { abgelaufen: true }; }
+        else {
+          if (!res.ok) throw new Error(res.status);
+          d = await res.json();
+        }
+      } catch (e) {
+        document.getElementById('status').textContent = T.error;
+        return;
+      }
+      if (d.beendet || d.abgelaufen) {
+        document.getElementById('status').textContent = d.abgelaufen ? T.expired : T.ended;
+        document.getElementById('punkt').classList.remove('live');
+        if (timer) clearInterval(timer);
+        return;
+      }
+      if (d.segments) zeichneRoute(d.segments, d.source);
+      haengeSpur(d.trail);
+      stand = d.stand;
+      since = d.bis;
+      setzeAuto(d.pos);
+      zeigeStatus(d);
+      if (!eingepasst && allePunkte.length) {
+        eingepasst = true;
+        if (allePunkte.length > 1) map.fitBounds(allePunkte, { padding: [40, 40] });
+        else map.setView(allePunkte[0], 13);
+      }
+    }
+
+    document.getElementById('zumAuto').addEventListener('click', () => {
+      if (marker) map.setView(marker.getLatLng(), Math.max(map.getZoom(), 14));
+    });
+
+    laden();
+    timer = setInterval(laden, VERSATZ ? 60000 : 10000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) laden(); });
+  </script>
+</body>
+</html>

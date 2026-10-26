@@ -1,0 +1,63 @@
+@startuml triplog-internals
+!theme plain
+skinparam backgroundColor #0E1B2C
+skinparam defaultFontColor #E8EEF7
+skinparam defaultFontName Helvetica
+skinparam ArrowColor #1DE9B6
+skinparam ArrowFontColor #E8EEF7
+skinparam componentBackgroundColor #14253A
+skinparam componentBorderColor #1DE9B6
+skinparam componentFontColor #E8EEF7
+skinparam packageBackgroundColor #0E1B2C
+skinparam packageBorderColor #2E4763
+skinparam packageFontColor #9FB3CC
+skinparam databaseBackgroundColor #14253A
+skinparam databaseBorderColor #1DE9B6
+skinparam databaseFontColor #E8EEF7
+
+title IDmate — Triplog Internal Architecture (Flask blueprints)
+
+component "app.py\n(app factory, login,\nMQTT bridge + state poller,\nCSP nonce, CSV)" as APP
+
+package "blueprints/" {
+  component "auth\n(login, 2FA, setup)" as AUTH
+  component "trips\n(logbook, tags)" as TRIPS
+  component "journeys\n(grouping, GPX)" as JOUR
+  component "charges\n(charge tracker)" as CHG
+  component "admin\n(geofencing, users,\nvehicles, settings)" as ADMIN
+  component "profile\n(avatar, theme, 2FA)" as PROF
+}
+
+package "core modules" {
+  component "detector.py\n(trip detection)" as DET
+  component "import_job.py\nteslamate_import.py" as IMP
+  component "geocoder.py\n(Nominatim)" as GEO
+  component "migrations.py\n(PRAGMA user_version)" as MIG
+  component "config.py / plmn.py" as CFG
+}
+
+database "InfluxDB\n(measurement v)" as INFLUX
+database "SQLite\n(triplog.db)" as SQLITE
+
+APP --> AUTH
+APP --> TRIPS
+APP --> JOUR
+APP --> CHG
+APP --> ADMIN
+APP --> PROF
+
+APP --> DET : background scan
+APP --> GEO : address backfill
+APP ..> CFG : field types,\ncarrier lookup
+DET --> INFLUX : read telemetry
+DET --> SQLITE : write trips
+APP --> INFLUX : live state + write
+IMP --> SQLITE : backfill
+MIG --> SQLITE : schema evolution
+TRIPS --> SQLITE
+JOUR --> SQLITE
+CHG --> SQLITE
+ADMIN --> SQLITE
+PROF --> SQLITE
+
+@enduml
