@@ -1,6 +1,6 @@
 import os
 
-VERSION = "1.2.239"
+VERSION = "1.2.240"
 
 # Time zone of the stored local times and of the UI. TIMEZONE, else the
 # usual TZ of the container; an unknown name falls back to Europe/Berlin.
