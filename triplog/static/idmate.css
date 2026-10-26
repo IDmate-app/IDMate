@@ -62,6 +62,10 @@ html[data-theme="gt"] .card,html[data-theme="gt"] .modal{box-shadow:0 0 16px rgb
 /* iOS-Textvergroesserung aus: Safari blaest Kleintext auf, sobald ein
    Block breiter als das Display ist (PDF-Rendern der Analyse bei 703 px). */
 html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+/* PDF (html2canvas): mit Buchstabenabstand != 0 setzt es jeden Buchstaben an
+   seine gemessene Stelle statt ganzer Woerter. Sonst laufen in Safari bei
+   kleiner Schrift die Woerter ineinander (Fusszeile Fahrzeugbericht). */
+html.pdf-rendering body{letter-spacing:0.01px}
 
 /* ── Buttons ─────────────────────────────────────────────────── */
 .btn{padding:0.4rem 0.8rem;border-radius:6px;border:1px solid var(--success-btn);background:var(--success-btn);color:#fff;font-size:0.8rem;font-weight:500;cursor:pointer;text-decoration:none;display:inline-block}
