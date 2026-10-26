@@ -7,8 +7,8 @@ IDmate runs as a Docker stack: **Triplog** (the web app), **InfluxDB** and **Mos
 ## Docker Compose
 
 ```bash
-git clone https://github.com/IDmate-app/IDMate-dev.git
-cd IDMate-dev
+git clone https://github.com/IDmate-app/IDMate.git
+cd IDMate
 cp .env.example .env
 nano .env
 docker compose up -d
