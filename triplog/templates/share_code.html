@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+  <meta charset="UTF-8">
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0d1117">
+  <meta name="robots" content="noindex, nofollow">
+  <title>IDmate — {{ t.share_guest_title }}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e6edf3;display:flex;flex-direction:column;justify-content:center;align-items:center;min-height:100vh;padding:1rem}
+    .card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:2rem;width:100%;max-width:340px}
+    h1{font-size:1.4rem;color:#58a6ff;text-align:center;margin-bottom:0.3rem}
+    .sub{font-size:0.8rem;color:#8b949e;text-align:center;margin-bottom:1.2rem}
+    .titel{font-size:1rem;font-weight:600;text-align:center;margin-bottom:1.2rem}
+    p{font-size:0.85rem;color:#8b949e;line-height:1.45;margin-bottom:0.8rem}
+    label{display:block;font-size:0.8rem;color:#8b949e;margin-bottom:0.3rem}
+    input{width:100%;padding:0.6rem 0.7rem;border-radius:8px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;font-size:1.6rem;letter-spacing:0.6em;text-align:center;text-transform:uppercase;font-variant-numeric:tabular-nums}
+    input.name{font-size:1rem;letter-spacing:normal;text-align:left;text-transform:none;margin-bottom:0.6rem}
+    input:focus{border-color:#58a6ff;outline:none}
+    button{width:100%;padding:0.7rem;border-radius:8px;border:none;background:#238636;color:#fff;font-size:0.95rem;font-weight:600;cursor:pointer;margin-top:1rem}
+    button:hover{background:#2ea043}
+    .error{background:#da36331a;border:1px solid #da3633;color:#f85149;border-radius:6px;padding:0.5rem;font-size:0.8rem;text-align:center;margin-bottom:0.8rem}
+    .hint{font-size:0.72rem;color:#8b949e;text-align:center;margin-top:1rem;line-height:1.4}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>IDmate</h1>
+    <div class="sub">{{ t.share_guest_title }}</div>
+    {% if titel %}<div class="titel">{{ titel }}</div>{% endif %}
+    {% if abgelaufen %}
+    <p style="text-align:center">{{ t.share_guest_expired }}</p>
+    {% elif beendet %}
+    <p style="text-align:center">{{ t.share_guest_ended }}</p>
+    {% else %}
+    <form method="POST" action="/s/{{ key }}" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      {% if fehler %}<div class="error">{{ fehler }}</div>{% endif %}
+      <p>{{ t.share_guest_other_device if anderes_geraet else t.share_guest_enter_code }}</p>
+      <label for="name">{{ t.share_guest_name_label }}</label>
+      <input type="text" id="name" name="name" class="name" maxlength="30" autocomplete="name" value="{{ name or '' }}" placeholder="{{ t.share_guest_name_placeholder }}" required>
+      <label for="code">{{ t.share_guest_code }}</label>
+      <input type="text" id="code" name="code" inputmode="text" pattern="[A-Za-z0-9]{4}" maxlength="4" autocomplete="one-time-code" autocapitalize="characters" autocorrect="off" spellcheck="false" required{% if not name %} autofocus{% endif %} placeholder="····">
+      <button type="submit">{{ t.share_guest_submit }}</button>
+    </form>
+    <div class="hint">{{ t.share_guest_hint_family if familie else t.share_guest_hint_device }}</div>
+    {% endif %}
+  </div>
+</body>
+</html>

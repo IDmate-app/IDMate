@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="{{ current_lang|lower }}">
+<head>
+  <meta charset="UTF-8">
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0d1117">
+  <title>IDmate — {{ t.login_title }}</title>
+  <style>
+    @media (prefers-reduced-motion: reduce){*{animation-duration:0.01ms !important;transition-duration:0.01ms !important;scroll-behavior:auto !important}}
+    @view-transition{navigation:auto}
+    @supports (padding: env(safe-area-inset-top)){body{padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}.hdr{padding-top:max(0.5rem,env(safe-area-inset-top))}.menu{padding-top:max(1rem,env(safe-area-inset-top))}.content{padding-bottom:max(0.8rem,env(safe-area-inset-bottom))}}
+    @media (pointer: coarse){.burger,.close-btn,.veh-picker{min-height:44px;min-width:44px;display:inline-flex;align-items:center;justify-content:center}.menu a{padding-top:0.9rem;padding-bottom:0.9rem}.tab{min-height:40px}.modal button:not(.mini-btn),.form-actions button{min-height:44px}}
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e6edf3;display:flex;flex-direction:column;justify-content:center;align-items:center;min-height:100vh}
+    .card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:2rem;width:320px}
+    h1{font-size:1.4rem;color:#58a6ff;text-align:center;margin-bottom:1.5rem}
+    label{display:block;font-size:0.8rem;color:#8b949e;margin-bottom:0.3rem;margin-top:0.8rem}
+    input{width:100%;padding:0.5rem 0.7rem;border-radius:6px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;font-size:0.9rem}
+    input:focus{border-color:#58a6ff;outline:none}
+    button{width:100%;padding:0.6rem;border-radius:6px;border:none;background:#238636;color:#fff;font-size:0.9rem;font-weight:600;cursor:pointer;margin-top:1.2rem}
+    button:hover{background:#2ea043}
+    .error{background:#da36331a;border:1px solid #da3633;color:#f85149;border-radius:6px;padding:0.5rem;font-size:0.8rem;text-align:center;margin-bottom:0.5rem}
+    .error[hidden]{display:none}
+    .subtitle{text-align:center;font-size:0.85rem;color:#8b949e;margin:-0.8rem 0 1rem}
+    input[readonly]{color:#8b949e;background:#161b22}
+    input.code{font-size:1.4rem;letter-spacing:0.3em;text-align:center}
+    input.code.recovery{letter-spacing:0.12em}
+    .or{display:flex;align-items:center;gap:0.6rem;margin:1rem 0 0;color:#8b949e;font-size:0.75rem}
+    .or::before,.or::after{content:'';flex:1;border-top:1px solid #30363d}
+    button.sec{background:transparent;border:1px solid #30363d;color:#e6edf3;margin-top:0.8rem;display:flex;align-items:center;justify-content:center;gap:0.45rem}
+    button.sec:hover{background:#21262d}
+    button.link{background:none;border:none;color:#8b949e;font-size:0.75rem;font-weight:400;margin-top:0.6rem;padding:0.2rem;text-decoration:underline}
+    button.link:hover{background:none;color:#e6edf3}
+    .hint{font-size:0.72rem;color:#8b949e;line-height:1.45;margin-top:0.7rem}
+    .back{display:block;text-align:center;margin-top:1rem;font-size:0.8rem;color:#8b949e;text-decoration:none}
+    [hidden]{display:none!important}
+  </style>
+</head>
+<body>
+  {% if step == 'code' %}
+  {# 2FA step: SAME page and form as the password step. The user name stays in
+     a visible read-only "username" field, the password field is gone and the
+     code field is "one-time-code" — Apple Passwords then offers the code stored
+     in the same entry as the IDmate password (it ignores hidden fields). #}
+  <form id="login-form" class="card" method="POST" action="/login/totp" autocomplete="on">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <h1><span style="color:#58a6ff;text-shadow:0 0 8px rgba(88,166,255,0.4)">IDmate</span></h1>
+    <div class="subtitle">{{ t.totp_subtitle }}</div>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    <label for="username">{{ t.login_username }}</label>
+    <input type="text" id="username" name="username" value="{{ username }}" readonly autocomplete="username" spellcheck="false" autocapitalize="none">
+    <label for="code">{{ t.totp_label }}</label>
+    <input type="text" id="code" name="code" class="code" inputmode="numeric" autocomplete="one-time-code" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="8" autofocus placeholder="000000" required>
+    <button type="submit">{{ t.totp_confirm }}</button>
+    <button type="button" class="link" id="recoveryToggle">{{ t.login_code_recovery }}</button>
+    <p class="hint">{{ t.login_code_apple_hint }}</p>
+    <a class="back" href="/login"><svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:middle"><path d="M9 6H3m2.5-2.5L3 6l2.5 2.5"/></svg> {{ t.totp_back }}</a>
+  </form>
+  <script nonce="{{ csp_nonce }}">
+    // Recovery codes contain letters: switch the keyboard from digits to text.
+    document.getElementById('recoveryToggle').addEventListener('click', function () {
+      var c = document.getElementById('code');
+      c.inputMode = 'text'; c.classList.add('recovery'); c.placeholder = 'a1b2c3d4'; c.value = ''; c.focus();
+      this.hidden = true;
+    });
+  </script>
+  {% else %}
+  <form id="login-form" class="card" method="POST" action="/login{{ '?next=' ~ (request.args.get('next')|urlencode) if request.args.get('next') else '' }}" autocomplete="on">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <h1><span style="color:#58a6ff;text-shadow:0 0 8px rgba(88,166,255,0.4)">IDmate</span></h1>
+    <div class="error" id="loginError"{% if not error %} hidden{% endif %}>{{ error or '' }}</div>
+    <label for="username">{{ t.login_username }}</label>
+    {# "webauthn": the passkeys of this site also show up in the user name autofill #}
+    <input type="text" id="username" name="username" value="{{ username or '' }}" required autofocus autocomplete="username webauthn" spellcheck="false" autocapitalize="none">
+    <label for="password">{{ t.login_password }}</label>
+    <input type="password" id="password" name="password" required autocomplete="current-password">
+    <button type="submit">{{ t.login_submit }}</button>
+    <div id="pkBox" hidden>
+      <div class="or">{{ t.login_or }}</div>
+      <button type="button" class="sec" id="pkBtn"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="4"/><path d="M2 21v-1.5A5.5 5.5 0 0 1 7.5 14h1.2"/><circle cx="17" cy="13" r="2.4"/><path d="M17 15.4V21l1.5-1.2L17 18.6l1.5-1.2"/></svg>{{ t.login_passkey }}</button>
+    </div>
+  </form>
+  <script src="{{ url_for('static', filename='passkey.js') }}" nonce="{{ csp_nonce }}"></script>
+  <script nonce="{{ csp_nonce }}">
+  (function () {
+    var P = window.IDmatePasskey;
+    if (!P || !P.supported()) return;
+    var box = document.getElementById('pkBox'), btn = document.getElementById('pkBtn');
+    var err = document.getElementById('loginError');
+    var next = new URLSearchParams(location.search).get('next') || '/';
+    var auto = null;  // pending autofill request (user name field)
+    function show(e) {
+      if (P.isCancel(e)) return;
+      err.textContent = e.message || String(e); err.hidden = false;
+    }
+    function stopAuto() { if (auto) { auto.abort(); auto = null; } }
+    box.hidden = false;
+    btn.addEventListener('click', function () {
+      stopAuto();
+      err.hidden = true;
+      P.login({ next: next }).catch(show);
+    });
+    document.getElementById('login-form').addEventListener('submit', stopAuto);
+    P.conditionalAvailable().then(function (ok) {
+      if (!ok) return;
+      auto = new AbortController();
+      P.login({ next: next, conditional: true, signal: auto.signal }).catch(function (e) { if (auto) show(e); });
+    });
+  })();
+  </script>
+  {% endif %}
+<footer style="text-align:center;padding:1.5rem 0 0.8rem;font-size:0.7rem;color:#8b949e"><a href="https://github.com/IDmate-app" target="_blank" style="color:#8b949e;text-decoration:none">&copy; 2026 IDmate &middot; AGPL v3 &middot; v{{ version }}</a></footer>
+</body>
+</html>

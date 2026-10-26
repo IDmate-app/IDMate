@@ -1,0 +1,217 @@
+{% extends "_base.html" %}
+
+{% block doc_title %}IDmate — {{ t.journeys_title }}{% endblock %}
+{% block page_title %}{{ t.journeys_title }}{% endblock %}
+
+{% block extra_style %}
+<style>
+  *{min-width:0}
+  .content{max-width:1200px;margin:0 auto;padding:0.8rem}
+
+  .btn{padding:0.4rem 0.8rem;border-radius:6px;border:1px solid var(--success-btn);background:var(--success-btn);color:#fff;font-size:0.8rem;cursor:pointer}
+  .btn:hover{background:var(--success-btn-hover)}
+
+  /* One journey = one row: mini map left, three lines right
+     (title / from – to / trips · km). */
+  /* The whole tile is the button: no link underline, the row itself
+     lights up on hover and press. */
+  .journey-row{display:grid;grid-template-columns:76px 1fr;gap:0.8rem;align-items:center;padding:0.55rem 0.5rem;margin:0 -0.5rem;border-radius:8px;border-bottom:1px solid var(--border-soft);color:var(--text-1);text-decoration:none;-webkit-tap-highlight-color:transparent;transition:background .12s}
+  .journey-row,.journey-row:hover,.journey-row:active,.journey-row:focus,.journey-row *{text-decoration:none}
+  .journey-row:hover{background:var(--bg-hover)}
+  .journey-row:active{background:var(--bg-active)}
+  .journey-row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+  .journey-row:last-child{border-bottom:none}
+  .journey-thumb{display:block;width:76px;height:76px;border-radius:8px;background:var(--bg);border:1px solid var(--border-soft);object-fit:cover}
+  .journey-text{display:flex;flex-direction:column;gap:0.15rem;line-height:1.3}
+  .journey-title{font-size:0.95rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* Red lamp: guests hold a live link to this journey (count beside it). */
+  .journey-live{display:inline-flex;align-items:center;gap:0.3rem;margin-left:0.4rem;font-size:0.72rem;font-weight:600;color:var(--danger);vertical-align:middle}
+  .journey-live .lampe{width:8px;height:8px;border-radius:50%;background:var(--danger);box-shadow:0 0 6px var(--danger);animation:lampe 1.6s ease-in-out infinite}
+  @keyframes lampe{0%,100%{opacity:1}50%{opacity:0.35}}
+  .journey-dates,.journey-facts{font-size:0.8rem;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  .empty{text-align:center;color:var(--text-2);padding:2rem;font-size:0.9rem}
+
+  @media(max-width:480px){
+    .content{padding:0.5rem}
+    .card{padding:0.6rem}
+    .journey-row{grid-template-columns:68px 1fr;gap:0.6rem}
+    .journey-thumb{width:68px;height:68px}
+  }
+  .form-group input,.form-group textarea{width:100%;background:var(--bg);color:var(--text-1);border:1px solid var(--border);border-radius:4px;padding:0.35rem 0.5rem;font-size:0.85rem}
+  .form-group input:focus,.form-group textarea:focus{border-color:var(--accent);outline:none}
+  .trip-list{max-height:220px;overflow-y:auto;border:1px solid var(--border-soft);border-radius:4px;margin-top:0.3rem}
+  /* .trip-list prefix: outranks the global .form-group label/input rules
+     (display:block, width:100%) that would stack checkbox and text. */
+  .trip-list .trip-item{display:flex;align-items:center;gap:0.4rem;margin:0;padding:0.2rem 0.5rem;border-bottom:1px solid var(--bg-card);font-size:0.78rem;line-height:1.2;color:var(--text-1);cursor:pointer}
+  .trip-list .trip-item:last-child{border-bottom:none}
+  .trip-list .trip-item input[type=checkbox]{width:auto;margin:0;accent-color:var(--accent);flex-shrink:0}
+  .trip-item .trip-date{color:var(--text-2);min-width:40px;font-size:0.72rem}
+  .trip-item .trip-route{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .trip-item .trip-km{color:var(--text-2);min-width:45px;text-align:right;font-size:0.72rem}
+  .loading-trips{text-align:center;color:var(--text-2);padding:0.5rem;font-size:0.8rem}
+</style>
+{% endblock %}
+
+{% block content %}
+  <div class="content">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.8rem">
+      <span style="font-size:0.85rem;color:var(--text-2)">{{ journeys|length }} {{ t.journeys_count_plural if journeys|length != 1 else t.journeys_count_singular }}</span>
+      <button class="btn" data-onclick="openCreate">{{ t.journeys_new }}</button>
+    </div>
+
+    <div class="card">
+      {% if journeys %}
+      {% for j in journeys %}
+      <a class="journey-row" href="/journeys/{{ j.id }}">
+        <img class="journey-thumb" src="/journeys/{{ j.id }}/thumb.webp?k={{ j.thumb_key }}" alt="" width="76" height="76" loading="lazy">
+        <div class="journey-text">
+          <div class="journey-title">{{ j.title }}{% if j.gaeste_live %} <span class="journey-live" title="{{ t.journeys_live_guests|replace('{0}', j.gaeste_live|string) }}"><span class="lampe"></span>{{ j.gaeste_live }}</span>{% endif %}</div>
+          <div class="journey-dates">{{ j.von_text }} – {{ j.bis_text }}</div>
+          <div class="journey-facts">{{ j.trip_count }} {{ t.journey_detail_trips }} · {{ '%.0f' % j.total_km if j.total_km else '--' }} km</div>
+        </div>
+      </a>
+      {% endfor %}
+      {% else %}
+      <div class="empty">{{ t.journeys_empty }}</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Create Modal -->
+  <div class="modal-overlay" id="createModal" role="dialog" aria-modal="true" aria-labelledby="createModalTitle">
+    <div class="modal">
+      <h3 id="createModalTitle">{{ t.journeys_new_title }}</h3>
+      <form id="createForm" data-onsubmit="saveJourney">
+      <div class="form-group">
+        <label for="fTitle">{{ t.common_title }}</label>
+        <input id="fTitle" placeholder="{{ t.journeys_placeholder_title }}">
+      </div>
+      <div class="form-group">
+        <label for="fFrom">{{ t.common_from }}</label>
+        <input type="datetime-local" id="fFrom" data-onchange="loadTrips">
+      </div>
+      <div class="form-group">
+        <label for="fTo">{{ t.common_to }}</label>
+        <input type="datetime-local" id="fTo" data-onchange="loadTrips">
+      </div>
+      <div class="form-group">
+        <label for="fNotes">{{ t.common_notes }}</label>
+        <textarea id="fNotes" placeholder="{{ t.common_optional }}"></textarea>
+      </div>
+      <div class="form-group">
+        <label>{{ t.journeys_link_trips }}</label>
+        <div class="trip-list" id="tripList">
+          <div class="loading-trips">{{ t.journeys_select_range }}</div>
+        </div>
+        <div style="font-size:0.72rem;color:var(--text-2);margin-top:0.35rem;line-height:1.4">{{ t.journeys_auto_hint }}</div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel" data-onclick="closeCreate">{{ t.common_cancel }}</button>
+        <button type="submit" class="btn" id="saveJourneyBtn">{{ t.common_create }}</button>
+      </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script nonce="{{ csp_nonce }}">
+    let _createTrigger = null;
+    function openCreate(ev) {
+      _createTrigger = (this instanceof Element ? this : null) || document.activeElement || null;
+      document.getElementById('createModal').classList.add('open');
+      const first = document.getElementById('fTitle');
+      if (first) first.focus();
+    }
+    function closeCreate() {
+      document.getElementById('createModal').classList.remove('open');
+      if (_createTrigger && typeof _createTrigger.focus === 'function') _createTrigger.focus();
+      _createTrigger = null;
+    }
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && document.getElementById('createModal').classList.contains('open')) closeCreate();
+    });
+
+    function esc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    let _loadTripsCtrl = null;
+    async function loadTrips() {
+      const from = document.getElementById('fFrom').value;
+      const to = document.getElementById('fTo').value;
+      const el = document.getElementById('tripList');
+      if (!from || !to) { el.innerHTML = '<div class="loading-trips">{{ t.journeys_select_range }}</div>'; return; }
+      el.innerHTML = '<div class="loading-trips">{{ t.journeys_loading_trips }}</div>';
+      const dFrom = from.slice(0, 10);
+      const dTo = to.slice(0, 10);
+      if (_loadTripsCtrl) _loadTripsCtrl.abort();
+      _loadTripsCtrl = new AbortController();
+      let trips;
+      try {
+        const res = await fetch(`/api/journeys/available-trips?from=${dFrom}&to=${dTo}`, { signal: _loadTripsCtrl.signal });
+        if (!res.ok) { el.innerHTML = '<div class="loading-trips">{{ t.common_error }}</div>'; return; }
+        trips = await res.json();
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        el.innerHTML = '<div class="loading-trips">{{ t.common_error }}</div>';
+        return;
+      }
+      if (!trips.length) { el.innerHTML = '<div class="loading-trips">{{ t.journeys_no_trips_in_range }}</div>'; return; }
+      el.innerHTML = trips.map(t => `
+        <label class="trip-item">
+          <input type="checkbox" value="${t.id}" checked>
+          <span class="trip-date">${t.start_time.slice(5,10)}</span>
+          <span class="trip-route">${esc(t.start_address || '?')} <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:middle;opacity:0.6"><path d="M3 6h6m-2.5-2.5L9 6 6.5 8.5"/></svg> ${esc(t.end_address || '?')}</span>
+          <span class="trip-km">${Number.isFinite(t.distance_km) ? t.distance_km.toFixed(0) + 'km' : '--'}</span>
+        </label>
+      `).join('');
+    }
+
+    async function saveJourney(ev) {
+      if (ev) ev.preventDefault();
+      const title = document.getElementById('fTitle').value.trim();
+      const date_from = document.getElementById('fFrom').value;
+      const date_to = document.getElementById('fTo').value;
+      const notes = document.getElementById('fNotes').value.trim();
+      if (!title || !date_from || !date_to) { toast('{{ t.journeys_required_fields }}', 'error'); return; }
+      // Send the UNticked trips: everything else in the period — also trips
+      // detected later — belongs to the journey automatically.
+      const unchecked = document.querySelectorAll('#tripList input[type=checkbox]:not(:checked)');
+      const excluded_ids = Array.from(unchecked).map(c => parseInt(c.value));
+      const btn = document.getElementById('saveJourneyBtn');
+      if (btn && btn.disabled) return;
+      if (btn) btn.disabled = true;
+      try {
+        const res = await fetch('/api/journeys', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ title, date_from, date_to, notes, excluded_ids })
+        });
+        const data = await res.json();
+        if (data.ok) { window.location.href = `/journeys/${data.id}`; return; }
+        toast(data.error || '{{ t.common_error }}', 'error');
+      } catch (err) {
+        toast('{{ t.common_error }}', 'error');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    // Open pre-filled when linked from the trips tab via "Create journey"
+    // (?new=1&from=...&to=...). Clean up the URL afterwards so that a
+    // reload does not open the modal again.
+    (function () {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('new') !== '1') return;
+      const from = params.get('from');
+      const to = params.get('to');
+      if (from) document.getElementById('fFrom').value = from;
+      if (to) document.getElementById('fTo').value = to;
+      openCreate();
+      if (from && to) loadTrips();
+      history.replaceState(null, '', '/journeys');
+    })();
+  </script>
+{% endblock %}

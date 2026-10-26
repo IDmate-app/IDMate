@@ -1,0 +1,120 @@
+{% extends "_base.html" %}
+
+{% block doc_title %}IDmate — {{ t.trips_title }}{% endblock %}
+{% block page_title %}{{ t.trips_title }}{% endblock %}
+
+{% macro dur(m) -%}
+{%- if m is not none -%}{{ m // 60 }}:{{ '%02d' % (m % 60) }} h{%- endif -%}
+{%- endmacro %}
+
+{# Start and end in fixed-width cells, so the times of an outing and of its
+   on-site blocks stand exactly below each other. with_date: the outing runs
+   over midnight, then every row of it shows the date. #}
+{% macro span(a, b, with_date) -%}
+{%- set f = '%d.%m. %H:%M' if with_date else '%H:%M' -%}
+<span class="tt{{ ' d' if with_date }}">{{ a.strftime(f) if a else '?' }}</span><span class="sep">–</span><span class="tt{{ ' d' if with_date }}">{{ b.strftime(f) if b else '?' }}</span>
+{%- endmacro %}
+
+{% block extra_style %}
+<style>
+  .content{max-width:1100px;margin:0 auto;padding:0.8rem}
+  .toolbar{display:flex;gap:0.5rem;margin-bottom:0.8rem;flex-wrap:wrap;align-items:center}
+  .view-switch{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+  .view-switch a{padding:0.3rem 0.7rem;font-size:0.78rem;color:var(--text-2);text-decoration:none;background:var(--bg-card)}
+  .view-switch a.on{background:var(--accent-strong);color:#fff}
+  .totals{display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.8rem}
+  .tot{display:flex;align-items:center;gap:0.45rem;padding:0.35rem 0.65rem;border:1px solid var(--border-soft);border-radius:8px;background:var(--bg-card);font-size:0.78rem;color:var(--text-2)}
+  .tot b{color:var(--text-1);font-variant-numeric:tabular-nums}
+  a.chip{text-decoration:none;cursor:pointer}
+  a.chip:hover{border-color:var(--accent)}
+  a.chip.on{border-color:var(--pc,var(--accent));background:color-mix(in srgb,var(--pc,var(--accent)) 16%,var(--bg-card));color:var(--text-1)}
+  a.chip.off{opacity:0.55}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:2px;flex:none}
+  table.visits{width:100%;border-collapse:collapse;font-size:0.82rem}
+  .visits td{padding:0.45rem 0.6rem;vertical-align:top;border-bottom:1px solid var(--border-soft)}
+  .visits tr.out td{border-top:2px solid var(--border);border-bottom:none;padding-top:0.6rem}
+  .visits tr.out td:first-child{border-left:4px solid var(--pc,var(--border))}
+  .visits tr.site td:first-child{border-left:4px solid var(--pc,var(--border))}
+  .visits td.day{white-space:nowrap;font-weight:600;color:var(--text-1);width:8.5rem}
+  .visits td.time{white-space:nowrap;font-variant-numeric:tabular-nums;width:17rem}
+  .visits td.time .what{color:var(--text-2)}
+  .visits td.time .len{color:var(--text-2);font-size:0.75rem}
+  .visits tr.out td.time{font-weight:600}
+  .visits .tt{display:inline-block;width:2.75rem;text-align:left}
+  .visits .tt.d{width:5.5rem}
+  .visits .sep{display:inline-block;width:1.1rem;text-align:center;color:var(--text-2)}
+  .visits td.place{color:var(--text-2);line-height:1.45}
+  .visits td.place .dest{color:var(--text-1);font-weight:600}
+  .visits .addr{display:block}
+  .flag{color:var(--danger);font-weight:700;cursor:help;margin-left:0.2rem}
+  .warn{color:var(--warn);font-size:0.72rem;display:block}
+  .empty{padding:2rem;text-align:center;color:var(--text-2)}
+  .hint{font-size:0.72rem;color:var(--text-2);margin-top:0.8rem;line-height:1.45}
+  @media (max-width:700px){
+    .visits td{padding:0.4rem 0.35rem}
+    .visits td.day{width:auto;font-size:0.75rem}
+    .visits td.time{width:auto;white-space:normal}
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="content">
+  <div class="toolbar">
+    <span class="view-switch">
+      <a href="/trips">{{ t.trips_view_trips }}</a>
+      <a href="/trips/visits" class="on">{{ t.trips_view_visits }}</a>
+    </span>
+    {% include "_daterange.html" %}
+  </div>
+
+  {% if totals %}
+  {# Filter: one chip per purpose of the range (time on site, days); a tap
+     adds or removes it. With a selection only its on-site blocks show. #}
+  <div class="totals filters">
+    <a class="tot chip{{ ' on' if not selected }}" href="/trips/visits?all=1">{{ t.visits_all_purposes }}</a>
+    {% for x in totals %}
+    <a class="tot chip{{ ' on' if x.on }}{{ ' off' if selected and not x.on }}" href="{{ x.href }}" style="--pc:{{ colors.get(x.purpose, 'var(--text-3)') }}"><span class="dot" style="background:{{ colors.get(x.purpose, 'var(--text-3)') }}"></span>{{ x.purpose or t.visits_no_purpose }} · <b>{{ dur(x.minutes) }}</b> · {{ t.visits_days|replace('{0}', x.days|string) }}</a>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if outings %}
+  <div class="totals">
+    <span class="tot">{{ t.visits_total_away }} <b>{{ dur(away_minutes) }}</b></span>
+    {% if selected %}
+    <span class="tot">{{ t.visits_selection }} · {{ t.visits_onsite }} <b>{{ dur(onsite_minutes) }}</b> · {{ t.visits_days|replace('{0}', onsite_days|string) }}</span>
+    {% endif %}
+  </div>
+
+
+  <table class="visits">
+    <tbody>
+    {% for o in outings %}
+      {% set pc = colors.get(o.purpose, '') %}
+      {% set md = o.start and o.end and o.start.date() != o.end.date() %}
+      <tr class="out" style="{% if pc %}--pc:{{ pc }}{% endif %}">
+        <td class="day">{{ t.visits_weekdays[o.start.weekday()] }} {{ o.start.strftime('%d.%m.%Y') }}</td>
+        <td class="time">{{ span(o.start, o.end, md) }} <span class="what">{{ t.visits_away }}</span> <span class="len">({{ dur(o.minutes) }})</span>
+          {%- if o.flagged %}<span class="flag" title="{{ t.visits_flagged }}">*</span>{% endif %}
+          {%- if not o.complete %}<span class="warn">{{ t.visits_incomplete }}</span>{% endif %}
+          {%- if o.overlap %}<span class="warn">{{ t.visits_overlap }}</span>{% endif %}</td>
+        <td class="place">{% for a in o.addresses %}<span class="addr">{{ a }}</span>{% endfor %}</td>
+      </tr>
+      {% for s in o.sites %}
+      {% set sc = colors.get(s.purpose, '') %}
+      <tr class="site" style="{% if sc %}--pc:{{ sc }}{% endif %}">
+        <td></td>
+        <td class="time" title="{{ s.purpose }}">{{ span(s.start, s.end, md) }} <span class="what">{{ t.visits_onsite }}</span> <span class="len">({{ dur(s.minutes) }})</span></td>
+        <td class="place">{% if s.destinations %}<span class="dest">{{ s.destinations|join(' · ') }}</span>{% endif %}
+          {%- if o.sites|length > 1 %}{% for a in s.addresses %}<span class="addr">{{ a }}</span>{% endfor %}{% endif %}</td>
+      </tr>
+      {% endfor %}
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">{{ t.visits_none }}</div>
+  {% endif %}
+  <p class="hint">{{ t.visits_hint }}</p>
+</div>
+{% endblock %}

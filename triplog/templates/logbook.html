@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="{{ current_lang|lower }}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/svg+xml" href="/static/print-icon.svg">
+  <title>IDmate — {{ kopf.titel }} {{ kopf.monat }}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+    body{font-family:'Segoe UI',Arial,Helvetica,sans-serif;background:#fff;color:#222;font-size:9pt;padding:4rem 1.5rem 2rem}
+    .toolbar{position:fixed;top:0;left:0;right:0;background:#1a1a1a;color:#fff;padding:0.5rem 1rem;display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;z-index:100;font-size:10pt}
+    .toolbar select{padding:0.25rem 0.4rem;border-radius:4px;border:1px solid #444;background:#2a2a2a;color:#fff;font-size:9pt}
+    .toolbar label{color:#aaa}
+    .toolbar .btn{padding:0.3rem 0.8rem;border-radius:4px;border:none;font-size:9pt;font-weight:600;text-decoration:none;background:#238636;color:#fff}
+    .toolbar .btn-back{display:inline-flex;align-items:center;gap:0.3rem;padding:0.3rem 0.7rem;border-radius:4px;border:1px solid #555;color:#ddd;text-decoration:none;font-size:9pt;font-weight:600}
+    .warn{margin:0 0 0.8rem;padding:0.5rem 0.8rem;border:1px solid #d29922;border-radius:6px;background:rgba(210,153,34,0.12);color:#9a6700}
+    .page-hdr{display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #222;padding-bottom:0.3rem;margin-bottom:0.8rem}
+    .page-hdr b{font-size:13pt}
+    .scroll{overflow-x:auto}
+    table{width:100%;border-collapse:collapse;min-width:900px}
+    th{background:#ebebeb;text-align:left;font-weight:600;padding:0.25rem 0.35rem;border-bottom:1px solid #999}
+    td{padding:0.25rem 0.35rem;border-bottom:1px solid #ddd;vertical-align:top}
+    .num{text-align:right;white-space:nowrap}
+    tr.privat td{background:#f5f5f5}
+    tr.privat td.text{font-style:italic}
+    tr.luecke td{color:#aa5a00;font-style:italic}
+    .offen{color:#be1e1e;font-weight:600}
+    .summen{margin-top:1rem;display:grid;grid-template-columns:max-content max-content;gap:0.15rem 2rem}
+    .summen .gesamt{font-weight:700}
+    .leer{color:#777;padding:1rem 0}
+  </style>
+</head>
+<body>
+<div class="toolbar">
+  <a class="btn-back" href="/trips"><svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6H3m2.5-2.5L3 6l2.5 2.5"/></svg> {{ t.logbook_back }}</a>
+  <form method="get" action="/trips/logbook" style="display:contents">
+    <label>{{ t.logbook_month }}:
+      <select name="month" class="auto-submit">
+        {% for m in range(1, 13) %}<option value="{{ m }}" {{ 'selected' if m == monat else '' }}>{{ t.logbook_months[m] }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>{{ t.logbook_year }}:
+      <select name="year" class="auto-submit">
+        {% for y in jahre %}<option value="{{ y }}" {{ 'selected' if y == jahr else '' }}>{{ y }}</option>{% endfor %}
+      </select>
+    </label>
+  </form>
+  <a class="btn" id="pdfBtn" href="/trips/logbook.pdf?year={{ jahr }}&month={{ monat }}">{{ t.logbook_pdf }}</a>
+</div>
+
+{% if offen %}<div class="warn">{{ t.logbook_open_warning|replace('{0}', offen|string) }}</div>{% endif %}
+
+<div class="page-hdr"><b>{{ kopf.titel }}</b><span>{{ kopf.monat }} · {{ kopf.fahrzeug }}</span></div>
+
+{% if not daten.rows %}
+<div class="leer">{{ t.logbook_empty }}</div>
+{% else %}
+<div class="scroll">
+<table>
+  <thead><tr>
+    <th>{{ t.logbook_col_date }}</th><th>{{ t.logbook_col_time }}</th>
+    <th class="num">{{ t.logbook_col_odo_start }}</th><th class="num">{{ t.logbook_col_odo_end }}</th><th class="num">{{ t.logbook_col_km }}</th>
+    <th>{{ t.logbook_col_from }}</th><th>{{ t.logbook_col_to }}</th><th>{{ t.logbook_col_purpose }}</th><th>{{ t.logbook_col_partner }}</th>
+  </tr></thead>
+  <tbody>
+  {% for r in daten.rows %}
+    {% if r.art == 'luecke' %}
+    <tr class="luecke"><td colspan="2">{{ t.logbook_gap|replace('{0}', fb.km_text(r.km, 1)) }}</td>
+      <td class="num">{{ fb.km_text(r.odo_start) }}</td><td class="num">{{ fb.km_text(r.odo_end) }}</td><td class="num">{{ fb.km_text(r.km, 1) }}</td><td colspan="4"></td></tr>
+    {% elif r.art == 'privat' %}
+    <tr class="privat"><td colspan="2">{{ fb.tage_text(r.von, r.bis) }}</td>
+      <td class="num">{{ fb.km_text(r.odo_start) }}</td><td class="num">{{ fb.km_text(r.odo_end) }}</td><td class="num">{{ fb.km_text(r.km, 1) }}</td>
+      <td class="text" colspan="4">{{ t.logbook_private_rows|replace('{0}', r.anzahl|string) }}</td></tr>
+    {% else %}
+    <tr><td>{{ fb.datum_text(r.von) }}</td><td>{{ fb.zeit_text(r.von, r.bis) }}</td>
+      <td class="num">{{ fb.km_text(r.odo_start) }}</td><td class="num">{{ fb.km_text(r.odo_end) }}</td><td class="num">{{ fb.km_text(r.km, 1) }}</td>
+      <td>{{ r.start }}</td><td>{{ r.ziel }}</td>
+      <td>{% if r.art == 'offen' %}<span class="offen">{{ t.logbook_no_purpose }}</span>{% else %}{{ r.zweck }}{% endif %}</td>
+      <td>{{ [r.partner, r.anlass]|select|join(' · ') }}</td></tr>
+    {% endif %}
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% set s = daten.summen %}
+<div class="summen">
+  <span>{{ t.logbook_odo_month_start }}</span><span class="num">{{ fb.km_text(s.odo_anfang) }}</span>
+  <span>{{ t.logbook_odo_month_end }}</span><span class="num">{{ fb.km_text(s.odo_ende) }}</span>
+  <span>{{ t.logbook_trips }}</span><span class="num">{{ s.fahrten }}</span>
+  {% for zweck, km in s.zwecke|dictsort %}<span>{{ zweck }}</span><span class="num">{{ fb.km_text(km, 1) }} km</span>{% endfor %}
+  {% if s.offen %}<span class="offen">{{ t.logbook_no_purpose }}</span><span class="num">{{ fb.km_text(s.offen, 1) }} km</span>{% endif %}
+  <span>{{ t.logbook_private }}</span><span class="num">{{ fb.km_text(s.privat, 1) }} km</span>
+  {% if s.luecken %}<span>{{ t.logbook_gaps }}</span><span class="num">{{ fb.km_text(s.luecken, 1) }} km</span>{% endif %}
+  <span class="gesamt">{{ t.logbook_total }}</span><span class="num gesamt">{{ fb.km_text(s.gesamt, 1) }} km</span>
+</div>
+{% endif %}
+<script nonce="{{ csp_nonce }}">
+  // CSP: no inline handlers — the month and year pickers reload the page
+  document.querySelectorAll('select.auto-submit').forEach(s => s.addEventListener('change', () => s.form.submit()));
+</script>
+</body>
+</html>

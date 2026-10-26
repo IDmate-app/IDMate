@@ -1,0 +1,15 @@
+{# Karten-Bibliotheken in fester Reihenfolge: Leaflet 1.9.4 und Markercluster
+   (Kopien aus Roundtrip, kein CDN mehr), dann die Roundtrip-Weltkarte –
+   protomaps-leaflet zeichnet Vektorkacheln, mapstyle.js/maprules.js sind
+   ihre Farben und Regeln (unveränderte Kopien aus Roundtrip), basemap.js
+   wählt je Kacheladresse Vektor oder Raster (IDmateMap.baseLayer). #}
+  <script src="{{ url_for('static', filename='vendor/leaflet.js') }}"></script>
+  <script src="{{ url_for('static', filename='vendor/markercluster.js') }}"></script>
+  <script src="{{ url_for('static', filename='vendor/protomaps-leaflet.js') }}"></script>
+  <script src="{{ url_for('static', filename='mapstyle.js') }}?v={{ app_version }}"></script>
+  <script src="{{ url_for('static', filename='maprules.js') }}?v={{ app_version }}"></script>
+  <script src="{{ url_for('static', filename='basemap.js') }}?v={{ app_version }}"></script>
+  {# Das Auto auf der Karte im Stand (Fahrzeug-Einstellungen: Karosserie und Farbe). #}
+  <script src="{{ url_for('static', filename='kartenauto.js') }}?v={{ app_version }}"></script>
+  {# Runde Übergänge zwischen den GPS-Punkten einer Fahrt (IDmateSpline.linie). #}
+  <script src="{{ url_for('static', filename='spline.js') }}?v={{ app_version }}"></script>
