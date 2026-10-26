@@ -187,6 +187,7 @@ def _get_secret_key():
 
 app.secret_key = _get_secret_key()
 app.jinja_env.globals["version"] = config.VERSION
+app.jinja_env.globals["repo_url"] = config.REPO_URL
 
 
 @app.template_filter("invoice_safe")
