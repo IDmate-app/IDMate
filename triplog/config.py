@@ -1,6 +1,8 @@
 import os
 
-VERSION = "1.2.241"
+VERSION = "1.2.242"
+# Projektseite, steht in den Fusszeilen der Ausdrucke
+REPO_URL = "github.com/IDmate-app/IDMate"
 
 # Time zone of the stored local times and of the UI. TIMEZONE, else the
 # usual TZ of the container; an unknown name falls back to Europe/Berlin.

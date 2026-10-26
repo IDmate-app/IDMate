@@ -169,7 +169,7 @@ def pdf_bytes(daten, kopf, t):
             self.set_y(-10)
             self.set_font(familie, "", 7)
             self.set_text_color(120, 120, 120)
-            self.cell(0, 5, rein(f'IDmate {kopf["version"]} · {t["logbook_generated"]} {kopf["erstellt"]}'), new_x="LMARGIN", new_y="TOP")
+            self.cell(0, 5, rein(f'IDmate {kopf["version"]} · {kopf.get("repo", "")} · {t["logbook_generated"]} {kopf["erstellt"]}'), new_x="LMARGIN", new_y="TOP")
             self.cell(0, 5, f"{t['logbook_page']} {self.page_no()}/{{nb}}", align="R")
             self.set_text_color(0, 0, 0)
 

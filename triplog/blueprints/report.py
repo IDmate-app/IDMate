@@ -210,7 +210,7 @@ def vehicle_report():
     b["soh_pm"] = round((b["soh_p75"] - b["soh_p25"]) / 2, 1) if b.get("soh_p25") is not None else None
     q["accuracy"] = fm.data_accuracy(q.get("energy_pct"),
                                      q.get("open_gap_km"), m.get("km_recorded"), q.get("errors"), q.get("warnings"))
-    rep["meta"] = {"created": datetime.now().strftime("%Y-%m-%d %H:%M"), "version": config.VERSION}
+    rep["meta"] = {"created": datetime.now().strftime("%Y-%m-%d %H:%M"), "version": config.VERSION, "repo": config.REPO_URL}
     # Fingerprint of the content: the same data gives the same code.
     body = json.dumps({k: rep[k] for k in ("vehicle", "battery", "consumption", "charging", "mileage", "quality")},
                       sort_keys=True, default=str)

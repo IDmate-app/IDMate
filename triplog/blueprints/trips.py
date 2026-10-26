@@ -250,7 +250,7 @@ def _logbuch_kopf(vehicle, jahr, monat, t):
     plate = vehicle["plate"] if vehicle else ""
     return {"titel": t["logbook_title"], "monat": f"{monate[monat]} {jahr}",
             "fahrzeug": " · ".join(x for x in (plate, name) if x), "kennzeichen": plate,
-            "erstellt": datetime.now().strftime("%d.%m.%Y %H:%M"), "version": config.VERSION,
+            "erstellt": datetime.now().strftime("%d.%m.%Y %H:%M"), "version": config.VERSION, "repo": config.REPO_URL,
             "tage": _cal.monthrange(jahr, monat)[1]}
 
 

@@ -176,6 +176,7 @@
     #yePrint *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
     #yePrint h1{font-size:15pt;font-weight:700;margin-bottom:0.25rem;color:#222}
     #yePrint .yp-meta{font-size:9pt;color:#555;border-bottom:2px solid #222;padding-bottom:0.4rem;margin-bottom:1.2rem}
+    #yePrint .yp-foot{margin-top:1.2rem;padding-top:0.4rem;border-top:1px solid #ccc;font-size:7.5pt;color:#888}
     #yePrint .ye-bar{height:14px;border-radius:4px;margin:0 0 1rem}
     #yePrint .ye-table{font-size:10.5pt}
     #yePrint .ye-table th{color:#333;font-size:8pt;border-bottom:2px solid #222}
@@ -1405,6 +1406,7 @@
         ${po.hide_bar ? '' : yeBarHtml(rows, po.hide_estimate ? 'km' : 'est')}
         ${yeTableHtml(d, rows, true)}
         ${po.hide_estimate ? '' : `<div class="ye-hint">{{ t.analysis_yearly_hint_print|replace('{0}', '${d.days_elapsed}')|replace('{1}', '${d.days_available}')|replace('{2}', '${first}')|replace('{3}', '${fmtNum(d.factor, 2)}')|safe }}</div>`}
+        <div class="yp-foot">IDmate {{ version }} &middot; {{ repo_url }}</div>
       `;
       const title = document.title;
       document.title = heading + (YE_VEHICLE.plate ? ' ' + YE_VEHICLE.plate : '');
@@ -1555,7 +1557,7 @@
             }).join('')}</div>
           </div>
         </div>
-        <div class="vr-foot"><span>${esc(vrF(VR.footer, vrD(d.meta.created.slice(0, 10)) + ' ' + d.meta.created.slice(11), d.meta.version))} · ${esc(VR.fingerprint)} ${esc(d.meta.fingerprint)}</span><span>${esc(VR.disclaimer)}</span></div>`;
+        <div class="vr-foot"><span>${esc(vrF(VR.footer, vrD(d.meta.created.slice(0, 10)) + ' ' + d.meta.created.slice(11), d.meta.version))} · ${esc(d.meta.repo || '')} · ${esc(VR.fingerprint)} ${esc(d.meta.fingerprint)}</span><span>${esc(VR.disclaimer)}</span></div>`;
       _vrChart(b.chart);
       _vrConsChart(c.monthly || []);
     }

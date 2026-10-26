@@ -107,7 +107,7 @@
     @page{
       margin:1.5cm 1.5cm 2.5cm;
       @bottom-center{
-        content:"{{ t.print_footer }} \00B7  v{{ version }} \2014  {{ t.print_footer_generated }} {{ now }}  \2014  " counter(page) " / " counter(pages);
+        content:"{{ t.print_footer }} \00B7  v{{ version }} \00B7  {{ repo_url }} \2014  {{ t.print_footer_generated }} {{ now }}  \2014  " counter(page) " / " counter(pages);
         font-size:7.5pt;color:#999;
       }
     }
@@ -423,7 +423,7 @@
 {% endif %}
 
 <!-- Footer rendered via @page @bottom-center on every printed page -->
-<div class="footer">{{ t.print_footer }} &middot; v{{ version }} — {{ t.print_footer_generated }} {{ now }}</div>
+<div class="footer">{{ t.print_footer }} &middot; v{{ version }} &middot; {{ repo_url }} — {{ t.print_footer_generated }} {{ now }}</div>
 </div><!-- /printRoot -->
 
 {% if show_stats or show_ext_stats %}
