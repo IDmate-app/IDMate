@@ -1,0 +1,75 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! German or English, both are fine.
+        **Do not attach the diagnostics ZIP here** — it contains your trips, places and plates, and issues are public.
+  - type: input
+    id: version
+    attributes:
+      label: IDmate version
+      description: Profile menu or any PDF footer, e.g. 1.2.242
+      placeholder: 1.2.242
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation
+      options:
+        - Docker Compose
+        - Portainer
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Dashboard / live map
+        - Trip log / logbook PDF
+        - Journeys
+        - Charge tracker / billing print
+        - Analysis / vehicle report
+        - Battery / capacity / SoH
+        - Settings / import
+        - Login / users / passkeys
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: vehicle
+    attributes:
+      label: Vehicle and data source
+      description: Car model and where the data comes from (IDTelemetry stick, Home Assistant, TeslaMate import)
+      placeholder: VW ID.7 Pro S, IDTelemetry stick + Home Assistant wallbox
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you see, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to …
+        2. Click …
+        3. See …
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log / diagnostics
+      description: Settings → Diagnostics → check list or log excerpt. Remove addresses, coordinates and plates first.
+      render: text
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Optional. Please blur plates and home locations.

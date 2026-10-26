@@ -1,0 +1,29 @@
+name: Feature request
+description: An idea for IDmate
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: German or English, both are fine.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What do you want to do?
+      description: The situation or problem — not only the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea
+      description: How could IDmate help here?
+  - type: input
+    id: vehicle
+    attributes:
+      label: Vehicle and data source
+      placeholder: VW ID.4, IDTelemetry stick
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: Screenshots, examples, links.
