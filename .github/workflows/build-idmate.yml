@@ -2,10 +2,9 @@ name: Build IDmate Images
 
 on:
   push:
-    branches: [main]
-    tags: ['v*']
+    branches: [main, beta]
   pull_request:
-    branches: [main]
+    branches: [main, beta]
   workflow_dispatch:
 
 env:
@@ -83,20 +82,31 @@ jobs:
       - name: Image name
         run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/idmate" >> "$GITHUB_ENV"
 
+      # The version tags come from VERSION in triplog/config.py, not from git
+      # tags: bumping VERSION is the release.
+      - name: Version
+        run: |
+          V=$(sed -n 's/^VERSION = "\(.*\)"$/\1/p' triplog/config.py)
+          [ -n "$V" ] || { echo "::error::VERSION not found in triplog/config.py"; exit 1; }
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+          echo "MINOR=${V%.*}" >> "$GITHUB_ENV"
+          echo "MAJOR=${V%%.*}" >> "$GITHUB_ENV"
+
       - uses: docker/metadata-action@v5
         id: meta
         with:
           images: ${{ env.IMAGE }}
-          # Tag matrix:
-          #   git tag v1.2.3 -> 1.2.3, 1.2, 1, latest
-          #   main branch    -> main, latest, <sha>
+          # Tag matrix (VERSION 1.2.3):
+          #   main -> 1.2.3, 1.2, 1, latest, <sha>
+          #   beta -> 1.2.3-beta, beta, <sha>
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=ref,event=branch
+            type=raw,value=${{ env.VERSION }},enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=${{ env.MINOR }},enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=${{ env.MAJOR }},enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=${{ env.VERSION }}-beta,enable=${{ github.ref == 'refs/heads/beta' }}
+            type=raw,value=beta,enable=${{ github.ref == 'refs/heads/beta' }}
             type=sha,prefix=
-            type=raw,value=latest,enable={{is_default_branch}}
 
       - uses: docker/build-push-action@v6
         with:

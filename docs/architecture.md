@@ -66,6 +66,8 @@ SECRET_KEY=test python -m pytest tests/ -q
 
 CI runs the tests and a boot smoke test before the images are built and pushed to ghcr.io. Schema changes always go through a migration.
 
+**Branches:** new work lands on `beta` (image tag `beta`) and is tested there; `main` takes it over when it has proven itself and is the release (`latest`, `1`, `1.2`, `1.2.3`). The version is `VERSION` in `triplog/config.py` — no git tags needed.
+
 Diagrams: PlantUML sources in [diagrams/](diagrams/), render with `plantuml -tsvg docs/diagrams/*.puml`.
 
 Developed human-in-the-loop with AI assistance; all decisions were made by the maintainer.
