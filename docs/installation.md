@@ -89,10 +89,11 @@ openssl rand -base64 32     # INFLUX_TOKEN, CHARGE_WEBHOOK_TOKEN
 
 | Tag | Use |
 |---|---|
-| `1.2.3` | exact release |
-| `1.2` | patches only |
 | `1` | recommended |
-| `latest` | newest main |
+| `1.2` | patches only |
+| `1.2.3` | exact version |
+| `latest` | newest release |
+| `beta` | test builds — newer, less tested |
 
 ```bash
 docker compose pull && docker compose up -d

@@ -4,7 +4,7 @@ Ziel: Alle Fahrzeug-Berechnungen an einer Stelle, mit einer Definition je
 Größe. Darauf aufbauend ein lernendes Modell und später ein Tab
 „Fahrzeug-Analyse“ mit einer Art Zertifikat.
 
-Stand: 1.2.227-dev. Der Diagnose-Export (Verwaltung → Diagnose) liefert die
+Stand: 1.2.227. Der Diagnose-Export (Verwaltung → Diagnose) liefert die
 Rohdaten, die abgeleiteten Werte und die Parameter, an denen man die Punkte
 unten im echten Betrieb nachprüfen kann.
 
