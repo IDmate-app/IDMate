@@ -41,7 +41,7 @@ IDmate reads the car directly over OBD2/CAN with the [IDTelemetry](https://githu
 ## Quick start
 
 ```bash
-git clone https://github.com/IDmate-app/IDMate-dev.git && cd IDMate-dev
+git clone https://github.com/IDmate-app/IDMate.git && cd IDMate
 cp .env.example .env && nano .env
 docker compose up -d
 ```

@@ -46,7 +46,7 @@ services:
       start_period: 15s
 
   triplog:
-    image: ghcr.io/idmate-app/idmate-dev:latest
+    image: ghcr.io/idmate-app/idmate:latest
     restart: unless-stopped
     ports:
       - "${TRIPLOG_PORT:-3004}:5000"

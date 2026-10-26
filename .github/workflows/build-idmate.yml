@@ -1,4 +1,4 @@
-name: Build IDMate-dev Images
+name: Build IDmate Images
 
 on:
   push:
@@ -79,9 +79,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # The image lives under the repository owner (ghcr wants lower case):
-      # ghcr.io/idmate-app/idmate-dev — follows a repository transfer.
+      # ghcr.io/idmate-app/idmate — follows a repository transfer.
       - name: Image name
-        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/idmate-dev" >> "$GITHUB_ENV"
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/idmate" >> "$GITHUB_ENV"
 
       - uses: docker/metadata-action@v5
         id: meta
