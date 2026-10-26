@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/IDmate-app/IDMate#documentation
+    about: Installation, setup guide, manual and FAQ
+  - name: IDTelemetry stick (firmware)
+    url: https://github.com/IDmate-app/IDTelemetry/issues
+    about: Problems with the ESP32 stick go there
+  - name: Home Assistant integration
+    url: https://github.com/IDmate-app/IDMate-HA/issues
+    about: Problems with the HACS integration go there
