@@ -8,6 +8,7 @@ SITE = (52.5165, 12.9300)        # a customer site
 RETHE = (52.5065, 12.9505)        # 1.7 km away
 BAHNHOF = (52.4895, 13.2065)     # station, 17 km from the site
 BRAAK = (52.6175, 13.2585)
+CHARGER = (52.5626, 13.1307)     # 9.6 km from BAHNHOF as the crow flies
 
 
 def trip(st, et, a, b, purpose="Dienstfahrt", dest="", reason="", a_addr=None, b_addr=None):
@@ -37,6 +38,33 @@ def test_day_with_two_sites_and_charge_on_the_way_home():
         [("07:31", "10:09"), ("10:37", "15:06")]            # Braak (charging) is travel
     assert o["sites"][0]["destinations"] == ["Kunde B"]
     assert o["sites"][1]["destinations"] == ["Kunde A"]     # not the "Rückfahrt" from Kunde B
+
+
+def test_charge_stop_near_the_site_on_the_way_home_is_travel():
+    # 29.10.: on site until 18:00, then 12 km to a charger (9.6 km straight
+    # line), charged until 18:50, home. On site ends at 18:00, not 18:50.
+    trips = [
+        trip("2026-10-29T08:22:00", "2026-10-29T09:04:00", HOME, BAHNHOF, dest="Kunde B"),
+        dict(trip("2026-10-29T18:00:00", "2026-10-29T18:20:00", BAHNHOF, CHARGER, dest="Kunde B",
+                  reason="Rückfahrt"), distance_km=12),
+        trip("2026-10-29T18:50:00", "2026-10-29T19:16:00", CHARGER, HOME, dest="Kunde B", reason="Rückfahrt"),
+    ]
+    charge = {"start_time": "2026-10-29T18:22:00", "end_time": "2026-10-29T18:48:00"}
+    [o] = build(trips, [charge])
+    assert [(s["start"].strftime("%H:%M"), s["end"].strftime("%H:%M")) for s in o["sites"]] == \
+        [("09:04", "18:00")]
+
+
+def test_hop_longer_than_the_radius_by_road_starts_a_new_site():
+    trips = [
+        trip("2026-10-29T08:22:00", "2026-10-29T09:04:00", HOME, BAHNHOF, dest="Kunde B"),
+        dict(trip("2026-10-29T12:00:00", "2026-10-29T12:20:00", BAHNHOF, CHARGER, dest="Kunde C"),
+             distance_km=12),
+        trip("2026-10-29T15:00:00", "2026-10-29T15:30:00", CHARGER, HOME, dest="Kunde C", reason="Rückfahrt"),
+    ]
+    [o] = build(trips)
+    assert [(s["start"].strftime("%H:%M"), s["end"].strftime("%H:%M")) for s in o["sites"]] == \
+        [("09:04", "12:00"), ("12:20", "15:00")]
 
 
 def test_missing_position_on_the_way_back_counts_as_home_when_next_starts_there():
