@@ -44,15 +44,19 @@ def test_charge_stop_near_the_site_on_the_way_home_is_travel():
     # 29.10.: on site until 18:00, then 12 km to a charger (9.6 km straight
     # line), charged until 18:50, home. On site ends at 18:00, not 18:50.
     trips = [
-        trip("2026-10-29T08:22:00", "2026-10-29T09:04:00", HOME, BAHNHOF, dest="Kunde B"),
+        trip("2026-10-29T08:22:00", "2026-10-29T09:04:00", HOME, BAHNHOF, dest="Kunde B", b_addr="Am Bahnhof"),
         dict(trip("2026-10-29T18:00:00", "2026-10-29T18:20:00", BAHNHOF, CHARGER, dest="Kunde B",
-                  reason="Rückfahrt"), distance_km=12),
-        trip("2026-10-29T18:50:00", "2026-10-29T19:16:00", CHARGER, HOME, dest="Kunde B", reason="Rückfahrt"),
+                  reason="Rückfahrt", b_addr="Ladepark"), distance_km=12),
+        trip("2026-10-29T18:50:00", "2026-10-29T19:16:00", CHARGER, HOME, dest="Kunde B", reason="Rückfahrt",
+             a_addr="Ladepark"),
     ]
     charge = {"start_time": "2026-10-29T18:22:00", "end_time": "2026-10-29T18:48:00"}
     [o] = build(trips, [charge])
     assert [(s["start"].strftime("%H:%M"), s["end"].strftime("%H:%M")) for s in o["sites"]] == \
         [("09:04", "18:00")]
+    # The way home with the charging stop stays one outing (tax: return trip),
+    # but the charger is not listed as a place visited.
+    assert o["minutes"] == 654 and o["addresses"] == ["Am Bahnhof"]
 
 
 def test_hop_longer_than_the_radius_by_road_starts_a_new_site():

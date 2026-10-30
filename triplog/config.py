@@ -1,6 +1,6 @@
 import os
 
-VERSION = "1.2.245"
+VERSION = "1.2.246"
 # Projektseite, steht in den Fusszeilen der Ausdrucke
 REPO_URL = "github.com/IDmate-app/IDMate"
 
