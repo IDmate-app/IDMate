@@ -5,15 +5,18 @@ home. Between two trips of an outing the car stood somewhere (a *stop*).
 Consecutive stops within SITE_RADIUS_M of the first stop of the group are one
 *on-site* block: from arriving at the first stop to leaving the last one. The
 short hops inside (e.g. between gates of a port) belong to the time on site.
+A hop that drove more than SITE_RADIUS_M is travel even when the straight line
+is shorter (12 km by road, 9.6 km as the crow flies).
 
 A stop is "home" when its position lies within HOME_RADIUS_M of a home point
 (the "Zuhause" geofence, home charge locations) or its address is a home name.
 A trip without position whose NEXT trip starts at home is taken to end at home
 (missing telemetry on the way back).
 
-Charging stops are travel: an on-site block made only of stops with a charge
-and shorter than CHARGE_STOP_MAX_MIN is dropped (the return trip from work
-with a stop at a charger is still the return trip).
+Charging stops are travel: a charge more than CHARGE_SITE_M away from the
+site never joins its block, and an on-site block made only of stops with a
+charge and shorter than CHARGE_STOP_MAX_MIN is dropped (the return trip from
+work with a stop at a charger is still the return trip).
 
 Pure logic: the caller passes trips, charges and home points.
 """
@@ -24,6 +27,7 @@ from datetime import datetime
 HOME_RADIUS_M = 1000
 SITE_RADIUS_M = 10000
 CHARGE_STOP_MAX_MIN = 60
+CHARGE_SITE_M = 1000
 HOME_NAMES = {"zuhause", "home", "daheim", "zu hause"}
 # Visit reason of a trip that only goes back from a site (its destination
 # names the place left, not the place reached).
@@ -149,7 +153,7 @@ def _outing(o, home, charges):
         back = RETURN_WORD in (a.get("visit_reason") or "").lower()
         stops.append({"arrive": arrive, "leave": leave, "pos": pos, "addrs": addrs,
                       "dest": a.get("destination") or "", "purpose": a.get("purpose") or "",
-                      "back": back, "charge": charged})
+                      "back": back, "charge": charged, "hop_km": a.get("distance_km")})
 
     # Trips whose times overlap (filled in by hand with one shared window)
     # leave no stop between them: no time on site can be told there.
@@ -159,9 +163,13 @@ def _outing(o, home, charges):
     groups = []
     for s in stops:
         g = groups[-1] if groups else None
-        if g and s["pos"] and g["anchor"] and _dist_m(g["anchor"], s["pos"]) <= SITE_RADIUS_M:
+        drove_away = (s["hop_km"] or 0) * 1000 > SITE_RADIUS_M
+        d = _dist_m(g["anchor"], s["pos"]) if g and s["pos"] and g["anchor"] else None
+        if g and d is not None and d <= SITE_RADIUS_M and not drove_away \
+                and not (s["charge"] and d > CHARGE_SITE_M):
             g["stops"].append(s)
-        elif g and not s["pos"] and not g["anchor"] and s["dest"] and s["dest"] == g["stops"][-1]["dest"]:
+        elif g and not s["pos"] and not g["anchor"] and not drove_away \
+                and s["dest"] and s["dest"] == g["stops"][-1]["dest"]:
             g["stops"].append(s)
         else:
             groups.append({"anchor": s["pos"], "stops": [s]})
