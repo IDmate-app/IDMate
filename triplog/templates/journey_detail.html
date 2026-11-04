@@ -427,30 +427,21 @@
 
       // Charge location badges
       fetch('/api/charge/locations').then(r => r.json()).then(cls => {
+        // One charger per start/end point: the fence that wins there (as on
+        // the server), not every charging park whose circle reaches it.
         const shown = new Set();
-        for (const cl of cls) {
-          if (shown.has(cl.id)) continue;
+        for (const pt of checkPts) {
+          const cl = IDmateMap.chargeFenceAt(pt[0], pt[1], cls);
+          if (!cl || shown.has(cl.id)) continue;
           let clat = cl.lat, clon = cl.lon;
           if (cl.shape === 'rect' && cl.lat2 && cl.lon2) { clat = (cl.lat+cl.lat2)/2; clon = (cl.lon+cl.lon2)/2; }
-          for (const pt of checkPts) {
-            let hit = false;
-            if (cl.shape === 'rect' && cl.lat2 && cl.lon2) {
-              hit = pt[0] >= Math.min(cl.lat,cl.lat2) && pt[0] <= Math.max(cl.lat,cl.lat2)
-                 && pt[1] >= Math.min(cl.lon,cl.lon2) && pt[1] <= Math.max(cl.lon,cl.lon2);
-            } else {
-              hit = _hav(pt[0], pt[1], cl.lat, cl.lon) <= (cl.radius_m || 200);
-            }
-            if (hit) {
-              const color = cl.op_color || cl.color || TC.text2;
-              const inner = cl.icon_url
-                ? `<img src="${cl.icon_url}" style="width:12px;height:12px;display:block;object-fit:contain">`
-                : `<svg viewBox="0 0 24 24" width="10" height="10"><path d="M11,21h-1l1-7H7.5c-0.88,0-0.33-0.75-0.31-0.78C8.48,10.94,10.42,7.54,13.01,3h1l-1,7h3.51c0.4,0,0.62,0.19,0.4,0.66C12.97,17.55,11,21,11,21z" fill="white"/></svg>`;
-              const ico = L.divIcon({ className: '', html: `<div class="map-icon-badge" style="background:${color};width:15px;height:15px;border-radius:4px">${inner}</div>`, iconSize:[15,15], iconAnchor:[7,7] });
-              clusterGroup.addLayer(L.marker([clat, clon], { icon: ico }).bindTooltip(cl.op_name || cl.name, { permanent: false, direction: 'top' }));
-              shown.add(cl.id);
-              break;
-            }
-          }
+          const color = cl.op_color || cl.color || TC.text2;
+          const inner = cl.icon_url
+            ? `<img src="${cl.icon_url}" style="width:12px;height:12px;display:block;object-fit:contain">`
+            : `<svg viewBox="0 0 24 24" width="10" height="10"><path d="M11,21h-1l1-7H7.5c-0.88,0-0.33-0.75-0.31-0.78C8.48,10.94,10.42,7.54,13.01,3h1l-1,7h3.51c0.4,0,0.62,0.19,0.4,0.66C12.97,17.55,11,21,11,21z" fill="white"/></svg>`;
+          const ico = L.divIcon({ className: '', html: `<div class="map-icon-badge" style="background:${color};width:15px;height:15px;border-radius:4px">${inner}</div>`, iconSize:[15,15], iconAnchor:[7,7] });
+          clusterGroup.addLayer(L.marker([clat, clon], { icon: ico }).bindTooltip(cl.op_name || cl.name, { permanent: false, direction: 'top' }));
+          shown.add(cl.id);
         }
       });
     });
