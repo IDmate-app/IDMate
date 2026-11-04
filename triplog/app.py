@@ -5990,47 +5990,66 @@ def _point_in_polygon(lat, lon, coords):
     return inside
 
 
+def _charge_fence_contains(loc, lat, lon):
+    """Does the charge geofence contain the point? Polygon as drawn (its
+    lat/lon is only the label position), legacy rectangle, else circle."""
+    if loc["shape"] == "polygon" and loc["polygon_coords"]:
+        try:
+            coords = json.loads(loc["polygon_coords"])
+        except (TypeError, ValueError):
+            log.warning("charge location %s: invalid polygon_coords JSON — skipped", loc["name"])
+            return False
+        return len(coords) >= 3 and _point_in_polygon(lat, lon, coords)
+    if loc["lat"] is None or loc["lon"] is None:
+        return False
+    if loc["shape"] == "rect" and loc["lat2"] is not None and loc["lon2"] is not None:
+        return (min(loc["lat"], loc["lat2"]) <= lat <= max(loc["lat"], loc["lat2"])
+                and min(loc["lon"], loc["lon2"]) <= lon <= max(loc["lon"], loc["lon2"]))
+    return haversine_m(lat, lon, loc["lat"], loc["lon"]) <= (loc["radius_m"] or 200)
+
+
+def _charge_fence_area_m2(loc):
+    if loc["shape"] == "polygon" and loc["polygon_coords"]:
+        try:
+            coords = json.loads(loc["polygon_coords"])
+        except (TypeError, ValueError):
+            return float("inf")
+        if len(coords) < 3:
+            return float("inf")
+        lat0 = math.radians(sum(c[0] for c in coords) / len(coords))
+        pts = [(c[1] * 111320.0 * math.cos(lat0), c[0] * 110540.0) for c in coords]
+        return abs(sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(pts, pts[1:] + pts[:1]))) / 2
+    if loc["shape"] == "rect" and loc["lat2"] is not None and loc["lon2"] is not None:
+        return (abs(loc["lat"] - loc["lat2"]) * 110540.0
+                * abs(loc["lon"] - loc["lon2"]) * 111320.0 * math.cos(math.radians(loc["lat"])))
+    return math.pi * (loc["radius_m"] or 200) ** 2
+
+
+def best_charge_location(lat, lon, locations):
+    """The charge geofence a point belongs to. Where fences overlap (an Allego
+    and a Tesla park side by side) the SMALLEST containing one wins, so drawing
+    one tighter makes it the more specific match; equal size → nearest centre."""
+    if lat is None or lon is None:
+        return None
+    best, best_key = None, None
+    for loc in locations:
+        if not _charge_fence_contains(loc, lat, lon):
+            continue
+        if loc["shape"] == "rect" and loc["lat2"] is not None and loc["lon2"] is not None:
+            clat, clon = (loc["lat"] + loc["lat2"]) / 2, (loc["lon"] + loc["lon2"]) / 2
+        else:
+            clat, clon = loc["lat"], loc["lon"]
+        key = (_charge_fence_area_m2(loc), haversine_m(lat, lon, clat, clon) if clat is not None else 0)
+        if best_key is None or key < best_key:
+            best, best_key = loc, key
+    return best
+
+
 def match_charge_location(db, lat, lon):
-    """Find the nearest charge location (circle or polygon)."""
+    """The charge location of a point (see best_charge_location)."""
     if not lat or not lon:
         return None
-    locations = db.execute("SELECT * FROM charge_locations").fetchall()
-    best = None
-    best_dist = float('inf')
-    for loc in locations:
-        if loc["shape"] == "polygon" and loc["polygon_coords"]:
-            import json as _json
-            try:
-                coords = _json.loads(loc["polygon_coords"])
-            except Exception:
-                log.warning("charge location %s: invalid polygon_coords JSON — skipped",
-                            loc["name"] if "name" in loc.keys() else loc["id"], exc_info=True)
-                continue
-            if _point_in_polygon(lat, lon, coords):
-                dist = haversine_m(lat, lon, loc["lat"], loc["lon"])
-                if dist < best_dist:
-                    best = loc
-                    best_dist = dist
-        elif loc["shape"] == "rect" and loc["lat2"] is not None and loc["lon2"] is not None:
-            # Legacy rectangle
-            lat_min = min(loc["lat"], loc["lat2"])
-            lat_max = max(loc["lat"], loc["lat2"])
-            lon_min = min(loc["lon"], loc["lon2"])
-            lon_max = max(loc["lon"], loc["lon2"])
-            if lat_min <= lat <= lat_max and lon_min <= lon <= lon_max:
-                center_lat = (lat_min + lat_max) / 2
-                center_lon = (lon_min + lon_max) / 2
-                dist = haversine_m(lat, lon, center_lat, center_lon)
-                if dist < best_dist:
-                    best = loc
-                    best_dist = dist
-        else:
-            # Circle
-            dist = haversine_m(lat, lon, loc["lat"], loc["lon"])
-            if dist <= loc["radius_m"] and dist < best_dist:
-                best = loc
-                best_dist = dist
-    return best
+    return best_charge_location(lat, lon, db.execute("SELECT * FROM charge_locations").fetchall())
 
 
 @app.route("/api/charge/locations")
@@ -6060,67 +6079,61 @@ def list_charge_locations():
     return jsonify(result)
 
 
-def _reassign_charges_to_location(db, loc_id):
-    """Scan charge_sessions and rewrite location_name to this charge_location's
-    name when the session's lat/lon is inside its radius. Polygon shapes are
-    handled by a bbox prefilter + Python point-in-polygon; circles use the
-    haversine distance. Returns count of touched sessions."""
-    loc = db.execute(
-        """SELECT name, lat, lon, radius_m, shape, polygon_coords
-           FROM charge_locations WHERE id = ?""",
-        (loc_id,),
-    ).fetchone()
-    if not loc:
-        return {"charges": 0}
-    poly = None
-    if loc["shape"] == "polygon" and loc["polygon_coords"]:
-        try:
-            import json as _json
-            poly = _json.loads(loc["polygon_coords"])
-        except Exception:
-            poly = None
-    if poly:
-        lats = [p[0] for p in poly]
-        lons = [p[1] for p in poly]
-        bb_lat_min, bb_lat_max = min(lats), max(lats)
-        bb_lon_min, bb_lon_max = min(lons), max(lons)
-    else:
-        deg = max(loc["radius_m"] or 200, 50) / 111000.0 * 1.2
-        bb_lat_min, bb_lat_max = loc["lat"] - deg, loc["lat"] + deg
-        bb_lon_min, bb_lon_max = loc["lon"] - deg, loc["lon"] + deg
+def _relabel_charge_fences(db, names):
+    """Bring charge sessions and trip ends in line with the charge geofences
+    after the fences named ``names`` were saved, renamed or deleted.
 
-    rows = db.execute(
-        """SELECT id, lat, lon, location_name FROM charge_sessions
-           WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?""",
-        (bb_lat_min, bb_lat_max, bb_lon_min, bb_lon_max),
-    ).fetchall()
+    Every point that carries one of the names, or lies inside one of those
+    fences, gets the name of the fence that wins there (best_charge_location).
+    A trip end no fence covers any more loses the name and goes back to the
+    geocoder (street address or trip geofence). Before, saving only ever added
+    the name: trips left outside after drawing a fence tighter kept it, and the
+    fence saved last took every point of an overlap — 11 "trips to Allego" that
+    were trips to the Tesla park next to it."""
+    names = {n for n in names if n}
+    fences = db.execute("SELECT * FROM charge_locations").fetchall()
+    mine = [f for f in fences if f["name"] in names]
 
-    _in_poly = _point_in_polygon  # single shared ray-casting impl (see 9.1)
+    def concerned(lat, lon, label):
+        return (lat is not None and lon is not None
+                and (label in names or any(_charge_fence_contains(f, lat, lon) for f in mine)))
 
-    n_touched = 0
-    for r in rows:
-        if r["lat"] is None or r["lon"] is None:
+    def winner(lat, lon):
+        b = best_charge_location(lat, lon, fences)
+        return b["name"] if b else None
+
+    out = {"charges": 0, "trips_start": 0, "trips_end": 0}
+    for r in db.execute("SELECT id, lat, lon, location_name FROM charge_sessions "
+                        "WHERE lat IS NOT NULL AND lon IS NOT NULL").fetchall():
+        if not concerned(r["lat"], r["lon"], r["location_name"]):
             continue
-        if poly:
-            hit = _in_poly(r["lat"], r["lon"], poly)
-        else:
-            hit = detector.haversine_m(r["lat"], r["lon"], loc["lat"], loc["lon"]) <= (loc["radius_m"] or 200)
-        if hit and r["location_name"] != loc["name"]:
-            db.execute("UPDATE charge_sessions SET location_name = ? WHERE id = ?",
-                       (loc["name"], r["id"]))
-            n_touched += 1
+        w = winner(r["lat"], r["lon"])
+        if w != r["location_name"]:
+            db.execute("UPDATE charge_sessions SET location_name = ? WHERE id = ?", (w, r["id"]))
+            out["charges"] += 1
+
+    cleared = False
+    for t in db.execute("SELECT id, start_lat, start_lon, start_address, "
+                        "end_lat, end_lon, end_address FROM trips").fetchall():
+        for side in ("start", "end"):
+            lat, lon, addr = t[side + "_lat"], t[side + "_lon"], t[side + "_address"]
+            if not concerned(lat, lon, addr):
+                continue
+            w = winner(lat, lon)
+            if w and w != addr:
+                db.execute(f"UPDATE trips SET {side}_address = ?, {side}_geo_lat = ?, {side}_geo_lon = ? "
+                           "WHERE id = ?", (w, lat, lon, t["id"]))
+            elif not w and addr in names:
+                db.execute(f"UPDATE trips SET {side}_address = NULL, {side}_geo_lat = NULL, "
+                           f"{side}_geo_lon = NULL WHERE id = ?", (t["id"],))
+                cleared = True
+            else:
+                continue
+            out["trips_" + side] += 1
     db.commit()
-    # Charge-Geofences cover places where the user stopped to charge — those
-    # are also trip endpoints. Reassign trips that started/ended in the same
-    # area so the trip log shows e.g. 'IONITY Hannover' as destination too.
-    trip_counts = _reassign_trips_around(
-        db, loc["name"], loc["lat"], loc["lon"], loc["radius_m"] or 200
-    )
-    return {
-        "charges": n_touched,
-        "trips_start": trip_counts["trips_start"],
-        "trips_end": trip_counts["trips_end"],
-    }
+    if cleared:
+        _kick_geocoder()
+    return out
 
 
 @app.route("/api/charge/locations", methods=["POST"])
@@ -6153,7 +6166,7 @@ def create_charge_location():
     )
     db.commit()
     loc_id = cur.lastrowid
-    reassigned = _reassign_charges_to_location(db, loc_id)
+    reassigned = _relabel_charge_fences(db, {name})
     db.close()
     return jsonify({"ok": True, "id": loc_id, "reassigned": reassigned})
 
@@ -6185,59 +6198,14 @@ def update_charge_location(loc_id):
         _t = _translations.get(get_language(), _translations["DE"])
         return jsonify({"error": _t["err_no_fields"]}), 400
     params.append(loc_id)
+    before = db.execute("SELECT name FROM charge_locations WHERE id = ?", (loc_id,)).fetchone()
     db.execute(f"UPDATE charge_locations SET {', '.join(sets)} WHERE id = ?", params)
     db.commit()
-    reassigned = _reassign_charges_to_location(db, loc_id)
+    after = db.execute("SELECT name FROM charge_locations WHERE id = ?", (loc_id,)).fetchone()
+    # Old name too: after a rename its points are relabelled, not orphaned.
+    reassigned = _relabel_charge_fences(db, {r["name"] for r in (before, after) if r})
     db.close()
     return jsonify({"ok": True, "reassigned": reassigned})
-
-
-def _clear_charge_sessions_for_geofence(db, loc):
-    """Inverse of _reassign_charges_to_location: drop the geofence ``name`` from
-    charge_sessions.location_name inside the (deleted) geofence shape. Sessions
-    have no street-geocoding fallback, so the label simply clears."""
-    name = loc["name"]
-    if not name:
-        return 0
-    poly = None
-    if loc["shape"] == "polygon" and loc["polygon_coords"]:
-        try:
-            poly = json.loads(loc["polygon_coords"])
-        except Exception:
-            poly = None
-    if poly:
-        lats = [p[0] for p in poly]
-        lons = [p[1] for p in poly]
-        bb_lat_min, bb_lat_max = min(lats), max(lats)
-        bb_lon_min, bb_lon_max = min(lons), max(lons)
-    elif loc["lat"] is not None and loc["lon"] is not None:
-        deg = max(loc["radius_m"] or 200, 50) / 111000.0 * 1.2
-        bb_lat_min, bb_lat_max = loc["lat"] - deg, loc["lat"] + deg
-        bb_lon_min, bb_lon_max = loc["lon"] - deg, loc["lon"] + deg
-    else:
-        cur = db.execute(
-            "UPDATE charge_sessions SET location_name = NULL WHERE location_name = ?", (name,))
-        db.commit()
-        return cur.rowcount
-
-    rows = db.execute(
-        """SELECT id, lat, lon FROM charge_sessions
-           WHERE location_name = ? AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?""",
-        (name, bb_lat_min, bb_lat_max, bb_lon_min, bb_lon_max),
-    ).fetchall()
-    n = 0
-    for r in rows:
-        if r["lat"] is None or r["lon"] is None:
-            continue
-        if poly:
-            hit = _point_in_polygon(r["lat"], r["lon"], poly)
-        else:
-            hit = detector.haversine_m(r["lat"], r["lon"], loc["lat"], loc["lon"]) <= (loc["radius_m"] or 200)
-        if hit:
-            db.execute("UPDATE charge_sessions SET location_name = NULL WHERE id = ?", (r["id"],))
-            n += 1
-    db.commit()
-    return n
 
 
 @app.route("/api/charge/locations/<int:loc_id>", methods=["DELETE"])
@@ -6253,16 +6221,11 @@ def delete_charge_location(loc_id):
         _delete_charge_icon_file(loc["icon_filename"])
     db.execute("DELETE FROM charge_locations WHERE id = ?", (loc_id,))
     db.commit()
-    cleared_sessions = 0
-    cleared_trips = {"trips_start": 0, "trips_end": 0}
-    if loc:
-        # Charge geofences also tag the trips that start/end there — clear both.
-        cleared_sessions = _clear_charge_sessions_for_geofence(db, loc)
-        cleared_trips = _clear_trips_for_geofence(db, loc["name"], loc["lat"], loc["lon"], loc["radius_m"])
+    # Its sessions and trip ends go to an overlapping fence, else lose the name.
+    r = _relabel_charge_fences(db, {loc["name"]}) if loc else {"charges": 0, "trips_start": 0, "trips_end": 0}
     db.close()
-    if cleared_trips["trips_start"] or cleared_trips["trips_end"]:
-        _kick_geocoder()
-    return jsonify({"ok": True, "cleared_sessions": cleared_sessions, "cleared_trips": cleared_trips})
+    return jsonify({"ok": True, "cleared_sessions": r["charges"],
+                    "cleared_trips": {"trips_start": r["trips_start"], "trips_end": r["trips_end"]}})
 
 
 MEDIA_DIR = os.path.join(os.path.dirname(config.DB_PATH), "media")
