@@ -1315,7 +1315,7 @@
   "admin_map_full_exit": "Vollbild verlassen (Esc)",
   "admin_js_confirm_delete_chargeloc": "Ladestandort löschen?",
   "admin_js_min_polygon_points": "Mindestens 3 Punkte für ein Polygon",
-  "admin_js_polygon_points": "{0} Punkte — neu zeichnen um zu ändern",
+  "admin_js_polygon_points": "{0} Punkte — Ecken verschieben, ‚Neu zeichnen' für eine neue Form",
   "admin_js_polygon_drawing": "{0} Punkt(e) — ‚Polygon schließen' wenn fertig",
   "admin_js_no_file": "Keine Datei ausgewählt",
   "admin_js_upload_error": "Fehler beim Hochladen",

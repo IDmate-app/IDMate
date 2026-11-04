@@ -1315,7 +1315,7 @@
   "admin_map_full_exit": "Exit full screen (Esc)",
   "admin_js_confirm_delete_chargeloc": "Delete charge location?",
   "admin_js_min_polygon_points": "At least 3 points for a polygon",
-  "admin_js_polygon_points": "{0} points — redraw to change",
+  "admin_js_polygon_points": "{0} points — drag the corners, \"Redraw\" for a new shape",
   "admin_js_polygon_drawing": "{0} point(s) — \"Close polygon\" when done",
   "admin_js_no_file": "No file selected",
   "admin_js_upload_error": "Upload error",
