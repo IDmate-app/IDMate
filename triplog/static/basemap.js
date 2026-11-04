@@ -114,4 +114,64 @@
     });
     return layer;
   };
+
+  /* Ladeort eines Punkts, nach derselben Regel wie der Server
+     (app.best_charge_location): Polygon wie gezeichnet, altes Rechteck, sonst
+     Kreis. Überlappen sich Ladeorte (Allego und Tesla nebeneinander), gewinnt
+     der kleinste, bei gleicher Größe die nähere Mitte. null = keiner. */
+  function havM(la1, lo1, la2, lo2) {
+    var r = Math.PI / 180, dLa = (la2 - la1) * r, dLo = (lo2 - lo1) * r;
+    var h = Math.sin(dLa / 2) * Math.sin(dLa / 2)
+          + Math.cos(la1 * r) * Math.cos(la2 * r) * Math.sin(dLo / 2) * Math.sin(dLo / 2);
+    return 6371000 * 2 * Math.asin(Math.sqrt(h));
+  }
+  function polyOf(f) {
+    if (f.shape !== "polygon" || !f.polygon_coords) return null;
+    try {
+      var c = typeof f.polygon_coords === "string" ? JSON.parse(f.polygon_coords) : f.polygon_coords;
+      return c && c.length >= 3 ? c : null;
+    } catch (e) { return null; }
+  }
+  function inPoly(lat, lon, c) {
+    var inside = false;
+    for (var i = 0, j = c.length - 1; i < c.length; j = i++) {
+      var yi = c[i][0], xi = c[i][1], yj = c[j][0], xj = c[j][1];
+      if ((yi > lat) !== (yj > lat) && lon < (xj - xi) * (lat - yi) / ((yj - yi) || 1e-12) + xi) inside = !inside;
+    }
+    return inside;
+  }
+  function isRect(f) { return f.shape === "rect" && f.lat2 != null && f.lon2 != null; }
+  function contains(f, lat, lon) {
+    var c = polyOf(f);
+    if (f.shape === "polygon" && f.polygon_coords) return !!c && inPoly(lat, lon, c);
+    if (f.lat == null || f.lon == null) return false;
+    if (isRect(f)) return lat >= Math.min(f.lat, f.lat2) && lat <= Math.max(f.lat, f.lat2)
+                       && lon >= Math.min(f.lon, f.lon2) && lon <= Math.max(f.lon, f.lon2);
+    return havM(lat, lon, f.lat, f.lon) <= (f.radius_m || 200);
+  }
+  function areaM2(f) {
+    var c = polyOf(f);
+    if (c) {
+      var lat0 = 0; c.forEach(function (p) { lat0 += p[0]; });
+      var k = Math.cos(lat0 / c.length * Math.PI / 180), a = 0;
+      for (var i = 0, j = c.length - 1; i < c.length; j = i++)
+        a += (c[j][1] * 111320 * k) * (c[i][0] * 110540) - (c[i][1] * 111320 * k) * (c[j][0] * 110540);
+      return Math.abs(a) / 2;
+    }
+    if (isRect(f)) return Math.abs(f.lat - f.lat2) * 110540
+                        * Math.abs(f.lon - f.lon2) * 111320 * Math.cos(f.lat * Math.PI / 180);
+    var r = f.radius_m || 200;
+    return Math.PI * r * r;
+  }
+  M.chargeFenceAt = function (lat, lon, fences) {
+    if (lat == null || lon == null) return null;
+    var best = null, bestA = Infinity, bestD = Infinity;
+    (fences || []).forEach(function (f) {
+      if (!contains(f, lat, lon)) return;
+      var clat = isRect(f) ? (f.lat + f.lat2) / 2 : f.lat, clon = isRect(f) ? (f.lon + f.lon2) / 2 : f.lon;
+      var a = areaM2(f), d = clat != null ? havM(lat, lon, clat, clon) : 0;
+      if (a < bestA || (a === bestA && d < bestD)) { best = f; bestA = a; bestD = d; }
+    });
+    return best;
+  };
 })();
