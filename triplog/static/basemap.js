@@ -82,6 +82,8 @@
     if (!vektor) {
       layer = L.tileLayer(url, {
         attribution: opts.attribution, maxZoom: maxZoom,
+        // Raster tiles end at 19; past that the finest tile is scaled up.
+        maxNativeZoom: Math.min(maxZoom, 19),
         // OSM verlangt einen Referer; ohne diese Angabe erben die Kachelbilder
         // eine strengere Seitenrichtlinie und der Server antwortet mit 403.
         referrerPolicy: "strict-origin-when-cross-origin", crossOrigin: true,
