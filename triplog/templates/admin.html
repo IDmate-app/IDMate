@@ -124,6 +124,8 @@
     .loc-mapbox.is-full .loc-map{flex:1;height:auto;margin:0;border-radius:0}
     .loc-mapbox.is-full .loc-shapebar{margin:0!important;padding:0.6rem 0.8rem;border-top:1px solid var(--border)}
     body:has(.loc-mapbox.is-full){overflow:hidden}
+    .poly-btn{padding:0.45rem 0.9rem;font-size:0.82rem;font-weight:600;min-height:36px}
+    .loc-mapbox.is-full .poly-btn{padding:0.6rem 1.2rem;font-size:0.95rem;min-height:44px}
     .map-full-btn{background:var(--bg-card);color:var(--text-2);border:1px solid var(--border);border-radius:4px;width:28px;height:28px;padding:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
     /* Geofence editor modal (Trip + charge location share this box) */
     .geofence-modal{max-width:560px}
@@ -2215,6 +2217,7 @@
 
     // Polygon click on locMap (used by both New and Edit).
     function locMapPolyClick(latlng) {
+      if (locPolyLayer) return;    // closed: only "Neu zeichnen" changes it
       const pt = [latlng.lat, latlng.lng];
       locPolyPoints.push(pt);
       const m = L.circleMarker(latlng, { radius: 5, color: TC.accent, fillColor: TC.accent, fillOpacity: 1, weight: 1 }).addTo(locMap);
@@ -2227,6 +2230,9 @@
     // Shared markup for the shape switcher row (circle | polygon + buttons).
     // Full screen for the geofence editor maps: map and shape bar (circle /
     // polygon, close, redraw) fill the screen; the button or Escape leaves it.
+    // Geofence editors zoom past the finest tiles (19): stalls of two charging
+    // parks side by side are only a few metres apart.
+    const EDITOR_MAX_ZOOM = 22;
     const MAP_FULL_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg>';
     const MAP_EXIT_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2v4H2M14 6h-4V2M10 14v-4h4M2 10h4v4"/></svg>';
     function mapFullControl(map) {
@@ -2268,8 +2274,8 @@
           <label style="font-size:0.75rem;color:var(--text-2);display:flex;align-items:center;gap:0.3rem;cursor:pointer">
             <input type="radio" name="locShape" value="polygon" ${isPoly ? 'checked' : ''} data-onchange="locSwitchShape" data-args='["polygon"]'> ${T.shape_polygon}
           </label>
-          <button id="locPolyDoneBtn" data-onclick="locFinishPolygon" style="display:${isPoly ? '' : 'none'};padding:0.15rem 0.5rem;font-size:0.7rem;border-radius:4px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer">${T.close_polygon}</button>
-          <button id="locPolyResetBtn" data-onclick="locResetPolygon" style="display:${isPoly ? '' : 'none'};padding:0.15rem 0.5rem;font-size:0.7rem;border-radius:4px;border:1px solid var(--text-2);background:transparent;color:var(--text-2);cursor:pointer">${T.redraw}</button>
+          <button id="locPolyDoneBtn" class="poly-btn" data-onclick="locFinishPolygon" style="display:${isPoly ? '' : 'none'};border-radius:4px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer">${T.close_polygon}</button>
+          <button id="locPolyResetBtn" class="poly-btn" data-onclick="locResetPolygon" style="display:${isPoly ? '' : 'none'};border-radius:4px;border:1px solid var(--text-2);background:transparent;color:var(--text-2);cursor:pointer">${T.redraw}</button>
           <span style="font-size:0.72rem;color:var(--text-2)" id="locShapeHint">${isPoly ? T.polygon_hint : T.click_map_short}</span>
         </div>`;
     }
@@ -2277,7 +2283,7 @@
     // Satellite toggle for a map (same as on the charge locations).
     // Expects the already-added street layer; returns nothing.
     function addSatelliteToggle(map, streetLayer) {
-      const satLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 });
+      const satLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: EDITOR_MAX_ZOOM, maxNativeZoom: 19 });
       const ctrl = L.control({ position: 'topright' });
       let satActive = false;
       ctrl.onAdd = function () {
@@ -2519,7 +2525,7 @@
         locPolyPoints = []; locPolyMarkers = []; locPolyLine = null; locPolyLayer = null;
         locMap = L.map('locMap', { zoomControl: true, attributionControl: false }).setView([loc.lat, loc.lon], 16);
         mapFullControl(locMap);
-        const locStreet = IDmateMap.baseLayer('{{ map_tile_url }}', { maxZoom: 19 }).addTo(locMap);
+        const locStreet = IDmateMap.baseLayer('{{ map_tile_url }}', { maxZoom: EDITOR_MAX_ZOOM }).addTo(locMap);
         addSatelliteToggle(locMap, locStreet);
         drawOtherGeofences(locMap, loc.id, l => pickExistingGeofence(l, null));
         // 'Neu zeichnen' from the Fahrtenbuch geofence list: once the current
@@ -2620,7 +2626,7 @@
         const center = hasPos ? [prefill.lat, prefill.lon] : [53.55, 10.0];
         locMap = L.map('locMap', { zoomControl: true, attributionControl: false }).setView(center, hasPos ? 16 : 10);
         mapFullControl(locMap);
-        const locStreet = IDmateMap.baseLayer('{{ map_tile_url }}', { maxZoom: 19 }).addTo(locMap);
+        const locStreet = IDmateMap.baseLayer('{{ map_tile_url }}', { maxZoom: EDITOR_MAX_ZOOM }).addTo(locMap);
         addSatelliteToggle(locMap, locStreet);
         drawOtherGeofences(locMap, null, l => pickExistingGeofence(l, prefill || null));
 
@@ -4474,8 +4480,8 @@
             <label style="font-size:0.75rem;color:var(--text-2);display:flex;align-items:center;gap:0.3rem;cursor:pointer">
               <input type="radio" name="clShape" value="polygon" ${isPoly ? 'checked' : ''} data-onchange="clSwitchShape" data-args='["polygon"]'> ${T.shape_polygon}
             </label>
-            <button id="clPolyDoneBtn" data-onclick="clFinishPolygon" style="display:${isPoly ? '' : 'none'};padding:0.15rem 0.5rem;font-size:0.7rem;border-radius:4px;border:1px solid var(--warn);background:transparent;color:var(--warn);cursor:pointer">${T.close_polygon}</button>
-            <button id="clPolyResetBtn" data-onclick="clResetPolygon" style="display:${isPoly ? '' : 'none'};padding:0.15rem 0.5rem;font-size:0.7rem;border-radius:4px;border:1px solid var(--text-2);background:transparent;color:var(--text-2);cursor:pointer">${T.redraw}</button>
+            <button id="clPolyDoneBtn" class="poly-btn" data-onclick="clFinishPolygon" style="display:${isPoly ? '' : 'none'};border-radius:4px;border:1px solid var(--warn);background:transparent;color:var(--warn);cursor:pointer">${T.close_polygon}</button>
+            <button id="clPolyResetBtn" class="poly-btn" data-onclick="clResetPolygon" style="display:${isPoly ? '' : 'none'};border-radius:4px;border:1px solid var(--text-2);background:transparent;color:var(--text-2);cursor:pointer">${T.redraw}</button>
             <span style="font-size:0.72rem;color:var(--text-2)" id="clShapeHint">${isPoly ? T.polygon_hint : T.click_map_short}</span>
           </div></div>
           <div class="loc-fields">
@@ -4600,8 +4606,8 @@
         const zoom = loc && loc.lat ? 17 : 10;
         clMap = L.map('clMapEl', { zoomControl: true, attributionControl: false }).setView(center, zoom);
         mapFullControl(clMap);
-        clStreetLayer = IDmateMap.baseLayer('{{ map_tile_url }}', { maxZoom: 19 });
-        clSatLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 });
+        clStreetLayer = IDmateMap.baseLayer('{{ map_tile_url }}', { maxZoom: EDITOR_MAX_ZOOM });
+        clSatLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: EDITOR_MAX_ZOOM, maxNativeZoom: 19 });
         clStreetLayer.addTo(clMap);
         // Satellit-Umschalter
         const satBtn = L.control({ position: 'topright' });
@@ -4672,7 +4678,8 @@
             placeCircle(e.latlng, r);
             suggestChargeLocCountry(e.latlng.lat, e.latlng.lng);
           } else {
-            // Polygon: add point
+            // Polygon: add point — a closed one only changes via "Neu zeichnen"
+            if (clPolyLayer) return;
             const pt = [e.latlng.lat, e.latlng.lng];
             clPolyPoints.push(pt);
             const m = L.circleMarker(e.latlng, { radius: 5, color: TC.warn, fillColor: TC.warn, fillOpacity: 1, weight: 1 }).addTo(clMap);
