@@ -2034,6 +2034,23 @@
       ccEl.value = d.country_code.toUpperCase().slice(0, 2);
       ccEl.dataset.auto = ccEl.value;
     }
+    // Geofence saved without a name: it takes the address the server finds
+    // for the point (same source as trip destinations). '' when none.
+    async function nameFromAddress(inputId, lat, lon) {
+      const el = document.getElementById(inputId);
+      if (!el) return '';
+      if (el.value.trim() || isNaN(lat) || isNaN(lon)) return el.value.trim();
+      el.placeholder = T.geo_name_loading;
+      let name = '';
+      try {
+        const r = await fetch(`/api/reverse-geocode?lat=${lat}&lon=${lon}`);
+        name = ((await r.json()).name || '').trim();
+      } catch (e) { /* no address — the usual "name required" follows */ }
+      el.placeholder = '';
+      if (name) el.value = name;
+      return name;
+    }
+
     async function suggestChargeLocCountry(lat, lon) {
       clSetCountry(await clReverseGeocode(lat, lon));
     }
@@ -2709,9 +2726,9 @@
     }
 
     async function createNewLocation() {
-      const name = document.getElementById('locName').value.trim();
       const lat = parseFloat(document.getElementById('locLat').value);
       const lon = parseFloat(document.getElementById('locLon').value);
+      const name = await nameFromAddress('locName', lat, lon);
       if (!name || isNaN(lat) || isNaN(lon)) { toast(T.name_position_required, 'error'); return; }
       const shape = document.querySelector('input[name="locShape"]:checked')?.value || 'circle';
       const polyCoords = document.getElementById('locPolyCoords')?.value || null;
@@ -2756,6 +2773,8 @@
     }
 
     async function saveLocation(locId) {
+      await nameFromAddress('locName', parseFloat(document.getElementById('locLat').value),
+                            parseFloat(document.getElementById('locLon').value));
       const shape = document.querySelector('input[name="locShape"]:checked')?.value || 'circle';
       const polyCoords = document.getElementById('locPolyCoords')?.value || null;
       if (shape === 'polygon' && !polyCoords) { toast(T.draw_close_polygon, 'error'); return; }
@@ -4757,6 +4776,8 @@
     }
 
     async function saveChargeLoc(id) {
+      await nameFromAddress('clName', parseFloat(document.getElementById('clLat').value),
+                            parseFloat(document.getElementById('clLon').value));
       const shape = document.querySelector('input[name="clShape"]:checked')?.value || 'circle';
       const polyCoords = document.getElementById('clPolyCoords')?.value || null;
       const body = {
