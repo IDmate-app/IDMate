@@ -119,6 +119,12 @@
     .loc-detail{border:1px solid var(--border);border-radius:8px;padding:0.8rem;margin-top:0.8rem;background:var(--bg-card)}
     .loc-detail h4{font-size:0.9rem;color:var(--accent);margin-bottom:0.6rem}
     .loc-map{width:100%;height:200px;border-radius:6px;margin-bottom:0.6rem}
+    /* Full screen map in the geofence editors: map + shape bar fill the screen */
+    .loc-mapbox.is-full{position:fixed;inset:0;z-index:10001;background:var(--bg-card);display:flex;flex-direction:column;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+    .loc-mapbox.is-full .loc-map{flex:1;height:auto;margin:0;border-radius:0}
+    .loc-mapbox.is-full .loc-shapebar{margin:0!important;padding:0.6rem 0.8rem;border-top:1px solid var(--border)}
+    body:has(.loc-mapbox.is-full){overflow:hidden}
+    .map-full-btn{background:var(--bg-card);color:var(--text-2);border:1px solid var(--border);border-radius:4px;width:28px;height:28px;padding:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
     /* Geofence editor modal (Trip + charge location share this box) */
     .geofence-modal{max-width:560px}
     @media(min-width:768px){
@@ -1324,6 +1330,8 @@
       calib_manual_done: {{ t.admin_js_calib_manual_done | tojson }},
       name_coords_required: {{ t.admin_js_name_coords_required | tojson }},
       draw_close_polygon: {{ t.admin_js_draw_close_polygon | tojson }},
+      map_full: {{ t.admin_map_full | tojson }},
+      map_full_exit: {{ t.admin_map_full_exit | tojson }},
       confirm_delete_chargeloc: {{ t.admin_js_confirm_delete_chargeloc | tojson }},
       min_polygon_points: {{ t.admin_js_min_polygon_points | tojson }},
       polygon_points: {{ t.admin_js_polygon_points | tojson }},
@@ -2217,9 +2225,43 @@
     }
 
     // Shared markup for the shape switcher row (circle | polygon + buttons).
+    // Full screen for the geofence editor maps: map and shape bar (circle /
+    // polygon, close, redraw) fill the screen; the button or Escape leaves it.
+    const MAP_FULL_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg>';
+    const MAP_EXIT_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2v4H2M14 6h-4V2M10 14v-4h4M2 10h4v4"/></svg>';
+    function mapFullControl(map) {
+      const ctrl = L.control({ position: 'topright' });
+      ctrl.onAdd = function() {
+        const btn = L.DomUtil.create('button', 'map-full-btn');
+        btn.type = 'button';
+        btn.title = T.map_full; btn.innerHTML = MAP_FULL_ICON;
+        L.DomEvent.disableClickPropagation(btn);
+        L.DomEvent.on(btn, 'click', function(e) {
+          L.DomEvent.preventDefault(e);
+          const box = map.getContainer().closest('.loc-mapbox');
+          if (!box) return;
+          const on = !box.classList.contains('is-full');
+          box.classList.toggle('is-full', on);
+          btn.title = on ? T.map_full_exit : T.map_full;
+          btn.innerHTML = on ? MAP_EXIT_ICON : MAP_FULL_ICON;
+          setTimeout(() => map.invalidateSize(), 60);
+        });
+        return btn;
+      };
+      ctrl.addTo(map);
+    }
+    document.addEventListener('keydown', function(e) {
+      if (e.key !== 'Escape') return;
+      const box = document.querySelector('.loc-mapbox.is-full');
+      if (!box) return;
+      e.stopImmediatePropagation();
+      const btn = box.querySelector('.map-full-btn');
+      if (btn) btn.click();
+    }, true);
+
     function locShapeControls(isPoly) {
       return `
-        <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin:0.3rem 0">
+        <div class="loc-shapebar" style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin:0.3rem 0">
           <label style="font-size:0.75rem;color:var(--text-2);display:flex;align-items:center;gap:0.3rem;cursor:pointer">
             <input type="radio" name="locShape" value="circle" ${!isPoly ? 'checked' : ''} data-onchange="locSwitchShape" data-args='["circle"]'> ${T.shape_circle}
           </label>
@@ -2407,8 +2449,8 @@
       detail.innerHTML = `
         <div class="loc-detail">
           <h4>${isDest ? simpleGeofenceTitle(loc) : esc(loc.name)}${isAlias ? ` <span style="font-weight:400;font-size:0.8rem;color:var(--text-2)">· ${T.alias_of.replace('{0}', esc(parent.name))}</span>` : ''}</h4>
-          <div class="loc-map" id="locMap"></div>
-          ${locShapeControls(isPoly)}
+          <div class="loc-mapbox"><div class="loc-map" id="locMap"></div>
+          ${locShapeControls(isPoly)}</div>
           <input type="hidden" id="locPolyCoords" value="${esc(loc.polygon_coords || '')}">
           <div class="loc-fields">
             <div class="loc-field">
@@ -2476,6 +2518,7 @@
         if (locMap) locMap.remove();
         locPolyPoints = []; locPolyMarkers = []; locPolyLine = null; locPolyLayer = null;
         locMap = L.map('locMap', { zoomControl: true, attributionControl: false }).setView([loc.lat, loc.lon], 16);
+        mapFullControl(locMap);
         const locStreet = IDmateMap.baseLayer('{{ map_tile_url }}', { maxZoom: 19 }).addTo(locMap);
         addSatelliteToggle(locMap, locStreet);
         drawOtherGeofences(locMap, loc.id, l => pickExistingGeofence(l, null));
@@ -2541,8 +2584,8 @@
       detail.innerHTML = `
         <div class="loc-detail">
           <h4>${prefill && prefill.alias_of ? T.alias_new_title.replace('{0}', esc(prefill.name || '')) : (prefill && prefill.keep_address ? simpleGeofenceTitle(prefill) : T.new_location_title)}</h4>
-          <div class="loc-map" id="locMap"></div>
-          ${locShapeControls(false)}
+          <div class="loc-mapbox"><div class="loc-map" id="locMap"></div>
+          ${locShapeControls(false)}</div>
           <input type="hidden" id="locPolyCoords" value="">
           <input type="hidden" id="locAliasOf" value="${prefill && prefill.alias_of ? prefill.alias_of : ''}">
           <div class="loc-fields">
@@ -2576,6 +2619,7 @@
         const hasPos = !!(prefill && prefill.lat != null && prefill.lon != null);
         const center = hasPos ? [prefill.lat, prefill.lon] : [53.55, 10.0];
         locMap = L.map('locMap', { zoomControl: true, attributionControl: false }).setView(center, hasPos ? 16 : 10);
+        mapFullControl(locMap);
         const locStreet = IDmateMap.baseLayer('{{ map_tile_url }}', { maxZoom: 19 }).addTo(locMap);
         addSatelliteToggle(locMap, locStreet);
         drawOtherGeofences(locMap, null, l => pickExistingGeofence(l, prefill || null));
@@ -4422,8 +4466,8 @@
       return `
         <div class="loc-detail">
           <h4 style="font-size:0.85rem;color:var(--accent);margin-bottom:0.5rem">${loc.id ? esc(loc.name) : T.new_charge_loc_title}</h4>
-          <div class="loc-map" id="clMapEl"></div>
-          <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:0.3rem">
+          <div class="loc-mapbox"><div class="loc-map" id="clMapEl"></div>
+          <div class="loc-shapebar" style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:0.3rem">
             <label style="font-size:0.75rem;color:var(--text-2);display:flex;align-items:center;gap:0.3rem;cursor:pointer">
               <input type="radio" name="clShape" value="circle" ${!isPoly ? 'checked' : ''} data-onchange="clSwitchShape" data-args='["circle"]'> ${T.shape_circle}
             </label>
@@ -4433,7 +4477,7 @@
             <button id="clPolyDoneBtn" data-onclick="clFinishPolygon" style="display:${isPoly ? '' : 'none'};padding:0.15rem 0.5rem;font-size:0.7rem;border-radius:4px;border:1px solid var(--warn);background:transparent;color:var(--warn);cursor:pointer">${T.close_polygon}</button>
             <button id="clPolyResetBtn" data-onclick="clResetPolygon" style="display:${isPoly ? '' : 'none'};padding:0.15rem 0.5rem;font-size:0.7rem;border-radius:4px;border:1px solid var(--text-2);background:transparent;color:var(--text-2);cursor:pointer">${T.redraw}</button>
             <span style="font-size:0.72rem;color:var(--text-2)" id="clShapeHint">${isPoly ? T.polygon_hint : T.click_map_short}</span>
-          </div>
+          </div></div>
           <div class="loc-fields">
             <div class="loc-field" style="grid-column:span 2">
               <label>Name</label>
@@ -4555,6 +4599,7 @@
         const center = loc && loc.lat ? [loc.lat, loc.lon] : [53.55, 10.0];
         const zoom = loc && loc.lat ? 17 : 10;
         clMap = L.map('clMapEl', { zoomControl: true, attributionControl: false }).setView(center, zoom);
+        mapFullControl(clMap);
         clStreetLayer = IDmateMap.baseLayer('{{ map_tile_url }}', { maxZoom: 19 });
         clSatLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 });
         clStreetLayer.addTo(clMap);
