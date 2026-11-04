@@ -1311,6 +1311,8 @@
   "admin_js_calib_manual_done": "Factor set · {0} trips recalculated",
   "admin_js_name_coords_required": "Name and coordinates required",
   "admin_js_draw_close_polygon": "Draw and close polygon",
+  "admin_map_full": "Full screen map",
+  "admin_map_full_exit": "Exit full screen (Esc)",
   "admin_js_confirm_delete_chargeloc": "Delete charge location?",
   "admin_js_min_polygon_points": "At least 3 points for a polygon",
   "admin_js_polygon_points": "{0} points — redraw to change",

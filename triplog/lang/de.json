@@ -1311,6 +1311,8 @@
   "admin_js_calib_manual_done": "Faktor gesetzt · {0} Fahrten neu berechnet",
   "admin_js_name_coords_required": "Name und Koordinaten erforderlich",
   "admin_js_draw_close_polygon": "Polygon zeichnen und schließen",
+  "admin_map_full": "Karte im Vollbild",
+  "admin_map_full_exit": "Vollbild verlassen (Esc)",
   "admin_js_confirm_delete_chargeloc": "Ladestandort löschen?",
   "admin_js_min_polygon_points": "Mindestens 3 Punkte für ein Polygon",
   "admin_js_polygon_points": "{0} Punkte — neu zeichnen um zu ändern",
