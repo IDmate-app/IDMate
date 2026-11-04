@@ -124,6 +124,10 @@
     .loc-mapbox.is-full .loc-map{flex:1;height:auto;margin:0;border-radius:0}
     .loc-mapbox.is-full .loc-shapebar{margin:0!important;padding:0.6rem 0.8rem;border-top:1px solid var(--border)}
     body:has(.loc-mapbox.is-full){overflow:hidden}
+    /* Polygon corner: 12 px dot, 28 px touch area, can be dragged */
+    .poly-vertex{background:none;border:none}
+    .poly-vertex span{display:block;width:12px;height:12px;margin:8px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 3px rgba(0,0,0,.7);box-sizing:border-box}
+    .poly-vertex.leaflet-drag-target span,.poly-vertex:active span{transform:scale(1.5)}
     .poly-btn{padding:0.45rem 0.9rem;font-size:0.82rem;font-weight:600;min-height:36px}
     .loc-mapbox.is-full .poly-btn{padding:0.6rem 1.2rem;font-size:0.95rem;min-height:44px}
     .map-full-btn{background:var(--bg-card);color:var(--text-2);border:1px solid var(--border);border-radius:4px;width:28px;height:28px;padding:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
@@ -2206,6 +2210,21 @@
       if (locPolyLayer) locMap.removeLayer(locPolyLayer);
       if (locPolyLine) { locMap.removeLayer(locPolyLine); locPolyLine = null; }
       locPolyLayer = L.polygon(locPolyPoints, { color: TC.accent, fillColor: TC.accent, fillOpacity: 0.15, weight: 2 }).addTo(locMap);
+      locStorePolygon();
+    }
+
+    function locTapVertex(i) {                 // first corner closes the polygon
+      if (i === 0 && !locPolyLayer && locPolyPoints.length >= 3) locFinishPolygon();
+    }
+
+    function locMoveVertex(i, pt, done) {
+      locPolyPoints[i] = pt;
+      if (!locPolyLayer) { locUpdatePolyPreview(); return; }
+      locPolyLayer.setLatLngs(locPolyPoints);
+      if (done) locStorePolygon();
+    }
+
+    function locStorePolygon() {
       // Store centroid as lat/lon (marker/visit count uses this)
       const centroid = locPolyPoints.reduce((acc, p) => [acc[0]+p[0], acc[1]+p[1]], [0,0]).map(v => v/locPolyPoints.length);
       document.getElementById('locLat').value = centroid[0].toFixed(6);
@@ -2216,12 +2235,11 @@
     }
 
     // Polygon click on locMap (used by both New and Edit).
-    function locMapPolyClick(latlng) {
-      if (locPolyLayer) return;    // closed: only "Neu zeichnen" changes it
+    function locMapPolyClick(latlng, e) {
+      if (locPolyLayer || isVertexTap(e)) return;    // closed: only "Neu zeichnen" changes it
       const pt = [latlng.lat, latlng.lng];
       locPolyPoints.push(pt);
-      const m = L.circleMarker(latlng, { radius: 5, color: TC.accent, fillColor: TC.accent, fillOpacity: 1, weight: 1 }).addTo(locMap);
-      locPolyMarkers.push(m);
+      locPolyMarkers.push(polyVertex(locMap, latlng, TC.accent, locPolyPoints.length - 1, locMoveVertex, locTapVertex));
       locUpdatePolyPreview();
       const hint = document.getElementById('locShapeHint');
       if (hint) hint.textContent = T.polygon_drawing.replace('{0}', locPolyPoints.length);
@@ -2230,6 +2248,25 @@
     // Shared markup for the shape switcher row (circle | polygon + buttons).
     // Full screen for the geofence editor maps: map and shape bar (circle /
     // polygon, close, redraw) fill the screen; the button or Escape leaves it.
+    // Corner of a geofence polygon, also after closing: dragging it moves the
+    // corner, onMove(i, [lat, lon], done) updates the shape (done on release).
+    function polyVertex(map, latlng, color, i, onMove, onTap) {
+      const icon = L.divIcon({ className: 'poly-vertex', html: `<span style="background:${color}"></span>`,
+                               iconSize: [28, 28], iconAnchor: [14, 14] });
+      const m = L.marker(latlng, { icon, draggable: true, keyboard: false, autoPan: true }).addTo(map);
+      const at = () => { const ll = m.getLatLng(); return [ll.lat, ll.lng]; };
+      m.on('drag', () => onMove(i, at(), false));
+      m.on('dragend', () => onMove(i, at(), true));
+      if (onTap) m.on('click', () => onTap(i));
+      return m;
+    }
+    // A tap on a corner also reaches the map's click handler: it must not
+    // add a point there.
+    function isVertexTap(e) {
+      const t = e && e.originalEvent && e.originalEvent.target;
+      return !!(t && t.closest && t.closest('.poly-vertex'));
+    }
+
     // Geofence editors zoom past the finest tiles (19): stalls of two charging
     // parks side by side are only a few metres apart.
     const EDITOR_MAX_ZOOM = 22;
@@ -2560,7 +2597,7 @@
             document.getElementById('locLon').value = e.latlng.lng.toFixed(6);
             placeCircle(e.latlng, parseInt(document.getElementById('locRadius').value) || 200);
           } else {
-            locMapPolyClick(e.latlng);
+            locMapPolyClick(e.latlng, e);
           }
         });
 
@@ -2573,9 +2610,8 @@
         if (isPoly && loc.polygon_coords) {
           try {
             locPolyPoints = JSON.parse(loc.polygon_coords);
-            locPolyPoints.forEach(p => {
-              const m = L.circleMarker([p[0], p[1]], { radius: 5, color: TC.accent, fillColor: TC.accent, fillOpacity: 1, weight: 1 }).addTo(locMap);
-              locPolyMarkers.push(m);
+            locPolyPoints.forEach((p, i) => {
+              locPolyMarkers.push(polyVertex(locMap, [p[0], p[1]], TC.accent, i, locMoveVertex, locTapVertex));
             });
             locFinishPolygon();
           } catch (e) {}
@@ -2649,7 +2685,7 @@
         locMap.on('click', function (e) {
           const shape = document.querySelector('input[name="locShape"]:checked')?.value || 'circle';
           if (shape === 'circle') placeMarker(e.latlng);
-          else locMapPolyClick(e.latlng);
+          else locMapPolyClick(e.latlng, e);
         });
 
         document.getElementById('locRadius').addEventListener('input', function () {
@@ -4580,6 +4616,21 @@
       if (clPolyLayer) clMap.removeLayer(clPolyLayer);
       if (clPolyLine) { clMap.removeLayer(clPolyLine); clPolyLine = null; }
       clPolyLayer = L.polygon(clPolyPoints, { color: TC.warn, fillColor: TC.warn, fillOpacity: 0.15, weight: 2 }).addTo(clMap);
+      clStorePolygon();
+    }
+
+    function clTapVertex(i) {                  // first corner closes the polygon
+      if (i === 0 && !clPolyLayer && clPolyPoints.length >= 3) clFinishPolygon();
+    }
+
+    function clMoveVertex(i, pt, done) {
+      clPolyPoints[i] = pt;
+      if (!clPolyLayer) { clUpdatePolyPreview(); return; }
+      clPolyLayer.setLatLngs(clPolyPoints);
+      if (done) clStorePolygon();
+    }
+
+    function clStorePolygon() {
       // Save centroid
       const centroid = clPolyPoints.reduce((acc, p) => [acc[0]+p[0], acc[1]+p[1]], [0,0]).map(v => v/clPolyPoints.length);
       document.getElementById('clLat').value = centroid[0].toFixed(6);
@@ -4679,11 +4730,10 @@
             suggestChargeLocCountry(e.latlng.lat, e.latlng.lng);
           } else {
             // Polygon: add point — a closed one only changes via "Neu zeichnen"
-            if (clPolyLayer) return;
+            if (clPolyLayer || isVertexTap(e)) return;
             const pt = [e.latlng.lat, e.latlng.lng];
             clPolyPoints.push(pt);
-            const m = L.circleMarker(e.latlng, { radius: 5, color: TC.warn, fillColor: TC.warn, fillOpacity: 1, weight: 1 }).addTo(clMap);
-            clPolyMarkers.push(m);
+            clPolyMarkers.push(polyVertex(clMap, e.latlng, TC.warn, clPolyPoints.length - 1, clMoveVertex, clTapVertex));
             clUpdatePolyPreview();
             document.getElementById('clShapeHint').textContent = T.polygon_drawing.replace('{0}', clPolyPoints.length);
           }
@@ -4693,9 +4743,8 @@
         if (loc && loc.polygon_coords) {
           try {
             clPolyPoints = JSON.parse(loc.polygon_coords);
-            clPolyPoints.forEach(p => {
-              const m = L.circleMarker([p[0],p[1]], { radius: 5, color: TC.warn, fillColor: TC.warn, fillOpacity: 1, weight: 1 }).addTo(clMap);
-              clPolyMarkers.push(m);
+            clPolyPoints.forEach((p, i) => {
+              clPolyMarkers.push(polyVertex(clMap, [p[0], p[1]], TC.warn, i, clMoveVertex, clTapVertex));
             });
             clFinishPolygon();
           } catch(e) {}
