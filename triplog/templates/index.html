@@ -62,6 +62,27 @@
 
   /* Notes scratchpad */
   .notes-box{margin-top:1.5rem;padding-top:0.8rem}
+  /* BMS learning: summary + button at the bottom, input dialog */
+  .bms-box{margin-top:1.2rem;padding:0.7rem 0.8rem;border:1px solid var(--border);border-radius:8px;background:var(--bg-card)}
+  .bms-sum{font-size:0.8rem;color:var(--text-2);line-height:1.5;margin-bottom:0.6rem}
+  .bms-sum b{color:var(--text-1);font-size:0.95rem}
+  .bms-btn{width:100%;min-height:44px;font-size:0.95rem;font-weight:600;border-radius:8px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer}
+  .bms-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:10000;align-items:flex-start;justify-content:center;padding:max(1rem,env(safe-area-inset-top)) 1rem 1rem;overflow:auto}
+  .bms-dlg{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;width:100%;max-width:460px;padding:1rem 1.1rem;position:relative}
+  .bms-dlg h3{font-size:1rem;color:var(--accent);margin:0 0 0.4rem}
+  .bms-dlg p{font-size:0.78rem;color:var(--text-2);margin:0 0 0.6rem}
+  .bms-live{font-size:0.82rem;padding:0.5rem 0.6rem;border-radius:6px;background:var(--bg);margin-bottom:0.7rem}
+  .bms-live.stale{color:var(--warn);border:1px solid var(--warn)}
+  .bms-field{margin-bottom:0.55rem}
+  .bms-field label{display:block;font-size:0.75rem;color:var(--text-2);margin-bottom:0.15rem}
+  .bms-field input{width:100%;font-size:1.25rem;padding:0.5rem 0.6rem;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text-1)}
+  .bms-save{width:100%;min-height:48px;font-size:1rem;font-weight:700;border-radius:8px;border:none;background:var(--success-btn);color:#fff;cursor:pointer;margin-top:0.3rem}
+  .bms-save:disabled{opacity:.45;cursor:not-allowed}
+  .bms-pts{margin-top:0.9rem;font-size:0.74rem;color:var(--text-2)}
+  .bms-pt{display:flex;gap:0.5rem;align-items:center;padding:0.3rem 0;border-top:1px solid var(--border-soft)}
+  .bms-pt span{flex:1}
+  .bms-pt button{background:none;border:none;color:var(--text-2);cursor:pointer;font-size:1rem;padding:0 0.3rem}
+  .bms-x{position:absolute;top:0.5rem;right:0.7rem;background:none;border:none;color:var(--text-2);font-size:1.4rem;cursor:pointer}
   .notes-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem;color:var(--text-2);font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em}
   .notes-add-btn{background:var(--bg-hover);color:var(--text-2);border:none;border-radius:4px;width:24px;height:22px;cursor:pointer;font-size:0.9rem;line-height:1;padding:0;display:inline-flex;align-items:center;justify-content:center}
   .notes-add-btn:hover{background:var(--bg-active);color:var(--text-1)}
@@ -176,8 +197,33 @@
         </div>
         <div id="notesList"></div>
       </div>
+
+      {% if bms_learn %}
+      <div class="bms-box" id="bmsBox">
+        <div class="bms-sum" id="bmsSum"></div>
+        <button class="bms-btn" data-onclick="openBms">{{ t.bms_button }}</button>
+      </div>
+      {% endif %}
     </div>
   </div>
+  {% if bms_learn %}
+  <div class="bms-ov" id="bmsOv" data-onclick="bmsBackdrop">
+    <div class="bms-dlg">
+      <button class="bms-x" data-onclick="closeBms" aria-label="close">&times;</button>
+      <h3>{{ t.bms_title }}</h3>
+      <p>{{ t.bms_intro }}</p>
+      <div class="bms-live" id="bmsLive">…</div>
+      <div class="bms-field"><label for="bmsSoc">{{ t.bms_disp_soc }}</label>
+        <input id="bmsSoc" type="number" inputmode="decimal" min="0" max="100" step="1"></div>
+      <div class="bms-field"><label for="bmsRange">{{ t.bms_disp_range }}</label>
+        <input id="bmsRange" type="number" inputmode="numeric" min="0" max="1500" step="1"></div>
+      <div class="bms-field"><label for="bmsCons">{{ t.bms_disp_cons }}</label>
+        <input id="bmsCons" type="number" inputmode="decimal" min="3" max="80" step="0.1"></div>
+      <button class="bms-save" id="bmsSave" data-onclick="saveBms">{{ t.bms_save }}</button>
+      <div class="bms-pts" id="bmsPts"></div>
+    </div>
+  </div>
+  {% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -656,4 +702,93 @@
   }
   loadNotes();
   </script>
+  {% if bms_learn %}
+  <script nonce="{{ csp_nonce }}">
+  // ── BMS learning: what the car shows vs. the CAN bus ─────────────
+  const BMS_T = {{ {
+    'can_now': t.bms_can_now, 'age': t.bms_age, 'fresh_hint': t.bms_fresh_hint, 'saved': t.bms_saved,
+    'points': t.bms_points, 'del': t.bms_delete_confirm, 'pred': t.bms_display_pred, 'acc': t.bms_accuracy,
+    'need': t.bms_need_points, 'vw': t.bms_vw_range, 'real': t.bms_real_range, 'real_hint': t.bms_real_hint,
+    'buffer': t.bms_buffer, 'window': t.bms_window, 'e': t.bms_e, 'soc_req': t.bms_soc_required,
+    'bat': t.dash_bat_temp, 'ext': t.dash_ext_temp, 'none': t.bms_no_value } | tojson }};
+  let _bms = null, _bmsTimer = null;
+  const _bmsNum = (v, d = 1) => (v === null || v === undefined) ? '–' : Number(v).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: 0 });
+  function _bmsAge(s) {
+    if (s === null || s === undefined) return BMS_T.none;
+    return BMS_T.age.replace('{0}', s < 90 ? Math.round(s) + ' s' : Math.round(s / 60) + ' min');
+  }
+  async function bmsLoad() {
+    try {
+      const r = await fetch('/api/bms-learn');
+      if (!r.ok) return;
+      _bms = await r.json();
+      bmsRender();
+    } catch (e) { console.error('bms load', e); }
+  }
+  function bmsRender() {
+    const d = _bms; if (!d) return;
+    const now = d.now || {}, lines = [];
+    if (d.display && now.display_soc !== null && now.display_soc !== undefined) {
+      const acc = d.display.mae_loo !== null ? d.display.mae_loo : d.display.mae;
+      lines.push(`${BMS_T.pred} <b>${_bmsNum(now.display_soc, 0)} %</b> · ${BMS_T.acc.replace('{0}', _bmsNum(acc, 1)).replace('{1}', d.display.n)}`);
+    } else {
+      lines.push(BMS_T.need.replace('{0}', Math.max(0, 3 - (d.n || 0))));
+    }
+    if (now.vw_range) lines.push(`${BMS_T.vw} <b>${now.vw_range} km</b>`);
+    if (now.real) lines.push(`${BMS_T.real} <b>${now.real.km_low}–${now.real.km_high} km</b><br><small>${BMS_T.real_hint.replace('{0}', now.real.trips).replace('{1}', _bmsNum(now.real.cons_mid, 1))}</small>`);
+    const det = [];
+    if (d.display) { const z = d.display.coef[1] ? -d.display.coef[0] / d.display.coef[1] : null; if (z !== null) det.push(BMS_T.buffer.replace('{0}', _bmsNum(z, 1))); }
+    if (d.range && d.range.window_km) det.push(BMS_T.window.replace('{0}', d.range.window_km));
+    if (d.range) det.push(BMS_T.e.replace('{0}', _bmsNum(d.range.e_kwh, 1)));
+    if (det.length) lines.push(`<small>${det.join(' · ')}</small>`);
+    const sum = document.getElementById('bmsSum'); if (sum) sum.innerHTML = lines.join('<br>');
+    const live = d.live || {}, el = document.getElementById('bmsLive');
+    if (el) {
+      el.className = 'bms-live' + (live.fresh ? '' : ' stale');
+      el.innerHTML = `${BMS_T.can_now}: <b>${_bmsNum(live.can_soc, 1)} %</b> · ${BMS_T.bat} ${_bmsNum(live.bat_temp, 1)} °C · ${BMS_T.ext} ${_bmsNum(live.ext_temp, 1)} °C · ${_bmsAge(live.age_s)}`
+        + (live.fresh ? '' : `<br>${BMS_T.fresh_hint}`);
+    }
+    const btn = document.getElementById('bmsSave'); if (btn) btn.disabled = !live.fresh;
+    const pts = document.getElementById('bmsPts');
+    if (pts) pts.innerHTML = (d.points || []).length ? `<div>${BMS_T.points}: ${d.n}</div>` + d.points.map(p => `
+      <div class="bms-pt"><span>${new Date(p.created_at).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })} ·
+        ${_bmsNum(p.disp_soc, 1)} % / ${p.disp_range ? _bmsNum(p.disp_range, 0) + ' km' : '–'} / ${p.disp_cons ? _bmsNum(p.disp_cons, 1) : '–'} ·
+        CAN ${_bmsNum(p.can_soc, 1)} % · ${_bmsNum(p.bat_temp, 0)}/${_bmsNum(p.ext_temp, 0)} °C</span>
+        <button data-onclick="deleteBmsPoint" data-args='[${p.id}]' aria-label="delete">&times;</button></div>`).join('') : '';
+  }
+  function openBms() {
+    document.getElementById('bmsOv').style.display = 'flex';
+    bmsLoad();
+    clearInterval(_bmsTimer);
+    _bmsTimer = setInterval(bmsLoad, 15000);
+    setTimeout(() => document.getElementById('bmsSoc').focus(), 50);
+  }
+  function closeBms() {
+    document.getElementById('bmsOv').style.display = 'none';
+    clearInterval(_bmsTimer); _bmsTimer = null;
+  }
+  function bmsBackdrop(ev) { if (ev && ev.target === this) closeBms(); }
+  async function saveBms() {
+    const val = id => document.getElementById(id).value.trim().replace(',', '.');
+    const body = { disp_soc: val('bmsSoc'), disp_range: val('bmsRange'), disp_cons: val('bmsCons') };
+    if (!body.disp_soc) { toast(BMS_T.soc_req, 'error'); return; }
+    const btn = document.getElementById('bmsSave'); btn.disabled = true;
+    try {
+      const r = await fetch('/api/bms-learn', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const d = await r.json();
+      if (!r.ok) { toast(d.error || 'Error', 'error'); if (d.live && _bms) { _bms.live = d.live; bmsRender(); } return; }
+      _bms = d; bmsRender();
+      ['bmsSoc', 'bmsRange', 'bmsCons'].forEach(id => document.getElementById(id).value = '');
+      toast(BMS_T.saved, 'success');
+    } finally { if (_bms) btn.disabled = !(_bms.live || {}).fresh; }
+  }
+  async function deleteBmsPoint(id) {
+    if (!await confirmModal(BMS_T.del)) return;
+    const r = await fetch('/api/bms-learn/' + id, { method: 'DELETE' });
+    if (r.ok) { _bms = await r.json(); bmsRender(); }
+  }
+  bmsLoad();
+  setInterval(() => { if (!_bmsTimer) bmsLoad(); }, 60000);
+  </script>
+  {% endif %}
 {% endblock %}
