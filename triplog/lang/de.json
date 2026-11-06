@@ -1604,8 +1604,5 @@
   "dash_hvac": "Klima/Heizung",
   "dash_cabin_temp": "Innen Temp",
   "dash_stick_fw": "Stick-Firmware",
-  "dash_stick_update": "Neue Version {0}",
-  "dash_stick_download": "Herunterladen",
-  "dash_stick_howto": "So geht's",
-  "dash_stick_steps": ["Datei herunterladen.", "Handy oder Laptop mit dem WLAN des Sticks verbinden (heißt meist „IDTelemetry“).", "Im Browser 192.168.4.1 öffnen, oben CONFIG, ganz unten bei „Firmware Update“ die Datei wählen, AP-Passwort eingeben, auf „Flash“ tippen."]
+  "dash_stick_update": "Update {0} laden"
 }
