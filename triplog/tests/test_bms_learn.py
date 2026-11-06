@@ -52,7 +52,39 @@ def test_range_rebuilt_from_e_and_the_window_vw_follows():
     assert r["can_range_n"] == 0 and r["can_range_diff"] is None
     rows[0]["can_range"], rows[1]["can_range"] = 220, 209
     r = bl.fit_range(rows)
-    assert r["can_range_n"] == 2 and r["can_range_diff"] == 4.5 and r["can_range_mae"] == 4.5
+    assert r["can_range_n"] == 2 and r["can_range_diff"] == 4.5 and r["can_range_spread"] == 0.5
+    assert r["can_range_reliable"] is False                     # 2 < 5 points
+
+
+def test_range_comes_from_can_once_the_offset_is_stable():
+    pts = [{"disp_soc": 60 + i, "disp_range": 200 + 3 * i + (i % 2), "can_range": 183 + 3 * i, "disp_cons": 23.0}
+           for i in range(5)]
+    off = bl.range_offset(pts)
+    assert off["n"] == 5 and off["diff"] == 17 and off["spread"] <= 1 and off["reliable"]
+    # a new point without typed range gets CAN + offset; typed ones stay
+    pts.append({"disp_soc": 70, "disp_range": None, "can_range": 210, "disp_cons": 23.0})
+    filled = bl.fill_range_from_can(pts)
+    assert filled[-1]["disp_range"] == 227 and filled[-1]["range_from_can"]
+    assert filled[0]["disp_range"] == 200 and "range_from_can" not in filled[0]
+    assert bl.fit_range(pts)["n"] == 6
+    # unstable offset: nothing is filled in
+    pts[0]["disp_range"], pts[1]["disp_range"] = 260, 150
+    pts[2]["disp_range"] = 240
+    assert not bl.range_offset(pts)["reliable"]
+    assert bl.fill_range_from_can(pts)[-1]["disp_range"] is None
+
+
+def test_consumption_typed_as_wh_per_km_or_kwh_per_100(app_module):
+    import blueprints.bms as bms
+    assert bms._cons({"disp_cons": "228"}) == 22.8
+    assert bms._cons({"disp_cons": "22,8"}) == 22.8
+    assert bms._cons({"disp_cons": ""}) is None
+    for bad in ("2", "900", "95"):
+        try:
+            bms._cons({"disp_cons": bad})
+            assert bad == "95"                                  # 95 kWh/100 km: out of range
+        except ValueError:
+            pass
 
 
 def test_real_range_from_trips_at_a_similar_temperature():
@@ -90,13 +122,15 @@ def test_save_only_with_a_fresh_can_value(app_module, db, monkeypatch):
         r = c.post("/api/bms-learn", json={"disp_soc": "72", "disp_range": "230", "disp_cons": "24,4"})
         assert r.status_code == 409 and "10" in r.get_json()["error"]
         _state(app_module, 20)
-        r = c.post("/api/bms-learn", json={"disp_soc": "72", "disp_range": "230", "disp_cons": "24,4"})
+        r = c.post("/api/bms-learn", json={"disp_soc": "72", "disp_range": "230", "disp_cons": "244"})
         d = r.get_json()
         assert r.status_code == 200 and d["n"] == 1 and d["live"]["fresh"]
         p = d["points"][0]
         assert (p["disp_soc"], p["disp_range"], p["disp_cons"], p["can_soc"], p["ext_temp"], p["can_range"]) == \
             (72, 230, 24.4, 74, -1.5, 228)
         assert d["range"]["can_range_diff"] == 2 and d["range"]["can_range_n"] == 1
+        lr = d["learn"]
+        assert lr["n"] == 1 and lr["range_n"] == 1 and lr["range_need"] == 5 and not lr["range_from_can"]
         assert c.post("/api/bms-learn", json={"disp_soc": "172"}).status_code == 400
         assert c.delete(f"/api/bms-learn/{p['id']}").get_json()["n"] == 0
     finally:
