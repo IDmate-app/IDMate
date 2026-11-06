@@ -1604,5 +1604,6 @@
   "dash_hvac": "HVAC",
   "dash_cabin_temp": "Cabin temp",
   "dash_stick_fw": "Stick firmware",
-  "dash_stick_update": "Update {0} available → release page"
+  "dash_stick_update": "Update {0} available → download .bin",
+  "dash_stick_update_hint": "Then stick Wi-Fi → 192.168.4.1 → Config → Firmware update"
 }

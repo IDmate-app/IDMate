@@ -26,7 +26,8 @@ def test_newest_release_incl_prerelease_without_drafts():
 def test_update_only_when_newer_and_for_the_variant():
     rel = su.parse_releases(RELEASES)
     assert su.update_for({"fw": "1.6.0", "var": "full"}, rel) == \
-        {"version": "1.6.1", "url": "https://x/r/v1.6.1", "size": 1507681, "file": "idtelemetry-full-1.6.1.bin"}
+        {"version": "1.6.1", "url": "https://x/r/v1.6.1", "size": 1507681, "file": "idtelemetry-full-1.6.1.bin",
+         "file_url": "https://x/f.bin"}
     assert su.update_for({"fw": "1.6.0", "var": "lite"}, rel)["file"] == "idtelemetry-lite-1.6.1.bin"
     assert su.update_for({"fw": "1.6.1", "var": "full"}, rel) is None
     assert su.update_for({"fw": "1.10.0", "var": "full"}, rel) is None     # numeric, not text order
