@@ -1464,7 +1464,8 @@ def ha_export_vehicles():
 def dashboard():
     fahrzeug = active_vehicle()
     return render_template("index.html", device=active_device(),
-                           kartenauto=kartenauto_fuer(fahrzeug))
+                           kartenauto=kartenauto_fuer(fahrzeug),
+                           bms_learn=bool(fahrzeug and fahrzeug.get("bms_learn")))
 
 
 @app.route("/api/vehicle-state")
@@ -5858,7 +5859,8 @@ def kartenauto_fuer(vehicle):
 def update_vehicle(vehicle_id):
     data = request.get_json()
     db = get_db()
-    allowed = ("plate", "name", "model", "device", "vin", "battery_capacity_kwh", "body_style", "color")
+    allowed = ("plate", "name", "model", "device", "vin", "battery_capacity_kwh", "body_style", "color",
+               "bms_learn")
     sets = []
     params = []
     for field in allowed:
@@ -5868,6 +5870,8 @@ def update_vehicle(vehicle_id):
                 val = _kartenauto_body(val)
             elif field == "color":
                 val = _kartenauto_color(val)
+            elif field == "bms_learn":
+                val = 1 if val in (1, True, "1", "true", "on") else 0
             sets.append(f"{field} = ?")
             params.append(val)
     if not sets:
@@ -6458,6 +6462,7 @@ from blueprints.passkeys import passkeys_bp  # noqa: E402
 from blueprints.diagnostics import diagnostics_bp  # noqa: E402
 from blueprints.model import model_bp  # noqa: E402
 from blueprints.report import report_bp  # noqa: E402
+from blueprints.bms import bms_bp  # noqa: E402
 app.register_blueprint(auth_bp)
 app.register_blueprint(journeys_bp)
 app.register_blueprint(charges_bp)
@@ -6467,6 +6472,7 @@ app.register_blueprint(profile_bp)
 app.register_blueprint(share_bp)
 app.register_blueprint(passkeys_bp)
 app.register_blueprint(diagnostics_bp)
+app.register_blueprint(bms_bp)
 app.register_blueprint(model_bp)
 app.register_blueprint(report_bp)
 

@@ -18,6 +18,8 @@ A short tour of every page. The vehicle in the header is the active one; most pa
 
 Live map with heading, SoC, range (from your recent consumption), charging state and the last trip. Updates every few seconds while the car is awake.
 
+**Learn BMS** (Settings → Vehicles → "Learn BMS"): a button at the bottom of the dashboard. Enter what the car shows — SoC, range, average consumption — and IDmate stores it with the CAN values of that moment (only when the BMS value is younger than 5 minutes; the passenger can do it while driving). From these points it learns how the car's display relates to the BMS (buffer, temperature), rebuilds VW's range (which stretch of consumption it follows) and shows an own range span from your trips at a similar temperature. Wrong entries can be deleted in the dialog.
+
 ## Trip log
 
 ![Trip log](screenshots/Trip%20Log.png)

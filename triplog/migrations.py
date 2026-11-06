@@ -939,6 +939,37 @@ def m072_diag_ack(db, log):
         log.info("Migration: diag_ack ready")
 
 
+
+def m073_bms_learn(db, log):
+    # BMS learning: what the car's display shows (SoC, range, average
+    # consumption), entered by hand, next to what the CAN bus said at that
+    # moment. Opt-in per vehicle.
+    if "bms_learn" not in _cols(db, "vehicles"):
+        db.execute("ALTER TABLE vehicles ADD COLUMN bms_learn INTEGER NOT NULL DEFAULT 0")
+    if "bms_points" not in _tables(db):
+        db.execute("""CREATE TABLE bms_points (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            plate         TEXT NOT NULL,
+            created_at    TEXT NOT NULL,      -- UTC, ISO
+            disp_soc      REAL NOT NULL,      -- % shown in the car
+            disp_range    REAL,               -- km shown in the car
+            disp_cons     REAL,               -- kWh/100 km shown in the car
+            can_soc       REAL NOT NULL,      -- BMS SoC from the CAN bus
+            can_age_s     REAL,               -- age of that CAN value
+            bat_temp      REAL,
+            ext_temp      REAL,
+            speed         REAL,
+            odometer      REAL,
+            capacity_kwh  REAL,               -- own measured capacity then
+            cons_10       REAL,               -- measured kWh/100 km, last 10 km
+            cons_30       REAL,
+            cons_50       REAL,
+            cons_100      REAL
+        )""")
+        db.execute("CREATE INDEX idx_bms_points_plate ON bms_points (plate, created_at)")
+    log.info("Migration: bms_learn ready")
+
+
 MIGRATIONS = [
     (1,  "trips_is_gpx",            m001_trips_is_gpx),
     (2,  "trips_odo",              m002_trips_odo),
@@ -1012,6 +1043,7 @@ MIGRATIONS = [
     (70, "consumption_min_km",     m070_consumption_min_km),
     (71, "operator_names",         m071_operator_names),
     (72, "diag_ack",               m072_diag_ack),
+    (73, "bms_learn",              m073_bms_learn),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

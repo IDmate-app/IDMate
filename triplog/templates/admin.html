@@ -1230,6 +1230,7 @@
   function opColorPreviewEv(){ document.getElementById('opColorPreview').style.background=this.value; }
   function updateVehicleEv(id, field){ updateVehicle(id, field, this.value); }
   function updateVehicleNullEv(id, field){ updateVehicle(id, field, this.value || null); }
+  function updateVehicleCheckEv(id, field){ updateVehicle(id, field, this.checked ? 1 : 0); }
   function deleteChargeLocStop(id, ev){ ev.stopPropagation(); deleteChargeLoc(id); }
   function deleteOperatorStop(id, ev){ ev.stopPropagation(); deleteOperator(id); }
   function populateTmCars(){ _populateTmJobCars(); _populateTmChgCars(); }
@@ -1336,6 +1337,8 @@
       calib_manual_done: {{ t.admin_js_calib_manual_done | tojson }},
       name_coords_required: {{ t.admin_js_name_coords_required | tojson }},
       draw_close_polygon: {{ t.admin_js_draw_close_polygon | tojson }},
+      vehicle_bms: {{ t.bms_vehicle_toggle | tojson }},
+      vehicle_bms_hint: {{ t.bms_vehicle_toggle_hint | tojson }},
       map_full: {{ t.admin_map_full | tojson }},
       map_full_exit: {{ t.admin_map_full_exit | tojson }},
       confirm_delete_chargeloc: {{ t.admin_js_confirm_delete_chargeloc | tojson }},
@@ -3225,6 +3228,7 @@
             <option value="suv" ${v.body_style === 'suv' ? 'selected' : ''}>${T.body_suv}</option>
           </select>
           <input type="color" value="${esc(v.color || '#6e7681')}" title="${T.vehicle_color}" aria-label="${T.vehicle_color}" style="width:34px;height:28px;padding:1px;border-radius:4px;border:1px solid var(--border);background:var(--bg)" data-onchange="updateVehicleEv" data-args='[${v.id}, "color"]'>
+          <label title="${T.vehicle_bms_hint}" style="display:inline-flex;align-items:center;gap:0.3rem;font-size:0.78rem;color:var(--text-2);cursor:pointer;white-space:nowrap"><input type="checkbox" ${v.bms_learn ? 'checked' : ''} data-onchange="updateVehicleCheckEv" data-args='[${v.id}, "bms_learn"]'> ${T.vehicle_bms}</label>
           <button class="btn-sm danger" style="margin-left:auto" data-onclick="deleteVehicle" data-args='[${v.id}, ${esc(JSON.stringify(v.name || v.plate))}]'>${T.delete_btn}</button>
         </div>
       `).join('') || '<p style="color:var(--text-2);font-size:0.85rem">' + T.no_vehicles + '</p>';

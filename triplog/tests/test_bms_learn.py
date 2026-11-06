@@ -1,0 +1,108 @@
+"""BMS learning: the display SoC rebuilt from the CAN SoC, VW's range rebuilt
+from display SoC × E ÷ the displayed average, an own range span from past
+trips, and the dashboard routes (only with a CAN value younger than 5 min)."""
+
+from datetime import datetime, timedelta, timezone
+
+import bms_learn as bl
+
+
+def pts(pairs, **extra):
+    return [dict({"can_soc": c, "disp_soc": d, "bat_temp": 20, "ext_temp": 10}, **extra) for c, d in pairs]
+
+
+def test_window_consumption_and_a_charge_in_between():
+    # 60 km at 0.25 % SoC per km, 80 kWh: 20 kWh/100 km
+    series = [(1000 + k, 90 - 0.25 * k) for k in range(61)]
+    w = bl.window_consumption(series, 80.0)
+    assert w[10] == 20.0 and w[30] == 20.0 and w[50] == 20.0 and w[100] is None
+    # charged at km 1030, now at 1060: 30 km fit after the charge, 50 do not
+    charged = [(1000 + k, 40 - 0.25 * k) for k in range(30)] + \
+              [(1030 + k, 80 - 0.25 * k) for k in range(31)]
+    w2 = bl.window_consumption(charged, 80.0)
+    assert w2[10] == 20.0 and w2[30] == 20.0 and w2[50] is None
+
+
+def test_display_model_learns_the_buffer():
+    # VW-like: display = (CAN − 5) / 0.9, shown as whole numbers
+    pairs = [(c, round((c - 5) / 0.9)) for c in (20, 35, 50, 62, 74, 88)]
+    m = bl.fit_display(pts(pairs))
+    assert m["terms"] == ["can"] and m["n"] == 6
+    assert m["mae_loo"] < 0.6                              # rounding is all that is left
+    assert abs(bl.predict_display(m, 74.0) - (74 - 5) / 0.9) < 0.7
+    assert abs(bl.display_zero_can(m) - 5.0) < 0.8
+    assert bl.fit_display(pts(pairs[:2])) is None          # too few points
+
+
+def test_temperature_only_joins_with_points_and_spread():
+    base = [(c, round((c - 5) / 0.9)) for c in (20, 30, 40, 50, 60, 70, 80, 90)]
+    flat = bl.fit_display(pts(base))
+    assert flat["terms"] == ["can"]                         # no temperature spread
+    warm = [dict(p, ext_temp=t) for p, t in zip(pts(base), (-5, 0, 5, 10, 15, 20, 25, 30))]
+    assert "ext_temp" in bl.fit_display(warm)["terms"]
+
+
+def test_range_rebuilt_from_e_and_the_window_vw_follows():
+    # the two real readings: 65 % 225 km 24.4, 62 % 213 km 25.6
+    rows = [{"disp_soc": 65, "disp_range": 225, "disp_cons": 24.4, "cons_10": 30.0, "cons_30": 24.5, "cons_50": 22.0},
+            {"disp_soc": 62, "disp_range": 213, "disp_cons": 25.6, "cons_10": 19.0, "cons_30": 25.4, "cons_50": 22.1}]
+    r = bl.fit_range(rows)
+    assert 84 < r["e_kwh"] < 88 and r["window_km"] == 30 and abs(r["cons_factor"] - 1.0) < 0.02
+    assert r["range_mae"] < 6
+
+
+def test_real_range_from_trips_at_a_similar_temperature():
+    trips = [{"km": 50, "cons": 18.0, "temp": 15}] * 4 + [{"km": 50, "cons": 26.0, "temp": -2}] * 4
+    cold = bl.real_range(52.0, trips, -1.5)
+    assert cold["km_mid"] == 200 and cold["temp_band"] == 4.0   # only the cold trips
+    assert bl.real_range(52.0, trips[:1], -1.5) is None          # not enough km
+    assert bl.real_range(0, trips, 10) is None
+
+
+def _client(app_module, db, enabled=True):
+    db.execute("INSERT INTO users (id, username, password_hash, is_admin, active_vehicle_id) VALUES (1, 'u', 'x', 1, 1)")
+    db.execute("INSERT INTO vehicles (id, plate, device, battery_capacity_kwh, bms_learn) VALUES (1, 'NOX', 'dev1', 84, ?)",
+               (1 if enabled else 0,))
+    db.commit()
+    app_module.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+    c = app_module.app.test_client()
+    with c.session_transaction() as s:
+        s["_user_id"] = "1"
+    return c
+
+
+def _state(app_module, age_s):
+    t = (datetime.now(timezone.utc) - timedelta(seconds=age_s)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    app_module._state_cache["dev1"] = {"soc": 74.0, "bat_temp": 12.0, "ext_temp": -1.5, "speed": 80,
+                                       "odometer": 36000, "field_times": {"soc": t}}
+
+
+def test_save_only_with_a_fresh_can_value(app_module, db, monkeypatch):
+    import blueprints.bms as bms
+    monkeypatch.setattr(bms, "_series", lambda device, hours=36: [])
+    c = _client(app_module, db)
+    try:
+        _state(app_module, 600)                                   # 10 min old
+        r = c.post("/api/bms-learn", json={"disp_soc": "72", "disp_range": "230", "disp_cons": "24,4"})
+        assert r.status_code == 409 and "10" in r.get_json()["error"]
+        _state(app_module, 20)
+        r = c.post("/api/bms-learn", json={"disp_soc": "72", "disp_range": "230", "disp_cons": "24,4"})
+        d = r.get_json()
+        assert r.status_code == 200 and d["n"] == 1 and d["live"]["fresh"]
+        p = d["points"][0]
+        assert (p["disp_soc"], p["disp_range"], p["disp_cons"], p["can_soc"], p["ext_temp"]) == (72, 230, 24.4, 74, -1.5)
+        assert c.post("/api/bms-learn", json={"disp_soc": "172"}).status_code == 400
+        assert c.delete(f"/api/bms-learn/{p['id']}").get_json()["n"] == 0
+    finally:
+        app_module._state_cache.pop("dev1", None)
+
+
+def test_not_enabled_vehicle_cannot_save(app_module, db):
+    c = _client(app_module, db, enabled=False)
+    try:
+        _state(app_module, 5)
+        assert c.post("/api/bms-learn", json={"disp_soc": "72"}).status_code == 400
+        assert c.get("/api/bms-learn").get_json()["enabled"] is False
+        assert "bmsBox" not in c.get("/").get_data(as_text=True)
+    finally:
+        app_module._state_cache.pop("dev1", None)
