@@ -63,3 +63,62 @@ def test_stick_info_is_stored_and_reaches_the_dashboard(app_module, db):
     s = app_module.stick_info("dev1")
     assert s["fw"] == "1.5.0" and s["build"].endswith("-dirty") and s["var"] == "full" and s["seen"]
     assert app_module.stick_info("nope") is None
+
+
+# ── Old stick firmware (bits 0-19, v1 and v2) against the decoder before
+#    1.2.255: same fields, same values, for any mask. ───────────────────────
+
+def _decode_before_1_2_255(version, plaintext):
+    """The decoder as it stood in app.py up to 1.2.254 (reference copy)."""
+    v1 = [(0, 'la', '<i', 4, 1_000_000), (1, 'lo', '<i', 4, 1_000_000), (2, 'hd', '<H', 2, None),
+          (3, 's', '<H', 2, 10), (4, 'u', '<H', 2, None), (5, 'i', '<h', 2, None), (6, 'p', '<h', 2, 10),
+          (7, 'v', '<H', 2, 10), (8, 'c', None, 0, None), (9, 'dc', None, 0, None), (10, 'bt', '<b', 1, None),
+          (11, 'et', '<b', 1, None), (12, 'r', '<H', 2, 10), (13, 'ca', '<H', 2, 10), (14, 'kw', '<H', 2, 10),
+          (15, 'pk', None, 0, None), (16, 'od', '<I', 4, 10), (17, 'ls', '<B', 1, None),
+          (18, 'bd', '<B', 1, None), (19, 'lp', '<H', 2, None)]
+    v2 = [(b, k, '<I' if k == 'kw' else f, 4 if k == 'kw' else s, d) for b, k, f, s, d in v1]
+    schema = {0x01: v1, 0x02: v2}[version]
+    mask = struct.unpack_from('<I', plaintext, 0)[0]
+    out, off = {}, 8
+    for bit, key, fmt, size, div in schema:
+        if not mask & (1 << bit):
+            continue
+        if fmt is None:
+            out[key] = 1
+            continue
+        if off + size > len(plaintext):
+            return None
+        val = struct.unpack_from(fmt, plaintext, off)[0]
+        out[key] = val / div if div else val
+        off += size
+    out['ts'] = struct.unpack_from('<I', plaintext, 4)[0]
+    return out
+
+
+def test_old_stick_telegrams_decode_exactly_as_before():
+    import random
+    rnd = random.Random(7)
+    fields_v1 = {b: (f, s) for b, _, f, s, _ in tg.FIELDS_V1 if b <= 19}
+    for version in (0x01, 0x02):
+        for _ in range(400):
+            bits = sorted(b for b in range(20) if rnd.random() < 0.5)
+            body = b""
+            for b in bits:
+                fmt, size = fields_v1[b]
+                if version == 0x02 and b == 14:
+                    fmt, size = '<I', 4
+                if fmt:
+                    body += bytes(rnd.randrange(256) for _ in range(size))
+            plain = struct.pack('<II', sum(1 << b for b in bits), rnd.randrange(1_700_000_000, 1_800_000_000)) + body
+            kind, d = tg.decode(tg.encode(version, plain, KEY, bytes(rnd.randrange(256) for _ in range(16))), KEY)
+            assert kind == "values"
+            assert d == _decode_before_1_2_255(version, plain)
+            assert not {"se", "hk", "ct"} & set(d)
+
+
+def test_old_stick_never_sends_info_and_nothing_breaks_without_it():
+    # No 0x10 from an old stick: decode of a plain value telegram must not
+    # touch the info path, and an empty/short telegram stays rejected.
+    assert tg.decode(b"", KEY) == (None, None)
+    assert tg.decode(b"\x02" + bytes(10), KEY) == (None, None)
+    assert tg.decode(b"\x07" + bytes(40), KEY) == (None, None)
