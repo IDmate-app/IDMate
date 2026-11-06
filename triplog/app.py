@@ -1234,6 +1234,7 @@ _ALL_FIELDS = {
     "bt": "bat_temp", "et": "ext_temp", "c": "charging",
     "dc": "dc_charging", "pk": "parked", "ls": "lte_signal",
     "bd": "esp_battery", "ig": "ignition", "lp": "plmn",
+    "se": "soe", "hk": "hvac_kw", "ct": "cabin_temp",
 }
 
 # PLMN (MCC*100 + MNC) → (carrier name, brand color) lives in plmn.py.
@@ -1482,6 +1483,10 @@ def vehicle_state():
         if state:
             with _state_lock:
                 _state_cache[device] = dict(state)
+
+    info = stick_info(device)
+    if info:
+        state["stick"] = info
 
     # SQLite: last trip + calculated ranges
     db = get_db()
@@ -4123,6 +4128,49 @@ _mqtt_influx_count = 0  # Counter: successfully written InfluxDB points
 _mqtt_influx_failed = 0  # Counter: failed InfluxDB writes
 
 
+_stick_info = {}           # device -> {fw, build, var, pv, bits, seen}
+
+
+def _store_stick_info(device, info):
+    """Firmware, build and variant the stick reported (info telegram 0x10):
+    kept in memory for the dashboard and in stick_info for after a restart."""
+    if not device or not info:
+        return
+    seen = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    _stick_info[device] = dict(info, seen=seen)
+    try:
+        db = get_db()
+        db.execute("""INSERT INTO stick_info (device, fw, build, variant, pv, bits, seen_at)
+                      VALUES (?, ?, ?, ?, ?, ?, ?)
+                      ON CONFLICT(device) DO UPDATE SET fw = excluded.fw, build = excluded.build,
+                          variant = excluded.variant, pv = excluded.pv, bits = excluded.bits,
+                          seen_at = excluded.seen_at""",
+                   (device, info.get("fw"), info.get("build"), info.get("var"), info.get("pv"),
+                    info.get("bits"), seen))
+        db.commit()
+        db.close()
+        log.info("MQTT: stick %s reports firmware %s (%s)", device, info.get("fw"), info.get("build"))
+    except Exception:
+        log.exception("stick info: store failed")
+
+
+def stick_info(device):
+    """What the stick last reported about itself, or None."""
+    if device in _stick_info:
+        return _stick_info[device]
+    try:
+        db = get_db()
+        r = db.execute("SELECT * FROM stick_info WHERE device = ?", (device,)).fetchone()
+        db.close()
+    except Exception:
+        return None
+    if not r:
+        return None
+    _stick_info[device] = {"fw": r["fw"], "build": r["build"], "var": r["variant"], "pv": r["pv"],
+                           "bits": r["bits"], "seen": r["seen_at"]}
+    return _stick_info[device]
+
+
 def background_mqtt():
     """MQTT subscriber: connects to Mosquitto, collects messages and
     writes telemetry data (tele/+/data) to InfluxDB.
@@ -4137,93 +4185,24 @@ def background_mqtt():
 
     from influxdb_client import InfluxDBClient, WritePrecision
     from influxdb_client.client.write_api import SYNCHRONOUS
-    import struct
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-    from cryptography.hazmat.primitives.padding import PKCS7
+    import telegram
 
     aes_key = bytes.fromhex(config.MQTT_AES_KEY)
 
-    # Binary field schema: (bit, key, struct_fmt, byte_count, divisor)
-    # Bool fields (fmt=None, bytes=0): bit set in field_mask = true
-    # v1: legacy — kw is u16/10 (6553.5 kWh cap, wraps silently)
-    # v2: kw widened to u32/10 (~429 Mio kWh) — all other fields identical
-    _BIN_FIELDS_V1 = [
-        (0,  'la', '<i', 4, 1_000_000),
-        (1,  'lo', '<i', 4, 1_000_000),
-        (2,  'hd', '<H', 2, None),
-        (3,  's',  '<H', 2, 10),
-        (4,  'u',  '<H', 2, None),
-        (5,  'i',  '<h', 2, None),
-        (6,  'p',  '<h', 2, 10),
-        (7,  'v',  '<H', 2, 10),
-        (8,  'c',  None,  0, None),
-        (9,  'dc', None,  0, None),
-        (10, 'bt', '<b', 1, None),
-        (11, 'et', '<b', 1, None),
-        (12, 'r',  '<H', 2, 10),
-        (13, 'ca', '<H', 2, 10),
-        (14, 'kw', '<H', 2, 10),
-        (15, 'pk', None,  0, None),
-        (16, 'od', '<I', 4, 10),
-        (17, 'ls', '<B', 1, None),
-        (18, 'bd', '<B', 1, None),
-        (19, 'lp', '<H', 2, None),  # LTE PLMN (MCC*100+MNC, e.g. 26201 = Telekom DE)
-    ]
-    _BIN_FIELDS_V2 = [
-        (bit, key, '<I' if key == 'kw' else fmt,
-         4    if key == 'kw' else size,
-         divisor)
-        for (bit, key, fmt, size, divisor) in _BIN_FIELDS_V1
-    ]
-    _BIN_FIELDS_BY_VERSION = {0x01: _BIN_FIELDS_V1, 0x02: _BIN_FIELDS_V2}
-
-    def _decrypt_payload(raw):
-        """Decrypt binary telegram (v1 or v2) → dict with fields + ts."""
-        if len(raw) < 17:
+    def _decrypt_payload(raw, device=None):
+        """Decrypt a value telegram (v1 or v2) → dict with fields + ts, or
+        None. Stick info telegrams (0x10) are taken here and stored."""
+        kind, data = telegram.decode(raw, aes_key)
+        if kind == "info":
+            _store_stick_info(device, data)
             return None
-        version = raw[0]
-        schema = _BIN_FIELDS_BY_VERSION.get(version)
-        if schema is None:
+        if kind != "values":
             return None
-        iv = raw[1:17]
-        ciphertext = raw[17:]
-        try:
-            cipher = Cipher(algorithms.AES(aes_key), modes.CBC(iv))
-            decryptor = cipher.decryptor()
-            padded = decryptor.update(ciphertext) + decryptor.finalize()
-            unpadder = PKCS7(128).unpadder()
-            plaintext = unpadder.update(padded) + unpadder.finalize()
-        except Exception:
-            return None  # Decryption failed → not authentic
-
-        if len(plaintext) < 8:
-            return None
-        field_mask = struct.unpack_from('<I', plaintext, 0)[0]
-        ts = struct.unpack_from('<I', plaintext, 4)[0]
-
-        fields = {}
-        offset = 8
-        for bit, key, fmt, size, divisor in schema:
-            if not (field_mask & (1 << bit)):
-                continue
-            if fmt is None:
-                # Bool field: bit set = true
-                fields[key] = 1
-            else:
-                if offset + size > len(plaintext):
-                    return None  # incomplete telegram
-                val = struct.unpack_from(fmt, plaintext, offset)[0]
-                if divisor:
-                    val = val / divisor
-                if key == 's':
-                    val = _sanitize_soc(val)
-                elif key == 'r':
-                    val = _sanitize_range(val)
-                fields[key] = val
-                offset += size
-
-        fields['ts'] = ts
-        return fields
+        if "s" in data:
+            data["s"] = _sanitize_soc(data["s"])
+        if "r" in data:
+            data["r"] = _sanitize_range(data["r"])
+        return data
 
     # InfluxDB write client (long-lived, thread-safe)
     influx_write = None
@@ -4318,16 +4297,20 @@ def background_mqtt():
             "topic": msg.topic,
             # Binary telegrams (every protocol version the decoder knows, not
             # just v1/0x01) are shown as hex; only genuine text payloads get
-            # UTF-8-decoded. Keyed off _BIN_FIELDS_BY_VERSION so a new version
-            # (e.g. v2/0x02 with u32 kWh) no longer renders as UTF-8 garbage.
-            "payload": raw[:40].hex() if len(raw) > 0 and raw[0] in _BIN_FIELDS_BY_VERSION else raw.decode("utf-8", errors="replace"),
+            # UTF-8-decoded. Keyed off telegram.KNOWN so every known version
+            # (v2/0x02 with u32 kWh, stick info 0x10) is shown as hex.
+            "payload": raw[:40].hex() if len(raw) > 0 and raw[0] in telegram.KNOWN else raw.decode("utf-8", errors="replace"),
             "qos": msg.qos,
             "size": len(raw),
         }
         # Decrypt telemetry data and forward to InfluxDB
         if msg.topic.endswith("/data"):
-            data = _decrypt_payload(raw)
-            if data is None:
+            parts = msg.topic.split("/")
+            data = _decrypt_payload(raw, parts[1] if len(parts) >= 3 else None)
+            if raw and raw[0] == telegram.INFO:
+                entry["decoded"] = stick_info(parts[1]) if len(parts) >= 3 else None
+                entry["info"] = True
+            elif data is None:
                 log.debug("MQTT: Decryption failed on %s (%d bytes)", msg.topic, len(raw))
                 entry["decoded"] = None
             else:

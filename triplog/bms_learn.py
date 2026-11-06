@@ -183,6 +183,9 @@ def fit_range(points):
             best = (n, k, err)
     if best:
         out.update(window_km=best[0], cons_factor=round(best[1], 3), cons_mae=round(best[2], 1))
+    # SoE (firmware 1.5.0+): the energy the BMS itself counts, per 100 % display
+    soe = [_f(p["soe"]) / _f(p["disp_soc"]) * 100 for p in rows if _f(p.get("soe"))]
+    out["soe_e_kwh"] = round(fm.median(soe), 2) if soe else None
     # The range the stick reads from the car: the displayed number or not?
     diffs = [_f(p["disp_range"]) - _f(p.get("can_range")) for p in rows if _f(p.get("can_range")) is not None]
     out["can_range_n"] = len(diffs)

@@ -978,6 +978,27 @@ def m074_bms_can_range(db, log):
         log.info("Migration: bms_points.can_range added")
 
 
+def m075_stick_info(db, log):
+    # What the stick reports about itself (info telegram 0x10, firmware 1.5.0+)
+    # and the new values in BMS learning points: SoE, HVAC power, cabin temp.
+    if "stick_info" not in _tables(db):
+        db.execute("""CREATE TABLE stick_info (
+            device   TEXT PRIMARY KEY,
+            fw       TEXT,
+            build    TEXT,
+            variant  TEXT,
+            pv       INTEGER,
+            bits     INTEGER,
+            seen_at  TEXT
+        )""")
+    if "bms_points" in _tables(db):
+        cols = _cols(db, "bms_points")
+        for c in ("soe", "hvac_kw", "cabin_temp"):
+            if c not in cols:
+                db.execute(f"ALTER TABLE bms_points ADD COLUMN {c} REAL")
+    log.info("Migration: stick_info ready")
+
+
 MIGRATIONS = [
     (1,  "trips_is_gpx",            m001_trips_is_gpx),
     (2,  "trips_odo",              m002_trips_odo),
@@ -1053,6 +1074,7 @@ MIGRATIONS = [
     (72, "diag_ack",               m072_diag_ack),
     (73, "bms_learn",              m073_bms_learn),
     (74, "bms_can_range",          m074_bms_can_range),
+    (75, "stick_info",             m075_stick_info),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]
