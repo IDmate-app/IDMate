@@ -94,4 +94,4 @@ def update_for(stick, rel=None):
         return None
     asset = (rel.get("assets") or {}).get(stick.get("var") or "full") or {}
     return {"version": rel["version"], "url": rel.get("url"), "size": asset.get("size"),
-            "file": asset.get("name")}
+            "file": asset.get("name"), "file_url": asset.get("url")}

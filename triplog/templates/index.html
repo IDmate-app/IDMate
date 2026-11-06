@@ -495,6 +495,7 @@
     }
 
     const STICK_UPD_T = {{ t.dash_stick_update | tojson }};
+    const STICK_UPD_HINT = {{ t.dash_stick_update_hint | tojson }};
     function updateState(d) {
 
       const soc = d.soc;
@@ -567,7 +568,8 @@
       if (st && st.fw) {
         const b = st.build && st.build !== st.fw ? ` <span style="color:var(--text-2)">${st.build}</span>` : '';
         const up = d.stick_update;
-        const u = up ? `<br><a href="${up.url}" target="_blank" rel="noopener" style="color:var(--accent)">${STICK_UPD_T.replace('{0}', up.version)}</a>` : '';
+        const u = up ? `<br><a href="${up.file_url || up.url}" ${up.file_url ? 'download' : 'target="_blank" rel="noopener"'} style="color:var(--accent)">${STICK_UPD_T.replace('{0}', up.version)}</a>`
+          + `<br><small style="color:var(--text-2)">${STICK_UPD_HINT}</small>` : '';
         document.getElementById('stickFw').innerHTML = `${st.fw}${st.var ? ' · ' + st.var : ''}${b}${u}`;
         document.getElementById('stickFw').style.color = /dirty/.test(st.build || '') ? TC.warn : '';
       }
