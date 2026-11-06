@@ -1604,6 +1604,8 @@
   "dash_hvac": "HVAC",
   "dash_cabin_temp": "Cabin temp",
   "dash_stick_fw": "Stick firmware",
-  "dash_stick_update": "Update {0} available → download .bin",
-  "dash_stick_update_hint": "Then stick Wi-Fi → 192.168.4.1 → Config → Firmware update"
+  "dash_stick_update": "New version {0}",
+  "dash_stick_download": "Download",
+  "dash_stick_howto": "How to update",
+  "dash_stick_steps": ["Download the file.", "Connect your phone or laptop to the stick's Wi-Fi (usually called “IDTelemetry”).", "Open 192.168.4.1 in the browser, tap CONFIG at the top, at the bottom under “Firmware Update” choose the file, enter the AP password, tap “Flash”."]
 }
