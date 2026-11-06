@@ -1487,6 +1487,10 @@ def vehicle_state():
     info = stick_info(device)
     if info:
         state["stick"] = info
+        import stick_update
+        upd = stick_update.update_for(info)
+        if upd:
+            state["stick_update"] = upd
 
     # SQLite: last trip + calculated ranges
     db = get_db()

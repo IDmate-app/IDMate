@@ -1,8 +1,12 @@
 import os
 
-VERSION = "1.2.256"
+VERSION = "1.2.257"
 # Projektseite, steht in den Fusszeilen der Ausdrucke
 REPO_URL = "github.com/IDmate-app/IDMate"
+# Stick firmware (IDTelemetry): the dashboard says when a newer release exists.
+# The server asks GitHub every few hours; STICK_UPDATE_CHECK=0 switches it off.
+STICK_FW_REPO = os.environ.get("STICK_FW_REPO", "IDmate-app/IDTelemetry")
+STICK_UPDATE_CHECK = os.environ.get("STICK_UPDATE_CHECK", "1").strip().lower() not in ("0", "false", "no", "off")
 
 # Time zone of the stored local times and of the UI. TIMEZONE, else the
 # usual TZ of the container; an unknown name falls back to Europe/Berlin.
