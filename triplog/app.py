@@ -3745,7 +3745,7 @@ def mqtt_replay():
     for m in _mqtt_messages:
         decoded = m.get("decoded")
         ts = m.get("ts") or (decoded.get("ts") if decoded else None)
-        if not decoded or not ts:
+        if not decoded or not _plausible_ts(ts):
             continue
         # Skip already successful writes
         if m.get("written") == "ok":
@@ -4189,6 +4189,29 @@ def _warn_undecodable(topic, raw):
                     "AES key on the stick differs from MQTT_AES_KEY", n, topic, len(raw), raw[0] if raw else 0)
 
 
+# Telegrams carry no MAC: decrypted with the wrong key, about one in 256 still
+# has valid padding and decodes into random fields with a random timestamp
+# (two such points landed in far-off weeks of the bucket on 2026-11-06).
+# A stick timestamp before 2024 or more than a day ahead is never real.
+TS_MIN = 1_704_067_200   # 2024-01-01 UTC
+_implausible = {"t": 0.0, "n": 0}
+
+
+def _plausible_ts(ts):
+    return isinstance(ts, (int, float)) and TS_MIN <= ts <= time.time() + 86400
+
+
+def _warn_implausible_ts(topic, ts):
+    """Logged instead of written, at most once a minute."""
+    _implausible["n"] += 1
+    now = time.time()
+    if now - _implausible["t"] < 60:
+        return
+    n, _implausible["n"], _implausible["t"] = _implausible["n"], 0, now
+    log.warning("MQTT: %d telegram(s) on %s dropped — implausible timestamp %s "
+                "(wrong AES key or stick clock not set)", n, topic, ts)
+
+
 def influx_write_v(writer, device, fields, ts):
     """Write one point of measurement "v". On a field-type conflict the bucket's
     type is learned (config.learn_influx_type_conflict) and the point written
@@ -4349,6 +4372,10 @@ def background_mqtt():
             elif data is None:
                 entry["decoded"] = None
                 _warn_undecodable(msg.topic, raw)
+            elif not _plausible_ts(data.get("ts")):
+                entry["decoded"] = dict(data)
+                entry["written"] = "implausible_ts"
+                _warn_implausible_ts(msg.topic, data.get("ts"))
             else:
                 # Include ts in decoded for debug visibility
                 entry["decoded"] = dict(data)

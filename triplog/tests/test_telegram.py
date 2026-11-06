@@ -139,3 +139,31 @@ def test_undecodable_warning_names_the_example_key(app_module, caplog):
         app_module._warn_undecodable("tele/dev/data", other)
         app_module._warn_undecodable("tele/dev/data", other)      # within the minute: silent
     assert caplog.text.count("cannot be decrypted") == 1
+
+
+def test_implausible_timestamp_is_dropped_not_written(app_module, caplog):
+    import logging, time as _t
+    assert app_module._plausible_ts(1_762_000_000)
+    assert app_module._plausible_ts(_t.time())
+    for bad in (None, 0, 12345, 1_600_000_000, _t.time() + 3 * 86400, 4_000_000_000):
+        assert not app_module._plausible_ts(bad)
+    app_module._implausible.update(t=0.0, n=0)
+    with caplog.at_level(logging.WARNING):
+        app_module._warn_implausible_ts("tele/dev/data", 4_000_000_000)
+        app_module._warn_implausible_ts("tele/dev/data", 4_000_000_000)   # within the minute: silent
+    assert caplog.text.count("implausible timestamp") == 1
+
+
+def test_wrong_key_can_pass_padding_and_then_fails_the_timestamp_check(app_module):
+    """No MAC: some telegrams decrypted with the wrong key still decode. Their
+    timestamp is random, which is what the plausibility check catches."""
+    plain = values_plain([(3, "<H", 623)]) + bytes(40)   # a full row's length
+    right, wrong = bytes(range(1, 33)), bytes(32)
+    hits = []
+    for i in range(6000):
+        raw = tg.encode(0x02, plain, right, i.to_bytes(16, "little"))
+        kind, d = tg.decode(raw, wrong)
+        if kind == "values":
+            hits.append(d["ts"])
+    assert hits, "expected false decodes (about 1 in 256)"
+    assert sum(app_module._plausible_ts(ts) for ts in hits) <= len(hits) // 10
