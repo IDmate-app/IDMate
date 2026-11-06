@@ -3873,7 +3873,7 @@ def debug_page():
 <h1>Debug: InfluxDB raw data</h1>
 <form method="get" style="flex-wrap:wrap">
   <label>Device:</label>
-  <select name="device" onchange="this.form.submit()">
+  <select name="device" id="devSel">
     {''.join(f'<option value="{d}" {"selected" if d==device else ""}>{d}</option>' for d in devices)}
   </select>
   <label>Hours:</label>
@@ -3926,12 +3926,12 @@ def debug_page():
 
     html += f'<h2>Raw data ({len(rows)} rows)</h2>'
     html += f"""<div class="toolbar">
-  <input type="checkbox" id="selAll" onchange="toggleAll(this)">
+  <input type="checkbox" id="selAll" class="selall">
   <span class="sel-count" id="selCount">0 selected</span>
-  <button class="btn btn-danger" onclick="deleteSelected()">Delete selected</button>
+  <button class="btn btn-danger" id="btnDel">Delete selected</button>
 </div>"""
     html += "<div style='max-height:70vh;overflow:auto'><table id='dtable'><thead><tr>"
-    html += '<th><input type="checkbox" onchange="toggleAll(this)"></th><th>trip</th>'
+    html += '<th><input type="checkbox" class="selall"></th><th>trip</th>'
     for f in fields:
         html += f"<th>{f}</th>"
     n_cols = 2 + len(fields) + 3  # checkbox + trip + fields + gap + stop + gps
@@ -3941,7 +3941,7 @@ def debug_page():
         if ci == 0:
             html += "<td></td>"  # checkbox col — no filter
         else:
-            html += f'<td><input type="text" data-col="{ci}" oninput="applyFilters()" placeholder="…"></td>'
+            html += f'<td><input type="text" data-col="{ci}" placeholder="…"></td>'
     html += "</tr></thead><tbody>"
 
     prev_time = None
@@ -3996,7 +3996,7 @@ def debug_page():
         tnr = _trip_nr(t)
         row_style = ' style="background:#122d1a"' if tnr else ""
         html += f'<tr{row_style} data-ts="{utc_iso}">'
-        html += '<td><input type="checkbox" class="rowsel" onchange="updateCount()"></td>'
+        html += '<td><input type="checkbox" class="rowsel"></td>'
         html += f'<td style="color:#3fb950;font-weight:bold">{tnr}</td>'
         for fld in fields:
             val = row.get(fld)
@@ -4015,17 +4015,29 @@ def debug_page():
     html += "</tbody></table></div>"
 
     # JavaScript: Sort, Select, Delete
-    html += f"""<script>
-const device = '{device}';
+    # Inline handlers (onchange=…) and a script without the nonce are blocked
+    # by the CSP (FIXES 7.2: with a nonce, 'unsafe-inline' is ignored) — the
+    # selection stayed at "0 selected". Script carries the nonce, events are
+    # bound here.
+    html += f"""<script nonce="{g.get('csp_nonce', '')}">
+const device = {json.dumps(device)};
+
+function visibleRows() {{
+  return Array.from(document.querySelectorAll('#dtable tbody tr')).filter(r => r.style.display !== 'none');
+}}
 
 function updateCount() {{
   const n = document.querySelectorAll('.rowsel:checked').length;
-  document.getElementById('selCount').textContent = n + ' selected';
+  const total = document.querySelectorAll('#dtable tbody tr').length;
+  const vis = visibleRows().length;
+  document.getElementById('selCount').textContent =
+    n + ' selected' + (vis !== total ? ' · ' + vis + '/' + total + ' visible' : '');
 }}
 
+// "All" = all rows currently visible (respects the column filters).
 function toggleAll(cb) {{
-  document.querySelectorAll('.rowsel').forEach(c => c.checked = cb.checked);
-  document.getElementById('selAll').checked = cb.checked;
+  visibleRows().forEach(r => {{ const c = r.querySelector('.rowsel'); if (c) c.checked = cb.checked; }});
+  document.querySelectorAll('.selall').forEach(c => c.checked = cb.checked);
   updateCount();
 }}
 
@@ -4084,11 +4096,16 @@ function applyFilters() {{
     }}
     row.style.display = show ? '' : 'none';
   }});
-  // Update count of visible rows
-  const vis = document.querySelectorAll('#dtable tbody tr:not([style*="display: none"])').length;
-  const total = document.querySelectorAll('#dtable tbody tr').length;
-  document.getElementById('selCount').textContent = vis + '/' + total + ' visible';
+  updateCount();
 }}
+
+document.getElementById('devSel')?.addEventListener('change', e => e.target.form.submit());
+document.querySelectorAll('.selall').forEach(c => c.addEventListener('change', () => toggleAll(c)));
+document.getElementById('dtable')?.addEventListener('change', e => {{
+  if (e.target.classList.contains('rowsel')) updateCount();
+}});
+document.getElementById('btnDel')?.addEventListener('click', deleteSelected);
+document.querySelectorAll('.filter-row input').forEach(i => i.addEventListener('input', applyFilters));
 
 // Table sort
 document.querySelectorAll('#dtable thead th').forEach((th, idx) => {{
