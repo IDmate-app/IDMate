@@ -122,3 +122,20 @@ def test_old_stick_never_sends_info_and_nothing_breaks_without_it():
     assert tg.decode(b"", KEY) == (None, None)
     assert tg.decode(b"\x02" + bytes(10), KEY) == (None, None)
     assert tg.decode(b"\x07" + bytes(40), KEY) == (None, None)
+
+
+def test_undecodable_warning_names_the_example_key(app_module, caplog):
+    import logging
+    app_module._undecodable.update(t=0.0, n=0)
+    plain = values_plain([(3, "<H", 623)])
+    zero = tg.encode(0x02, plain, bytes(32), IV)
+    with caplog.at_level(logging.WARNING):
+        app_module._warn_undecodable("tele/dev/data", zero)
+    assert "EXAMPLE key" in caplog.text
+    caplog.clear()
+    app_module._undecodable.update(t=0.0, n=0)
+    other = tg.encode(0x02, plain, bytes(range(1, 33)), IV)
+    with caplog.at_level(logging.WARNING):
+        app_module._warn_undecodable("tele/dev/data", other)
+        app_module._warn_undecodable("tele/dev/data", other)      # within the minute: silent
+    assert caplog.text.count("cannot be decrypted") == 1

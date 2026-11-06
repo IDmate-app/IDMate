@@ -4166,6 +4166,29 @@ def stick_info(device):
     return _stick_info[device]
 
 
+_undecodable = {"t": 0.0, "n": 0}
+
+
+def _warn_undecodable(topic, raw):
+    """A telegram on …/data that cannot be decrypted used to be a debug line
+    only — the dashboard just froze. Now a warning (at most once a minute)
+    that says why: stick with the public all-zero example key (a release
+    build without its own key in the stick's NVS), or keys that differ."""
+    import telegram
+    _undecodable["n"] += 1
+    now = time.time()
+    if now - _undecodable["t"] < 60:
+        return
+    n, _undecodable["n"], _undecodable["t"] = _undecodable["n"], 0, now
+    kind, _ = telegram.decode(raw, bytes(32))
+    if kind:
+        log.warning("MQTT: %d telegram(s) on %s encrypted with the EXAMPLE key (all zeros) — "
+                    "enter the AES key on the stick's configuration page (MQTT → AES-Key) and restart it", n, topic)
+    else:
+        log.warning("MQTT: %d telegram(s) on %s cannot be decrypted (%d bytes, version 0x%02x) — "
+                    "AES key on the stick differs from MQTT_AES_KEY", n, topic, len(raw), raw[0] if raw else 0)
+
+
 def influx_write_v(writer, device, fields, ts):
     """Write one point of measurement "v". On a field-type conflict the bucket's
     type is learned (config.learn_influx_type_conflict) and the point written
@@ -4324,8 +4347,8 @@ def background_mqtt():
                 entry["decoded"] = stick_info(parts[1]) if len(parts) >= 3 else None
                 entry["info"] = True
             elif data is None:
-                log.debug("MQTT: Decryption failed on %s (%d bytes)", msg.topic, len(raw))
                 entry["decoded"] = None
+                _warn_undecodable(msg.topic, raw)
             else:
                 # Include ts in decoded for debug visibility
                 entry["decoded"] = dict(data)
