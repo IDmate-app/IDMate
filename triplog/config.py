@@ -1,6 +1,6 @@
 import os
 
-VERSION = "1.2.258"
+VERSION = "1.2.259"
 # Projektseite, steht in den Fusszeilen der Ausdrucke
 REPO_URL = "github.com/IDmate-app/IDMate"
 # Stick firmware (IDTelemetry): the dashboard says when a newer release exists.
@@ -67,12 +67,39 @@ def _parse_int_fields():
 INFLUX_INT_FIELDS = _parse_int_fields()
 
 
+# Types the bucket itself reported in a field-type conflict ("already exists
+# as type …"). They win over INFLUX_INT_FIELDS: the bucket is the truth, and a
+# conflicting field would otherwise drop the WHOLE point (all fields).
+INFLUX_TYPE_LEARNED = {}
+
+_CONFLICT_RE = None
+
+
 def influx_field_value(key, val):
     """Cast a numeric Influx field to the type fixed by this installation's
     schema. Use for EVERY write to measurement "v" so all writers agree."""
-    if key in INFLUX_INT_FIELDS:
+    learned = INFLUX_TYPE_LEARNED.get(key)
+    if learned == "integer" or (learned is None and key in INFLUX_INT_FIELDS):
         return int(round(val))
     return float(val)
+
+
+def learn_influx_type_conflict(err_text):
+    """Read 'input field "x" on measurement "v" is type float, already exists
+    as type integer' (InfluxDB 2.x) from a write error. Remembers the bucket's
+    type for every such field; returns [(field, bucket_type)] newly learned."""
+    global _CONFLICT_RE
+    import re
+    if _CONFLICT_RE is None:
+        _CONFLICT_RE = re.compile(r'input field \\?"([^"\\]+)\\?" on measurement \\?"v\\?" is type (\w+), '
+                                  r'already exists as type (\w+)')
+    out = []
+    for field, _new, existing in _CONFLICT_RE.findall(err_text or ""):
+        kind = "integer" if existing.lower().startswith(("int", "uint")) else "float"
+        if INFLUX_TYPE_LEARNED.get(field) != kind:
+            INFLUX_TYPE_LEARNED[field] = kind
+            out.append((field, kind))
+    return out
 
 
 # Auth

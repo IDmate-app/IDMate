@@ -3759,18 +3759,9 @@ def mqtt_replay():
         parts = topic.split("/")
         device = parts[1] if len(parts) >= 3 else "vw_id"
 
-        point = Point("v").tag("d", device)
-        # Enforce field types via the central table (see
-        # config.INFLUX_INT_FIELDS) — otherwise a 422 field-type-conflict and the
-        # whole batch is discarded.
-        for k, val in fields.items():
-            point.field(k, config.influx_field_value(k, val))
-        point.time(int(ts * 1_000_000_000), WritePrecision.NS)
-
-        try:
-            writer.write(bucket=config.INFLUX_BUCKET, record=point)
+        if influx_write_v(writer, device, fields, ts) is None:
             ok += 1
-        except Exception:
+        else:
             fail += 1
 
     client.close()
@@ -4175,6 +4166,33 @@ def stick_info(device):
     return _stick_info[device]
 
 
+def influx_write_v(writer, device, fields, ts):
+    """Write one point of measurement "v". On a field-type conflict the bucket's
+    type is learned (config.learn_influx_type_conflict) and the point written
+    again, so one mistyped field no longer drops all the others.
+    Returns None on success, else the last error."""
+    from influxdb_client import Point, WritePrecision
+    err = None
+    for _ in range(4):
+        point = Point("v").tag("d", device)
+        for k, val in fields.items():
+            point.field(k, config.influx_field_value(k, val))
+        if ts is not None:
+            point.time(int(ts * 1_000_000_000), WritePrecision.NS)
+        try:
+            writer.write(bucket=config.INFLUX_BUCKET, record=point)
+            return None
+        except Exception as exc:
+            err = exc
+            learned = config.learn_influx_type_conflict(str(exc) + " " + str(getattr(exc, "body", "") or ""))
+            if not learned:
+                return err
+            for field, kind in learned:
+                log.warning("InfluxDB: field '%s' is %s in the bucket — IDmate now writes it as %s "
+                            "(set INFLUX_INT_FIELDS to make this permanent)", field, kind, kind)
+    return err
+
+
 def background_mqtt():
     """MQTT subscriber: connects to Mosquitto, collects messages and
     writes telemetry data (tele/+/data) to InfluxDB.
@@ -4251,25 +4269,16 @@ def background_mqtt():
         if not fields:
             return "no_fields"
 
-        from influxdb_client import Point
-        point = Point("v").tag("d", device)
-        # Enforce field types via the central table (see
-        # config.INFLUX_INT_FIELDS) — otherwise a 422 field-type-conflict and the
-        # whole batch is discarded.
-        for k, val in fields.items():
-            point.field(k, config.influx_field_value(k, val))
-        if ts is not None:
-            point.time(int(ts * 1_000_000_000), WritePrecision.NS)
-
-        try:
-            influx_write.write(bucket=config.INFLUX_BUCKET, record=point)
+        # Types via the central table (config.INFLUX_INT_FIELDS); a type
+        # conflict with the bucket is learned and the point written again.
+        exc = influx_write_v(influx_write, device, fields, ts)
+        if exc is None:
             _mqtt_influx_count += 1
             log.debug("MQTT→InfluxDB: %s → %d fields written, ts=%s", device, len(fields), ts)
             return "ok"
-        except Exception as exc:
-            _mqtt_influx_failed += 1
-            log.warning("MQTT→InfluxDB write error: %s", exc)
-            return f"error: {exc}"
+        _mqtt_influx_failed += 1
+        log.warning("MQTT→InfluxDB write error: %s", exc)
+        return f"error: {exc}"
 
     # ── MQTT→Detector trigger: 5 min silence = trigger scan ──
     import threading
