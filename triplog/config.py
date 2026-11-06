@@ -1,6 +1,6 @@
 import os
 
-VERSION = "1.2.254"
+VERSION = "1.2.255"
 # Projektseite, steht in den Fusszeilen der Ausdrucke
 REPO_URL = "github.com/IDmate-app/IDMate"
 
@@ -47,9 +47,10 @@ ROUNDTRIP_URL = os.environ.get("ROUNDTRIP_URL", "").strip().rstrip("/")
 # Solution: overridable via ENV. Default = float for 'v' (bucket of this
 # installation, confirmed by 73afef1 + another 422 on 2025-12-31). An
 # installation whose bucket holds 'v' as integer sets:
-#   INFLUX_INT_FIELDS=hd,u,i,c,dc,bt,et,pk,ls,bd,lp,v
+#   INFLUX_INT_FIELDS=hd,u,i,c,dc,bt,et,pk,ls,bd,lp,ct,v
 # Format: comma-separated field names. Empty string = ALL fields float.
-_INFLUX_INT_FIELDS_DEFAULT = "hd,u,i,c,dc,bt,et,pk,ls,bd,lp"
+# ct (cabin temperature, firmware 1.5.0) is a whole number like bt/et.
+_INFLUX_INT_FIELDS_DEFAULT = "hd,u,i,c,dc,bt,et,pk,ls,bd,lp,ct"
 
 
 def _parse_int_fields():

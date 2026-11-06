@@ -1594,5 +1594,9 @@
   "bms_vehicle_toggle_hint": "Knopf „BMS lernen“ auf dem Dashboard",
   "bms_no_value": "kein BMS-Wert",
   "bms_stale_none": "Kein aktueller BMS-Wert — speichern geht nur mit Werten jünger als 5 Minuten. Fahrzeug wecken oder losfahren.",
-  "bms_can_range": "Anzeige-Reichweite − CAN-Reichweite: {0} km ({1} Punkte)"
+  "bms_can_range": "Anzeige-Reichweite − CAN-Reichweite: {0} km ({1} Punkte)",
+  "dash_soe": "Energie (BMS)",
+  "dash_hvac": "Klima/Heizung",
+  "dash_cabin_temp": "Innen Temp",
+  "dash_stick_fw": "Stick-Firmware"
 }

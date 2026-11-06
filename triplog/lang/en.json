@@ -1594,5 +1594,9 @@
   "bms_vehicle_toggle_hint": "\"Learn BMS\" button on the dashboard",
   "bms_no_value": "no BMS value",
   "bms_stale_none": "No current BMS value — only values younger than 5 minutes can be saved. Wake the car or start driving.",
-  "bms_can_range": "Display range − CAN range: {0} km ({1} points)"
+  "bms_can_range": "Display range − CAN range: {0} km ({1} points)",
+  "dash_soe": "Energy (BMS)",
+  "dash_hvac": "HVAC",
+  "dash_cabin_temp": "Cabin temp",
+  "dash_stick_fw": "Stick firmware"
 }

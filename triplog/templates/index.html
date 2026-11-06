@@ -168,6 +168,18 @@
         <span class="label">{{ t.dash_ext_temp }}</span>
         <span class="value"><span id="extTemp">--</span> °C <span class="field-age" id="ageExtTemp"></span></span>
       </div>
+      <div class="stat-row" id="cabinTempRow" style="display:none">
+        <span class="label">{{ t.dash_cabin_temp }}</span>
+        <span class="value"><span id="cabinTemp">--</span> °C <span class="field-age" id="ageCabinTemp"></span></span>
+      </div>
+      <div class="stat-row" id="hvacRow" style="display:none">
+        <span class="label">{{ t.dash_hvac }}</span>
+        <span class="value"><span id="hvac">--</span> kW <span class="field-age" id="ageHvac"></span></span>
+      </div>
+      <div class="stat-row" id="soeRow" style="display:none">
+        <span class="label">{{ t.dash_soe }}</span>
+        <span class="value"><span id="soe">--</span> kWh <span class="field-age" id="ageSoe"></span></span>
+      </div>
       <div class="stat-row">
         <span class="label">{{ t.dash_power }}</span>
         <span class="value"><span id="power">--</span> kW <span class="field-age" id="agePower"></span></span>
@@ -186,6 +198,10 @@
       <div class="stat-row">
         <span class="label">{{ t.dash_lte }}</span>
         <span class="value"><span id="lte">--</span> <span class="field-age" id="ageLte"></span></span>
+      </div>
+      <div class="stat-row" id="stickFwRow" style="display:none">
+        <span class="label">{{ t.dash_stick_fw }}</span>
+        <span class="value" id="stickFw" style="font-size:0.8rem"></span>
       </div>
 
       <div class="ago" id="ago"></div>
@@ -536,6 +552,21 @@
       setAge('ageSpeed',   ft.speed);
       setAge('ageEspBat',  ft.esp_battery);
       setAge('ageLte',     ft.lte_signal);
+
+      // Firmware 1.5.0+: SoE, HVAC power, cabin temperature; rows only with a value
+      [['soe', 'soeRow', d.soe, ft.soe, 1, 'ageSoe'], ['hvac', 'hvacRow', d.hvac_kw, ft.hvac_kw, 1, 'ageHvac'],
+       ['cabinTemp', 'cabinTempRow', d.cabin_temp, ft.cabin_temp, 0, 'ageCabinTemp']].forEach(([id, row, val, ts, dec, age]) => {
+        const v = staleVal(val, ts, 60);
+        document.getElementById(row).style.display = v == null ? 'none' : '';
+        if (v != null) { setVal(id, v, x => fmt(x, dec)); setAge(age, ts); }
+      });
+      const st = d.stick;
+      document.getElementById('stickFwRow').style.display = st && st.fw ? '' : 'none';
+      if (st && st.fw) {
+        const b = st.build && st.build !== st.fw ? ` <span style="color:var(--text-2)">${st.build}</span>` : '';
+        document.getElementById('stickFw').innerHTML = `${st.fw}${st.var ? ' · ' + st.var : ''}${b}`;
+        document.getElementById('stickFw').style.color = /dirty/.test(st.build || '') ? TC.warn : '';
+      }
 
       if (d.lat != null && d.lon != null) {
         const pos = [d.lat, d.lon];
