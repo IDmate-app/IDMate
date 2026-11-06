@@ -19,6 +19,9 @@ import sys
 import tempfile
 import types
 
+# No request to GitHub from the test suite (stick firmware update hint).
+os.environ.setdefault("STICK_UPDATE_CHECK", "0")
+
 import pytest
 
 # triplog/ is the parent of this tests/ directory — make config/detector/app importable.

@@ -494,6 +494,7 @@
       });
     }
 
+    const STICK_UPD_T = {{ t.dash_stick_update | tojson }};
     function updateState(d) {
 
       const soc = d.soc;
@@ -565,7 +566,9 @@
       document.getElementById('stickFwRow').style.display = st && st.fw ? '' : 'none';
       if (st && st.fw) {
         const b = st.build && st.build !== st.fw ? ` <span style="color:var(--text-2)">${st.build}</span>` : '';
-        document.getElementById('stickFw').innerHTML = `${st.fw}${st.var ? ' · ' + st.var : ''}${b}`;
+        const up = d.stick_update;
+        const u = up ? `<br><a href="${up.url}" target="_blank" rel="noopener" style="color:var(--accent)">${STICK_UPD_T.replace('{0}', up.version)}</a>` : '';
+        document.getElementById('stickFw').innerHTML = `${st.fw}${st.var ? ' · ' + st.var : ''}${b}${u}`;
         document.getElementById('stickFw').style.color = /dirty/.test(st.build || '') ? TC.warn : '';
       }
 

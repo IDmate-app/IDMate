@@ -1603,5 +1603,6 @@
   "dash_soe": "Energy (BMS)",
   "dash_hvac": "HVAC",
   "dash_cabin_temp": "Cabin temp",
-  "dash_stick_fw": "Stick firmware"
+  "dash_stick_fw": "Stick firmware",
+  "dash_stick_update": "Update {0} available → release page"
 }
