@@ -38,7 +38,7 @@ def _live(device):
         st = dict(_state_cache.get(device, {}))
     ft = st.get("field_times") or {}
     age = _age_s(ft.get("soc"))
-    out = {k: st.get(k) for k in ("bat_temp", "ext_temp", "speed", "odometer")}
+    out = {k: st.get(k) for k in ("bat_temp", "ext_temp", "speed", "odometer", "range_km")}
     out["can_soc"] = st.get("soc")
     out["age_s"] = round(age) if age is not None else None
     out["fresh"] = age is not None and age <= bl.FRESH_S and st.get("soc") is not None
@@ -190,11 +190,12 @@ def bms_add():
         win = bl.window_consumption(_series(v["device"]), cap)
         db.execute(
             """INSERT INTO bms_points (plate, created_at, disp_soc, disp_range, disp_cons, can_soc, can_age_s,
-                   bat_temp, ext_temp, speed, odometer, capacity_kwh, cons_10, cons_30, cons_50, cons_100)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   bat_temp, ext_temp, speed, odometer, capacity_kwh, cons_10, cons_30, cons_50, cons_100,
+                   can_range)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (v["plate"], datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), soc, rng, cons,
              live["can_soc"], live["age_s"], live.get("bat_temp"), live.get("ext_temp"), live.get("speed"),
-             live.get("odometer"), cap, win[10], win[30], win[50], win[100]))
+             live.get("odometer"), cap, win[10], win[30], win[50], win[100], live.get("range_km")))
         db.commit()
         log.info("bms learn: %s display %s %% at CAN %s %%", v["plate"], soc, live["can_soc"])
         return jsonify(_state(db, v))

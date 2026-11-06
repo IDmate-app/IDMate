@@ -11,7 +11,8 @@ values of that moment (bms_points). From those points:
   fit_range     how VW turns that into km: range = display SoC × E ÷ the
                 displayed average consumption. E (kWh per 100 % display) is
                 learned, and which stretch of measured consumption (last 10,
-                30, 50 or 100 km) the displayed average follows.
+                30, 50 or 100 km) the displayed average follows; and how far
+                the range the stick reads from the car is off the display.
   real_range    an own range span: the energy left until the display reads 0 %
                 divided by the consumption of past trips at a similar outside
                 temperature (10th to 90th percentile).
@@ -182,6 +183,11 @@ def fit_range(points):
             best = (n, k, err)
     if best:
         out.update(window_km=best[0], cons_factor=round(best[1], 3), cons_mae=round(best[2], 1))
+    # The range the stick reads from the car: the displayed number or not?
+    diffs = [_f(p["disp_range"]) - _f(p.get("can_range")) for p in rows if _f(p.get("can_range")) is not None]
+    out["can_range_n"] = len(diffs)
+    out["can_range_diff"] = round(fm.median(diffs), 1) if diffs else None
+    out["can_range_mae"] = round(fm.median([abs(d) for d in diffs]), 1) if diffs else None
     return out
 
 
