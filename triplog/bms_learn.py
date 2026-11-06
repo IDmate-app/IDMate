@@ -8,6 +8,8 @@ values of that moment (bms_points). From those points:
   fit_display   display SoC = a + b·CAN SoC (+ c·battery °C + d·outside °C
                 once there are enough points with enough temperature spread),
                 robust (Huber), with leave-one-out error as the honest accuracy.
+  range_offset  displayed range − CAN range; once stable, the range is taken
+                from CAN and need not be typed in.
   fit_range     how VW turns that into km: range = display SoC × E ÷ the
                 displayed average consumption. E (kWh per 100 % display) is
                 learned, and which stretch of measured consumption (last 10,
@@ -34,6 +36,8 @@ RIDGE = 1.0                    # pulls the temperature terms to 0
 BAT_REF_C, EXT_REF_C = 20.0, 10.0
 TEMP_BAND_C = (4.0, 8.0)       # trips this close to today's temperature
 MIN_BAND_KM = 150.0
+RANGE_CAN_MIN_N = 5            # points with display AND CAN range before the
+RANGE_CAN_SPREAD_KM = 3.0      # display range may come from CAN: offset stable
 
 
 def _f(v):
@@ -155,10 +159,42 @@ def display_zero_can(model, bat_temp=None, ext_temp=None):
 
 # ── VW range ──────────────────────────────────────────────────────────────
 
+def range_offset(points):
+    """How the displayed range relates to the range the stick reads from the
+    car: {n, diff (median display − CAN), spread (median |deviation|),
+    reliable}. Reliable = enough points and a stable offset; then the display
+    range need not be typed in any more (display = CAN + diff)."""
+    diffs = [_f(p["disp_range"]) - _f(p["can_range"]) for p in points
+             if (_f(p.get("disp_range")) or 0) > 0 and _f(p.get("can_range")) is not None]
+    if not diffs:
+        return {"n": 0, "diff": None, "spread": None, "reliable": False}
+    med = fm.median(diffs)
+    spread = fm.median([abs(d - med) for d in diffs]) if len(diffs) > 1 else None
+    return {"n": len(diffs), "diff": round(med, 1),
+            "spread": round(spread, 1) if spread is not None else None,
+            "reliable": len(diffs) >= RANGE_CAN_MIN_N and spread is not None and spread <= RANGE_CAN_SPREAD_KM}
+
+
+def fill_range_from_can(points):
+    """Points without a typed range get display range = CAN range + offset,
+    once the offset is reliable. Typed values are never touched."""
+    off = range_offset(points)
+    if not off["reliable"]:
+        return points
+    out = []
+    for p in points:
+        if not (_f(p.get("disp_range")) or 0) > 0 and _f(p.get("can_range")) is not None:
+            p = dict(p, disp_range=_f(p["can_range"]) + off["diff"], range_from_can=True)
+        out.append(p)
+    return out
+
+
 def fit_range(points):
     """E (kWh per 100 % display) from range × consumption ÷ display SoC, the
     measured window the displayed average follows best, and the error of the
     rebuilt range. None without points carrying range and consumption."""
+    off = range_offset(points)
+    points = fill_range_from_can(points)
     rows = [p for p in points
             if (_f(p.get("disp_range")) or 0) > 0 and (_f(p.get("disp_cons")) or 0) > 0
             and (_f(p.get("disp_soc")) or 0) >= 5]
@@ -187,10 +223,10 @@ def fit_range(points):
     soe = [_f(p["soe"]) / _f(p["disp_soc"]) * 100 for p in rows if _f(p.get("soe"))]
     out["soe_e_kwh"] = round(fm.median(soe), 2) if soe else None
     # The range the stick reads from the car: the displayed number or not?
-    diffs = [_f(p["disp_range"]) - _f(p.get("can_range")) for p in rows if _f(p.get("can_range")) is not None]
-    out["can_range_n"] = len(diffs)
-    out["can_range_diff"] = round(fm.median(diffs), 1) if diffs else None
-    out["can_range_mae"] = round(fm.median([abs(d) for d in diffs]), 1) if diffs else None
+    out["can_range_n"] = off["n"]
+    out["can_range_diff"] = off["diff"]
+    out["can_range_spread"] = off["spread"]
+    out["can_range_reliable"] = off["reliable"]
     return out
 
 

@@ -125,6 +125,7 @@ def _state(db, v):
     cap = get_bat_kwh(db, device, datetime.now().isoformat()) if device else None
     out = {"enabled": bool(v.get("bms_learn")), "plate": v["plate"], "live": live,
            "fresh_s": bl.FRESH_S, "n": len(points), "display": disp, "range": rng,
+           "learn": _learn_status(points, disp, rng),
            "points": list(reversed(points[-30:]))}
     can = live.get("can_soc")
     if can is None:
@@ -141,6 +142,31 @@ def _state(db, v):
     now["real"] = bl.real_range(left, _trips(db, device), et) if left else None
     out["now"] = now
     return out
+
+
+def _cons(data):
+    """Displayed average consumption → kWh/100 km. Typed as Wh/km (228) or,
+    as before, kWh/100 km (22.8): no car shows less than 100 Wh/km or more
+    than 80 kWh/100 km, so the two never overlap."""
+    v = data.get("disp_cons")
+    if v in (None, ""):
+        return None
+    v = float(str(v).replace(",", "."))
+    if v >= 100:
+        v = v / 10.0
+    if not 3 <= v <= 80:
+        raise ValueError("disp_cons")
+    return round(v, 2)
+
+
+def _learn_status(points, disp, rng):
+    """How far the learning is: points, error, what joins next, whether the
+    range still has to be typed in."""
+    off = bl.range_offset(points)
+    return {"n": len(points), "min_points": bl.MIN_POINTS, "full_points": bl.FULL_POINTS,
+            "terms": disp["terms"] if disp else [], "mae_loo": disp.get("mae_loo") if disp else None,
+            "range_n": off["n"], "range_need": bl.RANGE_CAN_MIN_N, "range_spread": off["spread"],
+            "range_diff": off["diff"], "range_from_can": off["reliable"]}
 
 
 def _num(data, key, lo, hi):
@@ -177,7 +203,7 @@ def bms_add():
         try:
             soc = _num(data, "disp_soc", 0, 100)
             rng = _num(data, "disp_range", 0, 1500)
-            cons = _num(data, "disp_cons", 3, 80)
+            cons = _cons(data)
         except ValueError:
             return jsonify({"error": t["bms_invalid_input"]}), 400
         if soc is None:
