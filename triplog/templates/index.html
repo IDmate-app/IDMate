@@ -495,7 +495,9 @@
     }
 
     const STICK_UPD_T = {{ t.dash_stick_update | tojson }};
-    const STICK_UPD_HINT = {{ t.dash_stick_update_hint | tojson }};
+    const STICK_UPD_DL = {{ t.dash_stick_download | tojson }};
+    const STICK_UPD_HOW = {{ t.dash_stick_howto | tojson }};
+    const STICK_UPD_STEPS = {{ t.dash_stick_steps | tojson }};
     function updateState(d) {
 
       const soc = d.soc;
@@ -566,12 +568,20 @@
       const st = d.stick;
       document.getElementById('stickFwRow').style.display = st && st.fw ? '' : 'none';
       if (st && st.fw) {
-        const b = st.build && st.build !== st.fw ? ` <span style="color:var(--text-2)">${st.build}</span>` : '';
+        // Plain version only; build and variant in the tooltip. The update as
+        // one line + download, the steps folded away ("So geht's").
         const up = d.stick_update;
-        const u = up ? `<br><a href="${up.file_url || up.url}" ${up.file_url ? 'download' : 'target="_blank" rel="noopener"'} style="color:var(--accent)">${STICK_UPD_T.replace('{0}', up.version)}</a>`
-          + `<br><small style="color:var(--text-2)">${STICK_UPD_HINT}</small>` : '';
-        document.getElementById('stickFw').innerHTML = `${st.fw}${st.var ? ' · ' + st.var : ''}${b}${u}`;
-        document.getElementById('stickFw').style.color = /dirty/.test(st.build || '') ? TC.warn : '';
+        const u = up ? `<div style="margin-top:0.25rem"><span style="color:var(--accent)">${esc(STICK_UPD_T.replace('{0}', up.version))}</span>`
+          + ` <a href="${esc(up.file_url || up.url)}" ${up.file_url ? 'download' : 'target="_blank" rel="noopener"'} style="color:var(--accent);font-weight:600">${esc(STICK_UPD_DL)}</a></div>`
+          + `<details style="margin-top:0.2rem"><summary style="cursor:pointer;color:var(--text-2);font-size:0.75rem">${esc(STICK_UPD_HOW)}</summary>`
+          + `<ol style="margin:0.3rem 0 0 1.1rem;padding:0;color:var(--text-2);font-size:0.75rem;line-height:1.5">`
+          + STICK_UPD_STEPS.map(x => `<li>${esc(x)}</li>`).join('') + `</ol></details>` : '';
+        const el = document.getElementById('stickFw');
+        const html = `${esc(st.fw)}${u}`;
+        // Only rewrite on change: every live update would close "So geht's" again.
+        if (el.dataset.h !== html) { el.innerHTML = html; el.dataset.h = html; }
+        el.title = [st.var, st.build].filter(Boolean).join(' · ');
+        el.style.color = /dirty/.test(st.build || '') ? TC.warn : '';
       }
 
       if (d.lat != null && d.lon != null) {
