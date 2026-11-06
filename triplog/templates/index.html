@@ -710,7 +710,7 @@
     'points': t.bms_points, 'del': t.bms_delete_confirm, 'pred': t.bms_display_pred, 'acc': t.bms_accuracy,
     'need': t.bms_need_points, 'vw': t.bms_vw_range, 'real': t.bms_real_range, 'real_hint': t.bms_real_hint,
     'buffer': t.bms_buffer, 'window': t.bms_window, 'e': t.bms_e, 'soc_req': t.bms_soc_required,
-    'bat': t.dash_bat_temp, 'ext': t.dash_ext_temp, 'none': t.bms_no_value } | tojson }};
+    'bat': t.dash_bat_temp, 'ext': t.dash_ext_temp, 'none': t.bms_no_value, 'can_range': t.bms_can_range } | tojson }};
   let _bms = null, _bmsTimer = null;
   const _bmsNum = (v, d = 1) => (v === null || v === undefined) ? '–' : Number(v).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: 0 });
   function _bmsAge(s) {
@@ -740,12 +740,13 @@
     if (d.display) { const z = d.display.coef[1] ? -d.display.coef[0] / d.display.coef[1] : null; if (z !== null) det.push(BMS_T.buffer.replace('{0}', _bmsNum(z, 1))); }
     if (d.range && d.range.window_km) det.push(BMS_T.window.replace('{0}', d.range.window_km));
     if (d.range) det.push(BMS_T.e.replace('{0}', _bmsNum(d.range.e_kwh, 1)));
+    if (d.range && d.range.can_range_n) det.push(BMS_T.can_range.replace('{0}', (d.range.can_range_diff > 0 ? '+' : '') + _bmsNum(d.range.can_range_diff, 0)).replace('{1}', d.range.can_range_n));
     if (det.length) lines.push(`<small>${det.join(' · ')}</small>`);
     const sum = document.getElementById('bmsSum'); if (sum) sum.innerHTML = lines.join('<br>');
     const live = d.live || {}, el = document.getElementById('bmsLive');
     if (el) {
       el.className = 'bms-live' + (live.fresh ? '' : ' stale');
-      el.innerHTML = `${BMS_T.can_now}: <b>${_bmsNum(live.can_soc, 1)} %</b> · ${BMS_T.bat} ${_bmsNum(live.bat_temp, 1)} °C · ${BMS_T.ext} ${_bmsNum(live.ext_temp, 1)} °C · ${_bmsAge(live.age_s)}`
+      el.innerHTML = `${BMS_T.can_now}: <b>${_bmsNum(live.can_soc, 1)} %</b>${live.range_km ? ' · ' + _bmsNum(live.range_km, 0) + ' km' : ''} · ${BMS_T.bat} ${_bmsNum(live.bat_temp, 1)} °C · ${BMS_T.ext} ${_bmsNum(live.ext_temp, 1)} °C · ${_bmsAge(live.age_s)}`
         + (live.fresh ? '' : `<br>${BMS_T.fresh_hint}`);
     }
     const btn = document.getElementById('bmsSave'); if (btn) btn.disabled = !live.fresh;
@@ -753,7 +754,7 @@
     if (pts) pts.innerHTML = (d.points || []).length ? `<div>${BMS_T.points}: ${d.n}</div>` + d.points.map(p => `
       <div class="bms-pt"><span>${new Date(p.created_at).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })} ·
         ${_bmsNum(p.disp_soc, 1)} % / ${p.disp_range ? _bmsNum(p.disp_range, 0) + ' km' : '–'} / ${p.disp_cons ? _bmsNum(p.disp_cons, 1) : '–'} ·
-        CAN ${_bmsNum(p.can_soc, 1)} % · ${_bmsNum(p.bat_temp, 0)}/${_bmsNum(p.ext_temp, 0)} °C</span>
+        CAN ${_bmsNum(p.can_soc, 1)} %${p.can_range ? ' / ' + _bmsNum(p.can_range, 0) + ' km' : ''} · ${_bmsNum(p.bat_temp, 0)}/${_bmsNum(p.ext_temp, 0)} °C</span>
         <button data-onclick="deleteBmsPoint" data-args='[${p.id}]' aria-label="delete">&times;</button></div>`).join('') : '';
   }
   function openBms() {

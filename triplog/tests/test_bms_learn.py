@@ -49,6 +49,10 @@ def test_range_rebuilt_from_e_and_the_window_vw_follows():
     r = bl.fit_range(rows)
     assert 84 < r["e_kwh"] < 88 and r["window_km"] == 30 and abs(r["cons_factor"] - 1.0) < 0.02
     assert r["range_mae"] < 6
+    assert r["can_range_n"] == 0 and r["can_range_diff"] is None
+    rows[0]["can_range"], rows[1]["can_range"] = 220, 209
+    r = bl.fit_range(rows)
+    assert r["can_range_n"] == 2 and r["can_range_diff"] == 4.5 and r["can_range_mae"] == 4.5
 
 
 def test_real_range_from_trips_at_a_similar_temperature():
@@ -74,7 +78,7 @@ def _client(app_module, db, enabled=True):
 def _state(app_module, age_s):
     t = (datetime.now(timezone.utc) - timedelta(seconds=age_s)).strftime("%Y-%m-%dT%H:%M:%SZ")
     app_module._state_cache["dev1"] = {"soc": 74.0, "bat_temp": 12.0, "ext_temp": -1.5, "speed": 80,
-                                       "odometer": 36000, "field_times": {"soc": t}}
+                                       "odometer": 36000, "range_km": 228, "field_times": {"soc": t}}
 
 
 def test_save_only_with_a_fresh_can_value(app_module, db, monkeypatch):
@@ -90,7 +94,9 @@ def test_save_only_with_a_fresh_can_value(app_module, db, monkeypatch):
         d = r.get_json()
         assert r.status_code == 200 and d["n"] == 1 and d["live"]["fresh"]
         p = d["points"][0]
-        assert (p["disp_soc"], p["disp_range"], p["disp_cons"], p["can_soc"], p["ext_temp"]) == (72, 230, 24.4, 74, -1.5)
+        assert (p["disp_soc"], p["disp_range"], p["disp_cons"], p["can_soc"], p["ext_temp"], p["can_range"]) == \
+            (72, 230, 24.4, 74, -1.5, 228)
+        assert d["range"]["can_range_diff"] == 2 and d["range"]["can_range_n"] == 1
         assert c.post("/api/bms-learn", json={"disp_soc": "172"}).status_code == 400
         assert c.delete(f"/api/bms-learn/{p['id']}").get_json()["n"] == 0
     finally:

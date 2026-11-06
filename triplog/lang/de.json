@@ -1593,5 +1593,6 @@
   "bms_vehicle_toggle": "BMS anlernen",
   "bms_vehicle_toggle_hint": "Knopf „BMS lernen“ auf dem Dashboard",
   "bms_no_value": "kein BMS-Wert",
-  "bms_stale_none": "Kein aktueller BMS-Wert — speichern geht nur mit Werten jünger als 5 Minuten. Fahrzeug wecken oder losfahren."
+  "bms_stale_none": "Kein aktueller BMS-Wert — speichern geht nur mit Werten jünger als 5 Minuten. Fahrzeug wecken oder losfahren.",
+  "bms_can_range": "Anzeige-Reichweite − CAN-Reichweite: {0} km ({1} Punkte)"
 }

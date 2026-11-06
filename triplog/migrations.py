@@ -970,6 +970,14 @@ def m073_bms_learn(db, log):
     log.info("Migration: bms_learn ready")
 
 
+def m074_bms_can_range(db, log):
+    # The range the stick reads from the car (CAN "r") next to the range
+    # entered from the display: is it the same number?
+    if "bms_points" in _tables(db) and "can_range" not in _cols(db, "bms_points"):
+        db.execute("ALTER TABLE bms_points ADD COLUMN can_range REAL")
+        log.info("Migration: bms_points.can_range added")
+
+
 MIGRATIONS = [
     (1,  "trips_is_gpx",            m001_trips_is_gpx),
     (2,  "trips_odo",              m002_trips_odo),
@@ -1044,6 +1052,7 @@ MIGRATIONS = [
     (71, "operator_names",         m071_operator_names),
     (72, "diag_ack",               m072_diag_ack),
     (73, "bms_learn",              m073_bms_learn),
+    (74, "bms_can_range",          m074_bms_can_range),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]
