@@ -4134,6 +4134,7 @@ document.querySelectorAll('#dtable thead th').forEach((th, idx) => {{
 # ── MQTT Monitor ─────────────────────────────────────────────
 
 import collections
+_stick_cfg_thread = None   # weekly push of the learned stick corrections
 _mqtt_messages = collections.deque(maxlen=500)  # last 500 messages
 _mqtt_connected = False
 _mqtt_influx_count = 0  # Counter: successfully written InfluxDB points
@@ -4309,18 +4310,24 @@ def background_mqtt():
         client.subscribe(config.MQTT_DATA_TOPIC)
         log.info("MQTT connected, subscribed to %s + %s",
                  config.MQTT_TOPIC, config.MQTT_DATA_TOPIC)
-        # Learned corrections for the sticks (retained, see stick_cfg.py) —
-        # off the network thread, it reads the DB.
-        def _push_cfg():
-            import stick_cfg
-            db = get_db()
-            try:
-                stick_cfg.push_all(db)
-            except Exception:
-                log.exception("stick cfg: push on connect failed")
-            finally:
-                db.close()
-        threading.Thread(target=_push_cfg, name="stick-cfg", daemon=True).start()
+        # Learned corrections for the sticks (retained, at most weekly, see
+        # stick_cfg.py) — off the network thread, it reads the DB. Started
+        # once; checks every 6 h so a change held back by the week goes out.
+        global _stick_cfg_thread
+        if _stick_cfg_thread is None:
+            def _push_cfg_loop():
+                import stick_cfg
+                while True:
+                    db = get_db()
+                    try:
+                        stick_cfg.push_all(db)
+                    except Exception:
+                        log.exception("stick cfg: push failed")
+                    finally:
+                        db.close()
+                    time.sleep(6 * 3600)
+            _stick_cfg_thread = threading.Thread(target=_push_cfg_loop, name="stick-cfg", daemon=True)
+            _stick_cfg_thread.start()
 
     def on_disconnect(client, userdata, flags, reason_code, properties=None):
         global _mqtt_connected

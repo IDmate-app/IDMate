@@ -805,7 +805,8 @@
     const sc = d.stick || {}, sp = [];
     if (sc.c) sp.push(BMS_T.stick_soc);
     if (sc.o !== undefined) sp.push(BMS_T.stick_odo.replace('{0}', (sc.o > 0 ? '+' : '') + sc.o));
-    if (sp.length) info.push(BMS_T.stick.replace('{0}', sp.join(' · ')));
+    if (sp.length) info.push(BMS_T.stick.replace('{0}', sp.join(' · '))
+      + (d.stick_sent ? ' (' + new Date(d.stick_sent * 1000).toLocaleDateString() + ')' : ''));
     const inf = document.getElementById('bmsInfo');
     if (inf) { inf.innerHTML = info.join('<br>'); inf.style.display = info.length ? '' : 'none'; }
     const rf = document.getElementById('bmsRangeField'), rn = document.getElementById('bmsRangeNote');

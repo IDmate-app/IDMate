@@ -470,12 +470,13 @@ _IS_HOME_SQL = (
     "(SELECT cl.is_home FROM charge_locations cl WHERE cl.name = location_name), 0) = 1)"
 )
 
-# The odometer stamped on a charge is the car's dashboard reading; the charge
-# card provider's system (UTA) records the charge about 5 km further on. So the
+# The odometer stamped on a charge comes from CAN; the car's dashboard (and
+# the charge card provider's statement) reads about 5 km more. So the
 # external-charges table of the print — the one that gets reconciled against
-# the provider's statement — shows the stamp plus this offset. Nothing else
-# uses it: the stored value and every km calculation stay untouched.
-EXT_PRINT_ODO_OFFSET_KM = 5
+# the provider's statement — shows the stamp plus this offset (config,
+# also sent to the stick for ABRP). The stored value and every km
+# calculation stay untouched.
+EXT_PRINT_ODO_OFFSET_KM = config.ODO_OFFSET_KM
 
 
 def _interval_walk(sessions_ordered):
