@@ -237,6 +237,8 @@
       <p id="bmsRangeNote" style="display:none"></p>
       <div class="bms-field"><label for="bmsCons">{{ t.bms_disp_cons }}</label>
         <input id="bmsCons" type="number" inputmode="numeric" min="30" max="800" step="1"></div>
+      <div class="bms-field"><label for="bmsOdo">{{ t.bms_disp_odo }}</label>
+        <input id="bmsOdo" type="number" inputmode="numeric" min="0" max="2000000" step="1"></div>
       <button class="bms-save" id="bmsSave" data-onclick="saveBms">{{ t.bms_save }}</button>
       <div class="bms-info" id="bmsInfo" style="display:none"></div>
       <div class="bms-pts" id="bmsPts"></div>
@@ -755,7 +757,8 @@
     'buffer': t.bms_buffer, 'window': t.bms_window, 'e': t.bms_e, 'soc_req': t.bms_soc_required,
     'bat': t.dash_bat_temp, 'ext': t.dash_ext_temp, 'none': t.bms_no_value, 'can_range': t.bms_can_range,
     'learn': t.bms_learn_state, 'learn_temp': t.bms_learn_temp, 'range_can': t.bms_range_from_can,
-    'range_prog': t.bms_range_progress, 'range_unst': t.bms_range_unstable } | tojson }};
+    'range_prog': t.bms_range_progress, 'range_unst': t.bms_range_unstable,
+    'stick': t.bms_stick, 'stick_soc': t.bms_stick_soc, 'stick_odo': t.bms_stick_odo } | tojson }};
   let _bms = null, _bmsTimer = null;
   const _bmsNum = (v, d = 1) => (v === null || v === undefined) ? '–' : Number(v).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: 0 });
   function _bmsAge(s) {
@@ -799,6 +802,10 @@
         : BMS_T.learn.replace('{0}', lr.n).replace('{1}', lr.full_points);
       info.push(st);
     }
+    const sc = d.stick || {}, sp = [];
+    if (sc.c) sp.push(BMS_T.stick_soc);
+    if (sc.o !== undefined) sp.push(BMS_T.stick_odo.replace('{0}', (sc.o > 0 ? '+' : '') + sc.o));
+    if (sp.length) info.push(BMS_T.stick.replace('{0}', sp.join(' · ')));
     const inf = document.getElementById('bmsInfo');
     if (inf) { inf.innerHTML = info.join('<br>'); inf.style.display = info.length ? '' : 'none'; }
     const rf = document.getElementById('bmsRangeField'), rn = document.getElementById('bmsRangeNote');
@@ -840,7 +847,7 @@
   function bmsBackdrop(ev) { if (ev && ev.target === this) closeBms(); }
   async function saveBms() {
     const val = id => document.getElementById(id).value.trim().replace(',', '.');
-    const body = { disp_soc: val('bmsSoc'), disp_range: val('bmsRange'), disp_cons: val('bmsCons') };
+    const body = { disp_soc: val('bmsSoc'), disp_range: val('bmsRange'), disp_cons: val('bmsCons'), disp_odo: val('bmsOdo') };
     if (!body.disp_soc) { toast(BMS_T.soc_req, 'error'); return; }
     const btn = document.getElementById('bmsSave'); btn.disabled = true;
     try {
@@ -848,7 +855,7 @@
       const d = await r.json();
       if (!r.ok) { toast(d.error || 'Error', 'error'); if (d.live && _bms) { _bms.live = d.live; bmsRender(); } return; }
       _bms = d; bmsRender();
-      ['bmsSoc', 'bmsRange', 'bmsCons'].forEach(id => document.getElementById(id).value = '');
+      ['bmsSoc', 'bmsRange', 'bmsCons', 'bmsOdo'].forEach(id => document.getElementById(id).value = '');
       toast(BMS_T.saved, 'success');
     } finally { if (_bms) btn.disabled = !(_bms.live || {}).fresh; }
   }

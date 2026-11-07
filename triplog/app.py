@@ -4309,6 +4309,18 @@ def background_mqtt():
         client.subscribe(config.MQTT_DATA_TOPIC)
         log.info("MQTT connected, subscribed to %s + %s",
                  config.MQTT_TOPIC, config.MQTT_DATA_TOPIC)
+        # Learned corrections for the sticks (retained, see stick_cfg.py) —
+        # off the network thread, it reads the DB.
+        def _push_cfg():
+            import stick_cfg
+            db = get_db()
+            try:
+                stick_cfg.push_all(db)
+            except Exception:
+                log.exception("stick cfg: push on connect failed")
+            finally:
+                db.close()
+        threading.Thread(target=_push_cfg, name="stick-cfg", daemon=True).start()
 
     def on_disconnect(client, userdata, flags, reason_code, properties=None):
         global _mqtt_connected
@@ -4417,6 +4429,8 @@ def background_mqtt():
     client.on_connect = on_connect
     client.on_disconnect = on_disconnect
     client.on_message = on_message
+    import stick_cfg
+    stick_cfg.set_client(client)
 
     while True:
         try:

@@ -157,6 +157,19 @@ def display_zero_can(model, bat_temp=None, ext_temp=None):
     return round(-p0 / model["coef"][1], 2)
 
 
+# ── dashboard odometer ────────────────────────────────────────────────────
+
+def odo_offset(points):
+    """Dashboard km − CAN odometer, median over the points that have both
+    (typed in the dialog): {n, km} or None. Constant per car, so one point
+    is enough; more points only guard against a typo."""
+    diffs = [_f(p.get("disp_odo")) - _f(p.get("odometer")) for p in points
+             if _f(p.get("disp_odo")) is not None and _f(p.get("odometer")) is not None]
+    if not diffs:
+        return None
+    return {"n": len(diffs), "km": int(round(fm.median(diffs)))}
+
+
 # ── VW range ──────────────────────────────────────────────────────────────
 
 def range_offset(points):
