@@ -63,6 +63,10 @@
   /* Notes scratchpad */
   .notes-box{margin-top:1.5rem;padding-top:0.8rem}
   /* BMS learning: summary + button at the bottom, input dialog */
+  .stick-reload{background:none;border:none;color:var(--text-2);cursor:pointer;font-size:0.95rem;padding:0 0.2rem;line-height:1;vertical-align:baseline}
+  .stick-reload:hover{color:var(--accent)}
+  .stick-reload.spin{animation:stickspin 0.8s linear infinite}
+  @keyframes stickspin{to{transform:rotate(360deg)}}
   .bms-box{margin-top:1.2rem;padding:0.7rem 0.8rem;border:1px solid var(--border);border-radius:8px;background:var(--bg-card)}
   .bms-sum{font-size:0.8rem;color:var(--text-2);line-height:1.5;margin-bottom:0.6rem}
   .bms-sum b{color:var(--text-1);font-size:0.95rem}
@@ -497,6 +501,16 @@
     }
 
     const STICK_UPD_T = {{ t.dash_stick_update | tojson }};
+    const STICK_RELOAD_T = {{ t.dash_stick_reload | tojson }};
+    // Refresh button next to the stick firmware: newest release from GitHub
+    // now (not after the 6 h cache), then the state again.
+    async function stickReload(ev) {
+      const b = ev.currentTarget;
+      b.classList.add('spin'); b.disabled = true;
+      try { await fetch('/api/stick-update/refresh', { method: 'POST' }); await fullRefresh(); }
+      catch (e) {}
+      finally { const n = document.getElementById('stickReload'); if (n) { n.classList.remove('spin'); n.disabled = false; } }
+    }
     function updateState(d) {
 
       const soc = d.soc;
@@ -573,9 +587,12 @@
           + ` style="display:inline-block;font-size:0.8rem;padding:0.25rem 0.7rem;border:1px solid var(--accent);border-radius:6px;color:var(--accent);text-decoration:none">`
           + `${esc(STICK_UPD_T.replace('{0}', up.version))}</a></div>` : '';
         const el = document.getElementById('stickFw');
-        const html = `${esc(st.fw)}${u}`;
+        const html = `${esc(st.fw)} <button type="button" class="stick-reload" id="stickReload" title="${esc(STICK_RELOAD_T)}" aria-label="${esc(STICK_RELOAD_T)}">↻</button>${u}`;
         // Only rewrite on change (live updates every few seconds).
-        if (el.dataset.h !== html) { el.innerHTML = html; el.dataset.h = html; }
+        if (el.dataset.h !== html) {
+          el.innerHTML = html; el.dataset.h = html;
+          document.getElementById('stickReload').addEventListener('click', stickReload);
+        }
         el.title = [st.var, st.build].filter(Boolean).join(' · ');
         el.style.color = /dirty/.test(st.build || '') ? TC.warn : '';
       }

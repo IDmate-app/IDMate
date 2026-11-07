@@ -1607,5 +1607,6 @@
   "dash_hvac": "Auxiliary load (heating, A/C)",
   "dash_cabin_temp": "Cabin temp",
   "dash_stick_fw": "Stick firmware",
-  "dash_stick_update": "Download update {0}"
+  "dash_stick_update": "Download update {0}",
+  "dash_stick_reload": "Check for new stick firmware"
 }
