@@ -39,3 +39,15 @@ def test_switched_off_makes_no_request(monkeypatch):
     monkeypatch.setattr(su.config, "STICK_UPDATE_CHECK", False)
     monkeypatch.setattr(su, "_fetch", lambda: calls.append(1))
     assert su.latest() is None and calls == []
+
+
+def test_refresh_now_skips_the_cache(app_module, monkeypatch):
+    import stick_update as su
+    monkeypatch.setattr(su.config, "STICK_UPDATE_CHECK", True)
+    su._cache.update(t=su.time.time(), data={"version": "1.6.10", "url": "u", "assets": {}})
+    monkeypatch.setattr(su, "_fetch", lambda: {"version": "1.6.11", "url": "u", "assets": {}})
+    assert su.latest()["version"] == "1.6.10"               # still cached
+    assert su.refresh_now()["version"] == "1.6.11"
+    assert su.latest()["version"] == "1.6.11"
+    monkeypatch.setattr(su, "_fetch", lambda: (_ for _ in ()).throw(OSError("offline")))
+    assert su.refresh_now()["version"] == "1.6.11"          # failure keeps the old result

@@ -71,6 +71,22 @@ def _refresh():
             _cache["t"] = time.time() - CACHE_S + RETRY_S
 
 
+def refresh_now():
+    """Ask GitHub right away (dashboard refresh button), skipping the 6 h
+    cache. Waits up to the fetch timeout; keeps the old result on failure.
+    Returns the newest release or None."""
+    if not config.STICK_UPDATE_CHECK:
+        return None
+    try:
+        data = _fetch()
+    except Exception:
+        data = None
+    with _lock:
+        if data:
+            _cache.update(t=time.time(), data=data)
+        return _cache["data"]
+
+
 def latest():
     """Newest release (cached) or None; never waits for GitHub."""
     if not config.STICK_UPDATE_CHECK:

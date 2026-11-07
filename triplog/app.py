@@ -1469,6 +1469,16 @@ def dashboard():
                            bms_learn=bool(fahrzeug and fahrzeug.get("bms_learn")))
 
 
+@app.route("/api/stick-update/refresh", methods=["POST"])
+def stick_update_refresh():
+    """Dashboard refresh button: look for a newer stick firmware now instead
+    of waiting for the 6 h cache. The firmware shown is what the stick last
+    reported (info telegram on every connect) — IDmate cannot ask it."""
+    import stick_update
+    rel = stick_update.refresh_now()
+    return jsonify({"latest": rel.get("version") if rel else None})
+
+
 @app.route("/api/vehicle-state")
 def vehicle_state():
     """Current vehicle state — from cache (updated every 10s in background)."""
