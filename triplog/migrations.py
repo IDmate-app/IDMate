@@ -1000,7 +1000,8 @@ def m075_stick_info(db, log):
 
 
 def m076_bms_disp_odo(db, log):
-    """Dashboard km typed in the BMS dialog → odometer offset for the stick."""
+    """Dashboard km typed in the BMS dialog (1.2.267; field gone again in
+    1.2.269, the offset is fixed). Column stays, harmless."""
     if "bms_points" in _tables(db) and "disp_odo" not in _cols(db, "bms_points"):
         db.execute("ALTER TABLE bms_points ADD COLUMN disp_odo REAL")
         log.info("Migration: bms_points.disp_odo added")

@@ -237,8 +237,6 @@
       <p id="bmsRangeNote" style="display:none"></p>
       <div class="bms-field"><label for="bmsCons">{{ t.bms_disp_cons }}</label>
         <input id="bmsCons" type="number" inputmode="numeric" min="30" max="800" step="1"></div>
-      <div class="bms-field"><label for="bmsOdo">{{ t.bms_disp_odo }}</label>
-        <input id="bmsOdo" type="number" inputmode="numeric" min="0" max="2000000" step="1"></div>
       <button class="bms-save" id="bmsSave" data-onclick="saveBms">{{ t.bms_save }}</button>
       <div class="bms-info" id="bmsInfo" style="display:none"></div>
       <div class="bms-pts" id="bmsPts"></div>
@@ -848,7 +846,7 @@
   function bmsBackdrop(ev) { if (ev && ev.target === this) closeBms(); }
   async function saveBms() {
     const val = id => document.getElementById(id).value.trim().replace(',', '.');
-    const body = { disp_soc: val('bmsSoc'), disp_range: val('bmsRange'), disp_cons: val('bmsCons'), disp_odo: val('bmsOdo') };
+    const body = { disp_soc: val('bmsSoc'), disp_range: val('bmsRange'), disp_cons: val('bmsCons') };
     if (!body.disp_soc) { toast(BMS_T.soc_req, 'error'); return; }
     const btn = document.getElementById('bmsSave'); btn.disabled = true;
     try {
@@ -856,7 +854,7 @@
       const d = await r.json();
       if (!r.ok) { toast(d.error || 'Error', 'error'); if (d.live && _bms) { _bms.live = d.live; bmsRender(); } return; }
       _bms = d; bmsRender();
-      ['bmsSoc', 'bmsRange', 'bmsCons', 'bmsOdo'].forEach(id => document.getElementById(id).value = '');
+      ['bmsSoc', 'bmsRange', 'bmsCons'].forEach(id => document.getElementById(id).value = '');
       toast(BMS_T.saved, 'success');
     } finally { if (_bms) btn.disabled = !(_bms.live || {}).fresh; }
   }

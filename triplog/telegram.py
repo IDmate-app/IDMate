@@ -99,6 +99,8 @@ def decode_info(plaintext):
     if not isinstance(d, dict):
         return None
     out = {k: d.get(k) for k in ('fw', 'build', 'var', 'pv', 'bits')}
+    if isinstance(d.get('odo'), (int, float)):     # stick 1.6.10+: km offset it adds
+        out['odo'] = d['odo']
     for k in ('fw', 'build', 'var'):
         if out[k] is not None:
             out[k] = str(out[k])[:48]

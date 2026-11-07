@@ -1574,7 +1574,6 @@
   "bms_disp_soc": "SoC in the car (%)",
   "bms_disp_range": "Range in the car (km)",
   "bms_disp_cons": "Average consumption shown in the car (Wh/km, e.g. 228)",
-  "bms_disp_odo": "Odometer in the car (optional, once is enough)",
   "bms_stick": "Sent to the stick for ABRP: {0}",
   "bms_stick_soc": "display SoC",
   "bms_stick_odo": "odometer {0} km",

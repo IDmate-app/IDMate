@@ -4161,6 +4161,8 @@ def _store_stick_info(device, info):
                    (device, info.get("fw"), info.get("build"), info.get("var"), info.get("pv"),
                     info.get("bits"), seen))
         db.commit()
+        import stick_cfg
+        stick_cfg.note_stick_offset(db, device, info.get("odo"))
         db.close()
         log.info("MQTT: stick %s reports firmware %s (%s)", device, info.get("fw"), info.get("build"))
     except Exception:
