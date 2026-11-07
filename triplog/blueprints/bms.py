@@ -128,6 +128,7 @@ def _state(db, v):
            "fresh_s": bl.FRESH_S, "n": len(points), "display": disp, "range": rng,
            "learn": _learn_status(points, disp, rng),
            "odo_offset": bl.odo_offset(points), "stick": stick_cfg.build(points),
+           "stick_sent": (stick_cfg.last_sent(db, device) or {}).get("ts") if device else None,
            "points": list(reversed(points[-30:]))}
     can = live.get("can_soc")
     if can is None:

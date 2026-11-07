@@ -1,6 +1,6 @@
 import os
 
-VERSION = "1.2.267"
+VERSION = "1.2.268"
 # Projektseite, steht in den Fusszeilen der Ausdrucke
 REPO_URL = "github.com/IDmate-app/IDMate"
 # Stick firmware (IDTelemetry): the dashboard says when a newer release exists.
@@ -142,6 +142,11 @@ MQTT_TOPIC = os.environ.get("MQTT_TOPIC", "idmate/#")
 MQTT_DATA_TOPIC = os.environ.get("MQTT_DATA_TOPIC", "tele/+/data")
 MQTT_TLS = os.environ.get("MQTT_TLS", "0").lower() in ("1", "true", "yes")
 MQTT_AES_KEY = os.environ.get("MQTT_AES_KEY", "")
+# Dashboard km − CAN odometer (km). Used on the charge print (reconciled
+# against the card provider) and sent to the stick for ABRP, unless the BMS
+# dialog learned another value.
+_odo_off = float(os.environ.get("ODO_OFFSET_KM", "5"))
+ODO_OFFSET_KM = int(_odo_off) if _odo_off.is_integer() else _odo_off
 
 # Debug pages (/debug, scan-debug, influx-delete) — opt-in for safety;
 # enable via ENABLE_DEBUG=1 in .env when needed.
