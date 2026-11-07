@@ -1469,6 +1469,23 @@ def dashboard():
                            bms_learn=bool(fahrzeug and fahrzeug.get("bms_learn")))
 
 
+@app.route("/api/range-area")
+def range_area_api():
+    """Road-based range area (own Valhalla) around lat/lon for up to two
+    ranges in km: ?lat=..&lon=..&km=198,294. "pending" → ask again later."""
+    import range_area
+    try:
+        lat = float(request.args["lat"])
+        lon = float(request.args["lon"])
+        kms = [float(x) for x in request.args.get("km", "").split(",") if x.strip()]
+    except (KeyError, ValueError):
+        return jsonify({"status": "error", "error": "bad request"}), 400
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180) or not 1 <= len(kms) <= 2 \
+            or not all(5 <= k <= 1000 for k in kms):
+        return jsonify({"status": "error", "error": "bad request"}), 400
+    return jsonify(range_area.area(lat, lon, kms))
+
+
 @app.route("/api/stick-update/refresh", methods=["POST"])
 def stick_update_refresh():
     """Dashboard refresh button: look for a newer stick firmware now instead
