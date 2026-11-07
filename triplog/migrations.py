@@ -999,6 +999,13 @@ def m075_stick_info(db, log):
     log.info("Migration: stick_info ready")
 
 
+def m076_bms_disp_odo(db, log):
+    """Dashboard km typed in the BMS dialog → odometer offset for the stick."""
+    if "bms_points" in _tables(db) and "disp_odo" not in _cols(db, "bms_points"):
+        db.execute("ALTER TABLE bms_points ADD COLUMN disp_odo REAL")
+        log.info("Migration: bms_points.disp_odo added")
+
+
 MIGRATIONS = [
     (1,  "trips_is_gpx",            m001_trips_is_gpx),
     (2,  "trips_odo",              m002_trips_odo),
@@ -1075,6 +1082,7 @@ MIGRATIONS = [
     (73, "bms_learn",              m073_bms_learn),
     (74, "bms_can_range",          m074_bms_can_range),
     (75, "stick_info",             m075_stick_info),
+    (76, "bms_disp_odo",           m076_bms_disp_odo),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]
