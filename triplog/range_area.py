@@ -11,6 +11,7 @@ import json
 import logging
 import threading
 import time
+import urllib.error
 import urllib.request
 
 import config
@@ -24,6 +25,7 @@ TIMEOUT_S = 120
 _lock = threading.Lock()
 _cache = {}            # key -> {"t": time, "geojson": … | None, "error": str | None}
 _busy = set()
+_down_until = 0.0      # Valhalla unreachable: no new request for anyone until then
 
 
 def key(lat, lon, kms):
@@ -60,7 +62,18 @@ def _run(k, lat, lon, kms):
             except Exception:
                 pass
         err = f"{type(e).__name__}: {e} {detail}".strip()
-        log.warning("range area: Valhalla failed (%s) — dashboard keeps the circle", err)
+        # Not reachable at all (still building, container down): back off
+        # for every position, not just this one, so the log stays quiet.
+        unreachable = isinstance(e, (ConnectionError, TimeoutError)) or (
+            isinstance(e, urllib.error.URLError) and not isinstance(e, urllib.error.HTTPError))
+        global _down_until
+        with _lock:
+            first = _down_until < time.time()
+            if unreachable:
+                _down_until = time.time() + FAIL_S
+        if first or not unreachable:
+            log.warning("range area: Valhalla failed (%s) — dashboard keeps the circle%s", err,
+                        " (next try in 10 min)" if unreachable else "")
     with _lock:
         _cache[k] = {"t": time.time(), "geojson": gj, "error": err}
         _busy.discard(k)
@@ -79,6 +92,8 @@ def area(lat, lon, kms):
             return {"status": "ok", "geojson": c["geojson"]}
         if c and c["geojson"] is None and now - c["t"] < FAIL_S:
             return {"status": "error", "error": c["error"]}
+        if now < _down_until:
+            return {"status": "error", "error": "Valhalla not reachable"}
         if k not in _busy:
             _busy.add(k)
             threading.Thread(target=_run, args=(k, lat, lon, kms), name="range-area", daemon=True).start()
