@@ -266,6 +266,56 @@
 
     let marker = null;
     let trailLine = null;
+
+    // ── Range circle (estimate) ──
+    // Around the car: inner circle = lower, dashed outer = upper end of the
+    // real range from "BMS lernen" (window._bmsReal, set by bmsRender), else
+    // one circle at the computed range. Straight-line radius — an estimate,
+    // roads are longer. Zooms to fit; once the user zooms or pans, theirs stays.
+    let rangeInner = null, rangeOuter = null, rangeFitKm = null, rangePos = null, rangeFallback = null;
+    let mapTouched = false;   // the user zoomed or panned: no more automatic fit
+    ['wheel', 'touchstart', 'mousedown'].forEach(ev =>
+      map.getContainer().addEventListener(ev, () => { mapTouched = true; }, {passive: true}));
+    function updateRangeCircle(pos, fallbackKm) {
+      if (pos) rangePos = pos;
+      if (fallbackKm !== undefined) rangeFallback = fallbackKm;
+      if (!rangePos) return;
+      const real = window._bmsReal;
+      let lo = real && real.km_low > 0 ? real.km_low : null;
+      let hi = real && real.km_high > 0 ? real.km_high : null;
+      if (hi == null && rangeFallback > 0) hi = rangeFallback;
+      if (hi == null) {
+        [rangeInner, rangeOuter].forEach(c => c && map.removeLayer(c));
+        rangeInner = rangeOuter = null;
+        return;
+      }
+      const col = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#58a6ff';
+      const set = (c, km, opt) => {
+        if (km == null) { if (c) map.removeLayer(c); return null; }
+        if (!c) return L.circle(rangePos, Object.assign({radius: km * 1000, interactive: false}, opt)).addTo(map);
+        c.setLatLng(rangePos); c.setRadius(km * 1000); return c;
+      };
+      rangeInner = set(rangeInner, lo, {color: col, weight: 1, opacity: 0.6, fillColor: col, fillOpacity: 0.07});
+      rangeOuter = set(rangeOuter, hi, {color: col, weight: 1.5, opacity: 0.8, dashArray: '6 6', fill: lo == null, fillColor: col, fillOpacity: 0.05});
+      // Fit once; again only while the user has not touched the map and the
+      // range changed by more than 15 % (e.g. the BMS estimate arriving).
+      if (rangeOuter && (rangeFitKm == null || (!mapTouched && Math.abs(hi - rangeFitKm) > 0.15 * rangeFitKm))) {
+        // The map may not be laid out yet (size 0 → fitBounds picks max
+        // zoom): only count the fit once it had a real size.
+        map.invalidateSize();
+        const sz = map.getSize();
+        if (sz.x > 50 && sz.y > 50) {
+          const snap = map.options.zoomSnap;
+          map.options.zoomSnap = 0.25;     // fill the map, not just half of it
+          map.fitBounds(rangeOuter.getBounds(), {padding: [12, 12], animate: false});
+          map.options.zoomSnap = snap;
+          rangeFitKm = hi;
+        } else {
+          setTimeout(() => updateRangeCircle(), 300);
+        }
+      }
+    }
+    window.updateRangeCircle = updateRangeCircle;
     let locMarkers = [];
     let chargeLocMarkers = [];
 
@@ -605,9 +655,10 @@
           marker.setIcon(icon);
         } else {
           marker = L.marker(pos, {icon: icon, zIndexOffset: 1000}).addTo(map);
-          map.setView(pos, 15);
+          map.setView(pos, 15, {animate: false});   // no zoom animation: it would undo the range fit below
         }
         map.panTo(pos);
+        updateRangeCircle(pos, d.calc_range != null ? d.calc_range : d.range_km);
       }
 
       if (d.time) {
@@ -835,6 +886,8 @@
       rn.textContent = note; rn.style.display = '';
     }
     const sum = document.getElementById('bmsSum'); if (sum) sum.innerHTML = lines.join('<br>');
+    window._bmsReal = now.real || null;
+    if (window.updateRangeCircle) window.updateRangeCircle();
     const live = d.live || {}, el = document.getElementById('bmsLive');
     if (el) {
       el.className = 'bms-live' + (live.fresh ? '' : ' stale');
