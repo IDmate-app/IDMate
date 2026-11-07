@@ -3207,8 +3207,11 @@
         return `<input list="devHints" value="${esc(cur || '')}" placeholder="device tag" title="${esc(title)}" aria-label="${T.influx_device_tag}" style="width:100px;padding:0.25rem 0.4rem;border-radius:4px;border:${border};background:var(--bg);color:var(--text-1);font-size:0.8rem" data-onchange="updateVehicleEv" data-args='[${vid}, "device"]'>`;
       }
       function plateOpts(cur) {
+        // A plate no charge knows yet (or a stray name) still shows, so the
+        // row never looks empty.
+        const opts = (cur && !availPlates.includes(cur)) ? [cur, ...availPlates] : availPlates;
         return '<option value="">—</option>' +
-          availPlates.map(p => `<option value="${esc(p)}" ${p === cur ? 'selected' : ''}>${esc(p)}</option>`).join('');
+          opts.map(p => `<option value="${esc(p)}" ${p === cur ? 'selected' : ''}>${esc(p)}</option>`).join('');
       }
 
       const el = document.getElementById('vehicleList');

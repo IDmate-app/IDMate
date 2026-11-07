@@ -985,6 +985,27 @@ def active_device():
     return config.INFLUX_DEVICE
 
 
+def resolve_vehicle_plate(db, text):
+    """Plate for a vehicle text from Home Assistant or a form.
+
+    Accepts the plate itself or the name of a vehicle (case-insensitive), so
+    an input_select that sends "Sirius" instead of the plate lands on the
+    right car instead of spawning a new one. None if nothing matches."""
+    t = (text or "").strip()
+    if not t:
+        return None
+    by_plate = db.execute(
+        "SELECT plate, name, device FROM vehicles WHERE plate = ?", (t,)).fetchone()
+    if by_plate and (by_plate["name"] or by_plate["device"]):
+        return by_plate["plate"]
+    by_name = db.execute(
+        "SELECT plate FROM vehicles WHERE LOWER(TRIM(name)) = LOWER(?) "
+        "AND plate IS NOT NULL AND plate != ''", (t,)).fetchall()
+    if len(by_name) == 1:
+        return by_name[0]["plate"]
+    return by_plate["plate"] if by_plate else None
+
+
 def get_bat_kwh(db, device=None, at_time=None):
     """Battery capacity (kWh).
 
@@ -5164,7 +5185,14 @@ def _rebuild_charge_sessions_impl(db, since=None):
         WHERE UPPER(COALESCE(vehicle_plate, '')) NOT IN ('FREE', 'ERROR', 'UNKNOWN', 'OFF', '')
     """).fetchall()
     for p in plates:
-        db.execute("INSERT OR IGNORE INTO vehicles (plate) VALUES (?)", (p['vehicle_plate'],))
+        text = p['vehicle_plate']
+        known = resolve_vehicle_plate(db, text)
+        if known is None:
+            db.execute("INSERT OR IGNORE INTO vehicles (plate) VALUES (?)", (text,))
+            log.warning("vehicle auto-created from charge reading text %r", text)
+        elif known != text:
+            log.warning("charge readings carry vehicle name %r instead of its plate "
+                        "— no new vehicle created", text)
 
     # No explicit commit: rebuild_charge_sessions() runs this impl inside a
     # `with db:` transaction that commits on success / rolls back on exception.

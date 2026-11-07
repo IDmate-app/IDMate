@@ -28,7 +28,8 @@ from app import (ENCRYPTED_SETTINGS, _billed_floor, _decrypt_setting,
                  _settings_fernet, _translations, active_device, active_vehicle,
                  admin_required, csrf, effective_date_range, get_bat_kwh, get_db,
                  get_language, haversine_m, log, match_charge_location,
-                 match_location, rebuild_charge_sessions)
+                 match_location, rebuild_charge_sessions,
+                 resolve_vehicle_plate)
 
 charges_bp = Blueprint("charges", __name__)
 
@@ -150,6 +151,14 @@ def charge_webhook():
     soc = _sanitize_soc(soc_raw) if soc_raw not in ("", None) else None
 
     db = get_db()
+
+    # HA may send the vehicle's name instead of its plate: map it, so the
+    # rebuild never creates a second, device-less vehicle from it.
+    if vehicle != "unknown":
+        _plate = resolve_vehicle_plate(db, vehicle)
+        if _plate and _plate != vehicle:
+            log.info("charge_webhook: vehicle name %r mapped to its plate", vehicle)
+            vehicle = _plate
 
     # Diagnostic logging (no behavior change): the HA anchor is global (one
     # input_number across all vehicles), so meter_start should equal the last
@@ -2321,6 +2330,7 @@ def charge_external():
                         timestamp, end_time)
 
     db = get_db()
+    vehicle = resolve_vehicle_plate(db, vehicle) or vehicle
 
     # Derselbe Beleg zweimal eingefügt: gleiche Ladung (Fahrzeug, Start auf
     # zehn Minuten, kWh) legt keine zweite Sitzung an.
@@ -2369,8 +2379,9 @@ def charge_external():
           round(kwh, 3), duration_minutes, avg_kw, odometer, cost_total, note, soc_start, soc_end,
           location_name))
 
-    # Auto-create vehicle if needed
-    db.execute("INSERT OR IGNORE INTO vehicles (plate) VALUES (?)", (vehicle,))
+    # Auto-create vehicle only for a text that matches no plate and no name
+    if resolve_vehicle_plate(db, vehicle) is None:
+        db.execute("INSERT OR IGNORE INTO vehicles (plate) VALUES (?)", (vehicle,))
 
     # Recalc distances — scoped to this charge's period (never touches billed ones)
     rebuild_charge_sessions(db, since=timestamp)
