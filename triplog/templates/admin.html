@@ -838,6 +838,7 @@
       <button class="btn-sm btn-save" data-onclick="createVehicle">+</button>
     </div>
     <div id="vehicleList"></div>
+    <div id="vehicleTrash"></div>
 
     <hr>
     <h3 class="h-sec">{{ t.admin_default_vehicle }}</h3>
@@ -1196,7 +1197,7 @@
   <!-- Confirm-Modal: Promise-basiert, ersetzt blockierendes confirm() (5.3 Stufe 2) -->
   <div class="modal-bg" id="confirmModal">
     <div class="modal">
-      <p id="confirmModalMsg" style="font-size:0.9rem;color:var(--text-1);line-height:1.4;margin-bottom:0.4rem"></p>
+      <p id="confirmModalMsg" style="white-space:pre-line;font-size:0.9rem;color:var(--text-1);line-height:1.4;margin-bottom:0.4rem"></p>
       <div class="btns">
         <button class="btn-cancel" id="confirmModalCancel">{{ t.common_cancel }}</button>
         <button class="btn-danger" id="confirmModalOk">{{ t.common_confirm }}</button>
@@ -1281,6 +1282,9 @@
       geofence_reassigned_charges: {{ t.admin_js_geofence_reassigned_charges | tojson }},
       name_required: {{ t.admin_js_name_required | tojson }},
       confirm_delete_vehicle: {{ t.admin_js_confirm_delete_vehicle | tojson }},
+      vehicle_trash_title: {{ t.vehicle_trash_title | tojson }},
+      vehicle_trash_restore: {{ t.vehicle_trash_restore | tojson }},
+      vehicle_trash_days: {{ t.vehicle_trash_days | tojson }},
       saved_reloading: {{ t.admin_js_saved_reloading | tojson }},
       username_password_required: {{ t.admin_js_username_password_required | tojson }},
       confirm_delete_user: {{ t.admin_js_confirm_delete_user | tojson }},
@@ -3236,6 +3240,8 @@
         </div>
       `).join('') || '<p style="color:var(--text-2);font-size:0.85rem">' + T.no_vehicles + '</p>';
 
+      loadVehicleTrash();
+
       // Default vehicle dropdown
       const sel = document.getElementById('defaultVehicle');
       sel.innerHTML = '<option value="">' + T.no_default_vehicle + '</option>' +
@@ -3273,8 +3279,42 @@
     }
 
     async function deleteVehicle(id, name) {
-      if (!await confirmModal(T.confirm_delete_vehicle.replace('{0}', name))) return;
+      // Server-built text: name, plate, device and the trips/charges count,
+      // so two vehicles with the same label can't be mixed up.
+      let msg = T.confirm_delete_vehicle.replace('{0}', name);
+      try {
+        const p = await fetch(`/api/vehicles/${id}/delete-preview`);
+        if (p.ok) msg = (await p.json()).message || msg;
+      } catch (e) {}
+      if (!await confirmModal(msg)) return;
       await fetch(`/api/vehicles/${id}`, { method: 'DELETE' });
+      loadVehicles();
+    }
+
+    async function loadVehicleTrash() {
+      const el = document.getElementById('vehicleTrash');
+      if (!el) return;
+      let rows = [];
+      try { rows = await (await fetch('/api/vehicles/trash')).json(); } catch (e) {}
+      if (!Array.isArray(rows) || !rows.length) { el.innerHTML = ''; return; }
+      el.innerHTML = `<h4 style="font-size:0.85rem;margin:1rem 0 0.3rem">${esc(T.vehicle_trash_title)}</h4>` +
+        rows.map(r => `
+          <div style="display:flex;align-items:center;gap:0.6rem;padding:0.3rem 0;border-bottom:1px solid var(--border-soft);font-size:0.8rem;color:var(--text-2);flex-wrap:wrap">
+            <span style="color:var(--text-1)">${esc(r.name || '—')}</span>
+            <span>${esc(r.plate || '')}</span>
+            <span>${esc(r.device || '')}</span>
+            <span>${esc(r.deleted_at)} UTC · ${esc(T.vehicle_trash_days.replace('{0}', r.days_left))}</span>
+            <button class="btn-sm" style="margin-left:auto" data-onclick="restoreVehicle" data-args='[${r.id}]'>${esc(T.vehicle_trash_restore)}</button>
+          </div>`).join('');
+    }
+
+    async function restoreVehicle(trashId) {
+      const res = await fetch(`/api/vehicles/trash/${trashId}/restore`, { method: 'POST' });
+      if (!res.ok) {
+        let err = '';
+        try { err = (await res.json()).error || ''; } catch (e) {}
+        await confirmModal(err || String(res.status));
+      }
       loadVehicles();
     }
 

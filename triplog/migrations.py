@@ -1007,6 +1007,20 @@ def m076_bms_disp_odo(db, log):
         log.info("Migration: bms_points.disp_odo added")
 
 
+def m077_vehicle_trash(db, log):
+    """Deleted vehicles, kept 14 days for an undo (vehicle_trash.py)."""
+    if "vehicle_trash" not in _tables(db):
+        db.execute("""CREATE TABLE vehicle_trash (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            vehicle_id INTEGER NOT NULL,
+            label      TEXT,
+            payload    TEXT NOT NULL,
+            deleted_at TEXT NOT NULL,
+            deleted_by TEXT
+        )""")
+        log.info("Migration: vehicle_trash table created")
+
+
 MIGRATIONS = [
     (1,  "trips_is_gpx",            m001_trips_is_gpx),
     (2,  "trips_odo",              m002_trips_odo),
@@ -1084,6 +1098,7 @@ MIGRATIONS = [
     (74, "bms_can_range",          m074_bms_can_range),
     (75, "stick_info",             m075_stick_info),
     (76, "bms_disp_odo",           m076_bms_disp_odo),
+    (77, "vehicle_trash",          m077_vehicle_trash),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]
