@@ -1,6 +1,6 @@
 import os
 
-VERSION = "1.2.272"
+VERSION = "1.2.273"
 # Projektseite, steht in den Fusszeilen der Ausdrucke
 REPO_URL = "github.com/IDmate-app/IDMate"
 # Stick firmware (IDTelemetry): the dashboard says when a newer release exists.
@@ -33,6 +33,9 @@ INFLUX_DEVICE = os.environ.get("INFLUX_DEVICE", "id7")
 # Die Kartenstile (MAP_STYLES, Verwaltung/Profil) sind dann ohne Wirkung.
 # Leer = wie bisher öffentliche Rasterkacheln (OSM, Carto, Esri).
 ROUNDTRIP_URL = os.environ.get("ROUNDTRIP_URL", "").strip().rstrip("/")
+# Own Valhalla routing service for the road-based range area on the dashboard
+# (docker-compose.valhalla.yml). Empty = range circle only.
+VALHALLA_URL = os.environ.get("VALHALLA_URL", "").strip().rstrip("/")
 
 # ── InfluxDB field types (measurement "v") — ONE truth for all writers ──
 # Field types are FIXED once a field has been written: a deviating type

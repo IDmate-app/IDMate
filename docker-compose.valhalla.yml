@@ -1,0 +1,42 @@
+# Optional override — straßengenauer Reichweitenbereich auf dem Dashboard.
+# Ein eigener Routing-Dienst (Valhalla) rechnet aus, wie weit das Auto über
+# Straßen kommt. Der Standort verlässt dabei das eigene Netz nicht.
+#
+# Nutzung:
+#   docker compose -f docker-compose.yml -f docker-compose.valhalla.yml up -d
+# Portainer: den Dienst "valhalla" und die Zeile VALHALLA_URL unten in den
+# eigenen Stack übernehmen.
+#
+# Erster Start: lädt die Kartendaten (VALHALLA_PBF_URLS) und baut daraus die
+# Routing-Kacheln. Dauert je nach Rechner 1–3 Stunden und braucht dabei viel
+# RAM (Deutschland + Dänemark: rund 8 GB); danach im Betrieb deutlich weniger.
+# Weniger Länder = schneller und sparsamer.
+#
+# EINMAL NACH DEM ERSTEN START (sonst sind Reichweiten über 200 km gesperrt):
+#   im Volume valhalla-data die Datei valhalla.json öffnen und unter
+#   "service_limits" → "isochrone" → "max_distance_contour" 200 auf 800
+#   setzen, dann den Container neu starten.
+#
+# Details: docs/reichweite-valhalla.md
+services:
+  valhalla:
+    image: ghcr.io/valhalla/valhalla-scripted:latest
+    restart: unless-stopped
+    volumes:
+      - valhalla-data:/custom_files
+    environment:
+      - tile_urls=${VALHALLA_PBF_URLS:-https://download.geofabrik.de/europe/germany-latest.osm.pbf https://download.geofabrik.de/europe/denmark-latest.osm.pbf}
+      - use_tiles_ignore_pbf=True
+      - build_admins=True
+      - build_time_zones=False
+      - build_elevation=False
+      - serve_tiles=True
+      - server_threads=${VALHALLA_THREADS:-2}
+      - update_existing_config=True
+
+  triplog:
+    environment:
+      - VALHALLA_URL=http://valhalla:8002
+
+volumes:
+  valhalla-data:

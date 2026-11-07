@@ -295,8 +295,15 @@
         if (!c) return L.circle(rangePos, Object.assign({radius: km * 1000, interactive: false}, opt)).addTo(map);
         c.setLatLng(rangePos); c.setRadius(km * 1000); return c;
       };
-      rangeInner = set(rangeInner, lo, {color: col, weight: 1, opacity: 0.6, fillColor: col, fillOpacity: 0.07});
+      const kms = lo != null ? [lo, hi] : [hi];
+      if (typeof loadRangeArea === 'function') loadRangeArea(rangePos, kms, col);
+      const areaHere = rangeArea && rangeAreaKey === areaKey(rangePos, kms);
+      if (rangeArea && !areaHere) { map.removeLayer(rangeArea); rangeArea = null; rangeAreaKey = null; }
+      // Circles only while there is no road area for this position/range; the
+      // outer one stays (invisible) as the frame for the automatic zoom.
+      rangeInner = set(rangeInner, areaHere ? null : lo, {color: col, weight: 1, opacity: 0.6, fillColor: col, fillOpacity: 0.07});
       rangeOuter = set(rangeOuter, hi, {color: col, weight: 1.5, opacity: 0.8, dashArray: '6 6', fill: lo == null, fillColor: col, fillOpacity: 0.05});
+      if (rangeOuter) rangeOuter.setStyle(areaHere ? {opacity: 0, fillOpacity: 0} : {opacity: 0.8, fillOpacity: lo == null ? 0.05 : 0});
       // Fit once; again only while the user has not touched the map and the
       // range changed by more than 15 % (e.g. the BMS estimate arriving).
       if (rangeOuter && (rangeFitKm == null || (!mapTouched && Math.abs(hi - rangeFitKm) > 0.15 * rangeFitKm))) {
@@ -316,6 +323,39 @@
       }
     }
     window.updateRangeCircle = updateRangeCircle;
+
+    // ── Road-based range area (own Valhalla, /api/range-area) ──
+    // Replaces the circles once the area for the current position/range is
+    // there; until then (or without Valhalla) the circles stay.
+    let rangeArea = null, rangeAreaKey = null, rangeAreaWant = null, rangeAreaTimer = null, rangeAreaOff = false;
+    const areaKey = (pos, kms) => (Math.round(pos[0] * 50) / 50) + ',' + (Math.round(pos[1] * 50) / 50) + ','
+      + kms.map(k => Math.round(k / 10) * 10).sort((a, b) => a - b).join('/');
+    function showRangeArea(gj, k, col) {
+      if (rangeArea) map.removeLayer(rangeArea);
+      const max = Math.max(...gj.features.map(f => (f.properties || {}).contour || 0));
+      const many = gj.features.length > 1;
+      rangeArea = L.geoJSON(gj, {interactive: false, style: f => {
+        const outer = ((f.properties || {}).contour || 0) >= max;
+        return {color: col, weight: outer ? 1.5 : 1, opacity: outer ? 0.8 : 0.6,
+                dashArray: outer && many ? '6 6' : null, fillColor: col, fillOpacity: outer && many ? 0.04 : 0.08};
+      }}).addTo(map);
+      rangeAreaKey = k;
+    }
+    async function loadRangeArea(pos, kms, col) {
+      if (rangeAreaOff) return;
+      const k = areaKey(pos, kms);
+      rangeAreaWant = k;
+      if (rangeAreaKey === k || rangeAreaTimer) return;
+      try {
+        const r = await fetch(`/api/range-area?lat=${pos[0]}&lon=${pos[1]}&km=${kms.map(x => Math.round(x)).join(',')}`);
+        const d = await r.json();
+        if (d.status === 'off') { rangeAreaOff = true; return; }
+        if (d.status === 'ok' && rangeAreaWant === k) { showRangeArea(d.geojson, k, col); updateRangeCircle(); }
+        else if (d.status === 'pending' || d.status === 'error') {
+          rangeAreaTimer = setTimeout(() => { rangeAreaTimer = null; updateRangeCircle(); }, d.status === 'pending' ? 15000 : 600000);
+        }
+      } catch (e) {}
+    }
     let locMarkers = [];
     let chargeLocMarkers = [];
 
