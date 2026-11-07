@@ -1,11 +1,14 @@
 """Learned corrections for the stick, pushed over MQTT (1.2.267).
 
 The stick answers ABRP over Bluetooth from its own CAN cache. ABRP shows the
-BMS SoC, not the one in the car's display, and the CAN odometer, not the
-dashboard's. IDmate learns both (dashboard button "BMS lernen"); this module
-sends the result to the stick, which then gives ABRP the display SoC and the
-dashboard km. The values IDmate itself receives stay raw — the learning needs
-them unchanged.
+BMS SoC, not the one in the car's display. IDmate learns the display SoC
+(dashboard button "BMS lernen"); this module sends the function to the
+stick, which gives it to ABRP only — the SoC IDmate receives stays raw, the
+learning needs it. The odometer offset (config.ODO_OFFSET_KM, the dashboard
+reads ~5 km more than CAN) goes along; from stick firmware 1.6.10 the stick
+adds it to everything, so IDmate stores dashboard km from then on. The info
+telegram reports the offset in force ("odo"); the first one marks the
+switch (corrected_since), older charges keep the offset on the print.
 
 Wire: retained message on tele/<device>/cfg, base64 of a frame like the
 telegrams ([0x20][IV16][AES-256-CBC PKCS7], same key) around compact JSON:
@@ -46,9 +49,9 @@ def set_client(client):
 def build(points):
     """The stick's config from the BMS points of one vehicle."""
     import bms_learn as bl
-    out = {}
-    off = bl.odo_offset(points)
-    out["o"] = off["km"] if off is not None else config.ODO_OFFSET_KM
+    # km: the fixed dashboard offset. Not learned: since 1.6.10 the stick
+    # adds it to what IDmate receives too, a learned value would chase itself.
+    out = {"o": config.ODO_OFFSET_KM}
     disp = bl.fit_display(points)
     if disp and all(t in TERM_CODE for t in disp["terms"]):
         out["c"] = [round(float(c), 5) for c in disp["coef"]]
@@ -123,3 +126,34 @@ def push_all(db):
     for v in db.execute("SELECT plate, device FROM vehicles WHERE bms_learn = 1 "
                         "AND device IS NOT NULL AND device != ''").fetchall():
         push_vehicle(db, v["plate"], v["device"])
+
+
+# ── switch to dashboard km ────────────────────────────────────────────────
+
+def _cut_key(device):
+    return f"odo_corr_since:{device}"
+
+
+def note_stick_offset(db, device, odo):
+    """Info telegram with the offset the stick adds: remember the first time
+    (local time, like charge_sessions.start_time). Returns that time."""
+    if not device or not odo:
+        return None
+    row = db.execute("SELECT value FROM settings WHERE key = ?", (_cut_key(device),)).fetchone()
+    if row:
+        return row["value"]
+    from datetime import datetime
+    import detector
+    now = datetime.now(detector.LOCAL_TZ).strftime("%Y-%m-%dT%H:%M:%S")
+    db.execute("INSERT INTO settings (key, value) VALUES (?, ?)", (_cut_key(device), now))
+    db.commit()
+    log.info("odometer: stick %s adds %s km from %s on — IDmate stores dashboard km", device, odo, now)
+    return now
+
+
+def corrected_since(db, device):
+    """Local time from which the stick sends dashboard km, or None."""
+    if not device:
+        return None
+    row = db.execute("SELECT value FROM settings WHERE key = ?", (_cut_key(device),)).fetchone()
+    return row["value"] if row else None

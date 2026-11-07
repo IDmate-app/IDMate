@@ -470,12 +470,12 @@ _IS_HOME_SQL = (
     "(SELECT cl.is_home FROM charge_locations cl WHERE cl.name = location_name), 0) = 1)"
 )
 
-# The odometer stamped on a charge comes from CAN; the car's dashboard (and
+# The odometer stamped on a charge came from CAN; the car's dashboard (and
 # the charge card provider's statement) reads about 5 km more. So the
 # external-charges table of the print — the one that gets reconciled against
-# the provider's statement — shows the stamp plus this offset (config,
-# also sent to the stick for ABRP). The stored value and every km
-# calculation stay untouched.
+# the provider's statement — shows the stamp plus this offset (config).
+# Since stick firmware 1.6.10 the stick adds it itself; charges after that
+# switch (stick_cfg.corrected_since) are printed as stored.
 EXT_PRINT_ODO_OFFSET_KM = config.ODO_OFFSET_KM
 
 
@@ -978,6 +978,10 @@ def charges_print():
             "ORDER BY datetime(start_time)",
             (filter_vehicle, cur_ym)
         ).fetchall()
+        # Since stick 1.6.10 the stored km are already dashboard km: only
+        # charges before that switch get the offset on the print.
+        import stick_cfg
+        odo_cut = stick_cfg.corrected_since(db, vehicle["device"]) if vehicle else None
         ext_sessions_fmt = []
         for s in ext_sessions_rows:
             d = dict(s)
@@ -1004,8 +1008,8 @@ def charges_print():
 
             d['icon_url'] = icon_url
             d['operator_display'] = operator_display
-            d['odometer_print'] = (s['odometer'] + EXT_PRINT_ODO_OFFSET_KM
-                                   if s['odometer'] is not None else None)
+            off = EXT_PRINT_ODO_OFFSET_KM if (odo_cut is None or (s['start_time'] or '') < odo_cut) else 0
+            d['odometer_print'] = (s['odometer'] + off if s['odometer'] is not None else None)
             ext_sessions_fmt.append(d)
 
         cur_ext = ext_by_month.get(cur_ym, {})

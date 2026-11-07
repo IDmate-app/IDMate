@@ -127,7 +127,7 @@ def _state(db, v):
     out = {"enabled": bool(v.get("bms_learn")), "plate": v["plate"], "live": live,
            "fresh_s": bl.FRESH_S, "n": len(points), "display": disp, "range": rng,
            "learn": _learn_status(points, disp, rng),
-           "odo_offset": bl.odo_offset(points), "stick": stick_cfg.build(points),
+           "stick": stick_cfg.build(points),
            "stick_sent": (stick_cfg.last_sent(db, device) or {}).get("ts") if device else None,
            "points": list(reversed(points[-30:]))}
     can = live.get("can_soc")
@@ -207,7 +207,6 @@ def bms_add():
             soc = _num(data, "disp_soc", 0, 100)
             rng = _num(data, "disp_range", 0, 1500)
             cons = _cons(data)
-            disp_odo = _num(data, "disp_odo", 0, 2_000_000)
         except ValueError:
             return jsonify({"error": t["bms_invalid_input"]}), 400
         if soc is None:
@@ -222,12 +221,12 @@ def bms_add():
         db.execute(
             """INSERT INTO bms_points (plate, created_at, disp_soc, disp_range, disp_cons, can_soc, can_age_s,
                    bat_temp, ext_temp, speed, odometer, capacity_kwh, cons_10, cons_30, cons_50, cons_100,
-                   can_range, soe, hvac_kw, cabin_temp, disp_odo)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   can_range, soe, hvac_kw, cabin_temp)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (v["plate"], datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), soc, rng, cons,
              live["can_soc"], live["age_s"], live.get("bat_temp"), live.get("ext_temp"), live.get("speed"),
              live.get("odometer"), cap, win[10], win[30], win[50], win[100], live.get("range_km"),
-             live.get("soe"), live.get("hvac_kw"), live.get("cabin_temp"), disp_odo))
+             live.get("soe"), live.get("hvac_kw"), live.get("cabin_temp")))
         db.commit()
         log.info("bms learn: %s display %s %% at CAN %s %%", v["plate"], soc, live["can_soc"])
         stick_cfg.push_vehicle(db, v["plate"], v["device"])
