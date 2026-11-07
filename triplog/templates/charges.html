@@ -529,7 +529,12 @@
     }
 
     async function deleteVehicle(id) {
-      if (!await confirmModal('{{ t.charges_delete_vehicle }}')) return;
+      let msg = '{{ t.charges_delete_vehicle }}';
+      try {
+        const p = await fetch('/api/vehicles/' + id + '/delete-preview');
+        if (p.ok) msg = (await p.json()).message || msg;
+      } catch (e) {}
+      if (!await confirmModal(msg)) return;
       await fetch('/api/vehicles/' + id, { method: 'DELETE' });
       location.reload();
     }

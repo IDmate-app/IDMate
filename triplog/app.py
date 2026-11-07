@@ -58,6 +58,7 @@ import teslamate_import
 import import_job
 import geocoder as geo
 import fahrzeugmodell as fm
+import vehicle_trash
 from plmn import PLMN_INFO, plmn_info, plmn_color
 
 # ── Password hashing: argon2 (new) with werkzeug/pbkdf2 fallback (migration) ──
@@ -6032,12 +6033,51 @@ def update_vehicle(vehicle_id):
     return jsonify({"ok": True})
 
 
+@app.route("/api/vehicles/<int:vehicle_id>/delete-preview")
+def vehicle_delete_preview(vehicle_id):
+    """Exactly which vehicle a delete hits and how many trips/charges belong
+    to it, plus the ready confirm text."""
+    db = get_db()
+    p = vehicle_trash.preview(db, vehicle_id)
+    db.close()
+    if not p:
+        return jsonify({"error": "not found"}), 404
+    t = _translations.get(get_language(), _translations["DE"])
+    return jsonify({**p, "message": vehicle_trash.message(p, t)})
+
+
 @app.route("/api/vehicles/<int:vehicle_id>", methods=["DELETE"])
 def delete_vehicle(vehicle_id):
+    """Moves the vehicle to the trash (14 days undo). Trips and charges stay."""
     db = get_db()
-    db.execute("DELETE FROM vehicles WHERE id = ?", (vehicle_id,))
-    db.commit()
+    with db:
+        ok = vehicle_trash.trash(db, vehicle_id, getattr(current_user, "username", None))
     db.close()
+    if not ok:
+        return jsonify({"error": "not found"}), 404
+    log.info("vehicle %d moved to trash", vehicle_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/vehicles/trash")
+def vehicle_trash_list():
+    db = get_db()
+    with db:
+        rows = vehicle_trash.listing(db)
+    db.close()
+    return jsonify(rows)
+
+
+@app.route("/api/vehicles/trash/<int:trash_id>/restore", methods=["POST"])
+def vehicle_trash_restore(trash_id):
+    db = get_db()
+    with db:
+        err = vehicle_trash.restore(db, trash_id)
+    db.close()
+    if err:
+        t = _translations.get(get_language(), _translations["DE"])
+        return jsonify({"error": t.get("vehicle_trash_" + err, err)}), 409
+    log.info("vehicle restored from trash entry %d", trash_id)
     return jsonify({"ok": True})
 
 
