@@ -36,7 +36,7 @@ def key(lat, lon, kms):
 def request_body(lat, lon, kms):
     return {"locations": [{"lat": lat, "lon": lon}], "costing": "auto",
             "contours": [{"distance": float(k)} for k in sorted(kms)],
-            "polygons": True, "denoise": 0.5, "generalize": 500}
+            "polygons": True, "denoise": 0.5, "generalize": 1500}
 
 
 def _fetch(lat, lon, kms):

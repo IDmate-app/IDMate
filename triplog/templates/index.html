@@ -330,15 +330,60 @@
     let rangeArea = null, rangeAreaKey = null, rangeAreaWant = null, rangeAreaTimer = null, rangeAreaOff = false;
     const areaKey = (pos, kms) => (Math.round(pos[0] * 50) / 50) + ',' + (Math.round(pos[1] * 50) / 50) + ','
       + kms.map(k => Math.round(k / 10) * 10).sort((a, b) => a - b).join('/');
+    // Chaikin corner cutting: the road area comes as a jagged polygon (it
+    // follows every road finger); two passes round it off into a soft edge.
+    function smoothRing(ring, passes) {
+      let pts = ring.slice(0, -1);               // GeoJSON rings repeat the first point
+      // First a light moving average (1-2-3-2-1) against the fine zigzag,
+      // then corner cutting for the round edge.
+      if (pts.length > 8) {
+        const w = [1, 2, 3, 2, 1], n = pts.length;
+        pts = pts.map((_, i) => {
+          let x = 0, y = 0;
+          for (let j = -2; j <= 2; j++) { const q = pts[(i + j + n) % n]; x += q[0] * w[j + 2]; y += q[1] * w[j + 2]; }
+          return [x / 9, y / 9];
+        });
+      }
+      for (let p = 0; p < passes && pts.length > 2; p++) {
+        const out = [];
+        for (let i = 0; i < pts.length; i++) {
+          const a = pts[i], b = pts[(i + 1) % pts.length];
+          out.push([0.75 * a[0] + 0.25 * b[0], 0.75 * a[1] + 0.25 * b[1]],
+                   [0.25 * a[0] + 0.75 * b[0], 0.25 * a[1] + 0.75 * b[1]]);
+        }
+        pts = out;
+      }
+      return pts.concat([pts[0]]);
+    }
+    function smoothArea(gj) {
+      const poly = rings => rings.map(r => smoothRing(r, 3));
+      return {...gj, features: gj.features.map(f => {
+        const g = f.geometry || {};
+        if (g.type === 'Polygon') return {...f, geometry: {...g, coordinates: poly(g.coordinates)}};
+        if (g.type === 'MultiPolygon') return {...f, geometry: {...g, coordinates: g.coordinates.map(poly)}};
+        return f;
+      })};
+    }
     function showRangeArea(gj, k, col) {
       if (rangeArea) map.removeLayer(rangeArea);
-      const max = Math.max(...gj.features.map(f => (f.properties || {}).contour || 0));
-      const many = gj.features.length > 1;
-      rangeArea = L.geoJSON(gj, {interactive: false, style: f => {
-        const outer = ((f.properties || {}).contour || 0) >= max;
-        return {color: col, weight: outer ? 1.5 : 1, opacity: outer ? 0.8 : 0.6,
-                dashArray: outer && many ? '6 6' : null, fillColor: col, fillOpacity: outer && many ? 0.04 : 0.08};
-      }}).addTo(map);
+      const soft = smoothArea(gj);
+      const max = Math.max(...soft.features.map(f => (f.properties || {}).contour || 0));
+      const many = soft.features.length > 1;
+      const isOuter = f => ((f.properties || {}).contour || 0) >= max;
+      const base = {interactive: false, smoothFactor: 0.3};
+      // Light halo under the line: readable on light and dark tiles alike.
+      const halo = L.geoJSON(soft, {...base, style: f => ({
+        color: '#ffffff', weight: isOuter(f) ? 6 : 5, opacity: 0.55, fill: false,
+        lineJoin: 'round', lineCap: 'round'})});
+      const line = L.geoJSON(soft, {...base, style: f => {
+        const outer = isOuter(f);
+        // Inner (lower range) strong, outer (upper range) lighter; dashes
+        // looked torn on the wavy outline, so both are solid.
+        return {color: col, weight: outer && many ? 2.5 : 3, opacity: outer && many ? 0.7 : 0.95,
+                lineJoin: 'round', lineCap: 'round',
+                fillColor: col, fillOpacity: outer && many ? 0.06 : 0.12};
+      }});
+      rangeArea = L.layerGroup([halo, line]).addTo(map);
       rangeAreaKey = k;
     }
     async function loadRangeArea(pos, kms, col) {
