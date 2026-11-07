@@ -297,8 +297,9 @@
       };
       const kms = lo != null ? [lo, hi] : [hi];
       if (typeof loadRangeArea === 'function') loadRangeArea(rangePos, kms, col);
-      const areaHere = rangeArea && rangeAreaKey === areaKey(rangePos, kms);
-      if (rangeArea && !areaHere) { map.removeLayer(rangeArea); rangeArea = null; rangeAreaKey = null; }
+      // The last area stays while the next one is computed (car moved a
+      // few km, range changed): no flicker back to the circles in between.
+      const areaHere = !!rangeArea;
       // Circles only while there is no road area for this position/range; the
       // outer one stays (invisible) as the frame for the automatic zoom.
       rangeInner = set(rangeInner, areaHere ? null : lo, {color: col, weight: 1, opacity: 0.6, fillColor: col, fillOpacity: 0.07});
@@ -323,6 +324,9 @@
       }
     }
     window.updateRangeCircle = updateRangeCircle;
+    // New values (range, position) are picked up every 10 s even when no
+    // live update arrives; unchanged values cost nothing.
+    setInterval(() => updateRangeCircle(), 10000);
 
     // ── Road-based range area (own Valhalla, /api/range-area) ──
     // Replaces the circles once the area for the current position/range is
@@ -356,7 +360,9 @@
       return pts.concat([pts[0]]);
     }
     function smoothArea(gj) {
-      const poly = rings => rings.map(r => smoothRing(r, 3));
+      // Only the outer ring: the holes (forest, lakes, no roads) drew a
+      // tangle of extra edges inside the area.
+      const poly = rings => rings.slice(0, 1).map(r => smoothRing(r, 2));
       return {...gj, features: gj.features.map(f => {
         const g = f.geometry || {};
         if (g.type === 'Polygon') return {...f, geometry: {...g, coordinates: poly(g.coordinates)}};
@@ -397,7 +403,13 @@
         if (d.status === 'off') { rangeAreaOff = true; return; }
         if (d.status === 'ok' && rangeAreaWant === k) { showRangeArea(d.geojson, k, col); updateRangeCircle(); }
         else if (d.status === 'pending' || d.status === 'error') {
-          rangeAreaTimer = setTimeout(() => { rangeAreaTimer = null; updateRangeCircle(); }, d.status === 'pending' ? 15000 : 600000);
+          // Pending: ask again soon. Error: the server holds its own back-off,
+          // so a short retry is cheap and the area shows up without a reload.
+          rangeAreaTimer = setTimeout(() => { rangeAreaTimer = null; updateRangeCircle(); }, d.status === 'pending' ? 3000 : 30000);
+          // Failed and the shown area belongs to another place: back to the circles.
+          if (d.status === 'error' && rangeArea && rangeAreaKey !== k) {
+            map.removeLayer(rangeArea); rangeArea = null; rangeAreaKey = null; updateRangeCircle();
+          }
         }
       } catch (e) {}
     }
@@ -1028,7 +1040,7 @@
     if (r.ok) { _bms = await r.json(); bmsRender(); }
   }
   bmsLoad();
-  setInterval(() => { if (!_bmsTimer) bmsLoad(); }, 60000);
+  setInterval(() => { if (!_bmsTimer) bmsLoad(); }, 30000);
   </script>
   {% endif %}
 {% endblock %}
