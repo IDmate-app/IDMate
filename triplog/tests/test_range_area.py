@@ -37,6 +37,7 @@ def test_pending_then_cached_and_grid(monkeypatch):
     import range_area as ra
     monkeypatch.setattr(config, "VALHALLA_URL", "http://valhalla:8002")
     ra._cache.clear()
+    monkeypatch.setattr(ra, "_down_until", 0.0)
     calls = []
     monkeypatch.setattr(ra, "_fetch", lambda lat, lon, kms: calls.append(kms) or GJ)
     assert ra.area(52.5, 13.4, [198, 294]) == {"status": "pending"}
@@ -52,6 +53,7 @@ def test_failure_is_remembered(monkeypatch):
     import range_area as ra
     monkeypatch.setattr(config, "VALHALLA_URL", "http://valhalla:8002")
     ra._cache.clear()
+    monkeypatch.setattr(ra, "_down_until", 0.0)
     def boom(*a):
         raise OSError("connection refused")
     monkeypatch.setattr(ra, "_fetch", boom)
@@ -59,6 +61,28 @@ def test_failure_is_remembered(monkeypatch):
     _wait(ra, ra.key(54.0, 10.0, [250]))
     r = ra.area(54.0, 10.0, [250])
     assert r["status"] == "error" and "connection refused" in r["error"]
+
+
+def test_unreachable_backs_off_for_all_positions(monkeypatch):
+    """Connection refused while Valhalla still builds: one warning, then no
+    request for any other position until the back-off ends."""
+    import urllib.error
+    import config
+    import range_area as ra
+    monkeypatch.setattr(config, "VALHALLA_URL", "http://valhalla:8002")
+    ra._cache.clear()
+    monkeypatch.setattr(ra, "_down_until", 0.0)
+    calls = []
+    def refused(lat, lon, kms):
+        calls.append(kms)
+        raise urllib.error.URLError(ConnectionRefusedError(111, "Connection refused"))
+    monkeypatch.setattr(ra, "_fetch", refused)
+    assert ra.area(54.0, 10.0, [250])["status"] == "pending"
+    _wait(ra, ra.key(54.0, 10.0, [250]))
+    assert ra._down_until > time.time()
+    # another position and range: no new request
+    assert ra.area(48.2, 16.4, [180, 260])["status"] == "error"
+    assert len(calls) == 1
 
 
 def test_api_validates(app_module, db, monkeypatch):

@@ -934,6 +934,7 @@ def save_trips(db, trips):
     # them on every call (up to 4× per trip). save_trips never writes the
     # locations table, so the snapshot stays valid for the whole loop.
     locations = db.execute("SELECT * FROM locations").fetchall()
+    new = 0
     for t in trips:
         # Duplicate check: overlap with existing trip in same time window
         # (exact start_time match is not enough — timestamps may slightly differ)
@@ -1141,14 +1142,18 @@ def save_trips(db, trips):
                        :purpose, :destination, :visit_reason)""",
             t,
         )
+        new += 1
     db.commit()
-    log.info("Saved: %d trips", len(trips))
+    # Found vs. actually new: each scan re-reads the last 24 h, so the
+    # already known trips come up again and are only checked, not stored.
+    log.info("Saved: %d new trips (%d found)", new, len(trips))
     # A journey covering these days takes the fresh trips in right away —
     # nobody has to open the journey and tick them.
     journey_sync.sync_journeys_for_trips(db, trips)
 
 
 def save_charges(db, charges):
+    new = 0
     for c in charges:
         # Duplicate check: overlap with existing charge in same time window
         # (exact start_time match is not enough — a rescan window that clips a
@@ -1161,6 +1166,7 @@ def save_charges(db, charges):
             (c["device"], c["end_time"], c["start_time"]),
         ).fetchone():
             continue
+        new += 1
         db.execute(
             """INSERT INTO charges
                (device, start_time, end_time, lat, lon, type,
@@ -1170,7 +1176,7 @@ def save_charges(db, charges):
             c,
         )
     db.commit()
-    log.info("Saved: %d charging sessions", len(charges))
+    log.info("Saved: %d new charging sessions (%d found)", new, len(charges))
 
 
 def auto_categorize(db):
