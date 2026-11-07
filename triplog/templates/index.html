@@ -348,7 +348,16 @@
         });
       }
     });
-    map.addLayer(clusterGroup);
+    // Locations and chargers only from regional zoom on: at country scale
+    // (range circle) they cover the map.
+    const POI_MIN_ZOOM = 10;
+    function syncPoiLayer() {
+      const want = map.getZoom() >= POI_MIN_ZOOM;
+      if (want && !map.hasLayer(clusterGroup)) map.addLayer(clusterGroup);
+      else if (!want && map.hasLayer(clusterGroup)) map.removeLayer(clusterGroup);
+    }
+    map.on('zoomend', syncPoiLayer);
+    syncPoiLayer();
 
     // ── Location Icons (SVG) ──
     const LOC_ICONS = {
