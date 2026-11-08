@@ -1,6 +1,6 @@
 import os
 
-VERSION = "1.2.283"
+VERSION = "1.2.284"
 # Projektseite, steht in den Fusszeilen der Ausdrucke
 REPO_URL = "github.com/IDmate-app/IDMate"
 # Stick firmware (IDTelemetry): the dashboard says when a newer release exists.
@@ -36,6 +36,10 @@ ROUNDTRIP_URL = os.environ.get("ROUNDTRIP_URL", "").strip().rstrip("/")
 # Own Valhalla routing service for the road-based range area on the dashboard
 # (docker-compose.valhalla.yml). Empty = range circle only.
 VALHALLA_URL = os.environ.get("VALHALLA_URL", "").strip().rstrip("/")
+# Wind forecast on the map (wind.py): "open-meteo" to switch it on. Sends only
+# fixed raster points of the region around the car, never its position.
+WIND_SOURCE = os.environ.get("WIND_SOURCE", "").strip().lower()
+WIND_URL = os.environ.get("WIND_URL", "https://api.open-meteo.com/v1/forecast").strip()
 
 # ── InfluxDB field types (measurement "v") — ONE truth for all writers ──
 # Field types are FIXED once a field has been written: a deviating type
