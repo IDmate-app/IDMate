@@ -250,12 +250,12 @@
         <div id="notesList"></div>
       </div>
 
-      {% if bms_learn %}
-      <div class="bms-box" id="bmsBox">
+      {# Range box always; "BMS lernen" (button + dialog) only while switched
+         on. Learned values stay in use after switching it off. #}
+      <div class="bms-box" id="bmsBox"{% if not bms_learn %} style="display:none"{% endif %}>
         <div class="bms-sum" id="bmsSum"></div>
-        <button class="bms-btn" data-onclick="openBms">{{ t.bms_button }}</button>
+        {% if bms_learn %}<button class="bms-btn" data-onclick="openBms">{{ t.bms_button }}</button>{% endif %}
       </div>
-      {% endif %}
     </div>
   </div>
   {% if bms_learn %}
@@ -1074,7 +1074,6 @@
   }
   loadNotes();
   </script>
-  {% if bms_learn %}
   <script nonce="{{ csp_nonce }}">
   // ── BMS learning: what the car shows vs. the CAN bus ─────────────
   const BMS_T = {{ {
@@ -1111,7 +1110,7 @@
       const acc = d.display.mae_loo !== null ? d.display.mae_loo : d.display.mae;
       lines.push(`${BMS_T.pred} <b>${_bmsNum(now.display_soc, 0)} %</b>`);
       info.push(BMS_T.pred.replace(/\s*≈\s*$/, '') + ': ' + BMS_T.acc.replace('{0}', _bmsNum(acc, 1)).replace('{1}', d.display.n));
-    } else {
+    } else if (d.enabled) {
       lines.push(BMS_T.need.replace('{0}', Math.max(0, 3 - (d.n || 0))));
     }
     if (now.vw_range) lines.push(`${BMS_T.vw} <b>${now.vw_range} km</b>`);
@@ -1169,6 +1168,7 @@
       rn.textContent = note; rn.style.display = '';
     }
     const sum = document.getElementById('bmsSum'); if (sum) sum.innerHTML = lines.join('<br>');
+    const box = document.getElementById('bmsBox'); if (box) box.style.display = (lines.length || d.enabled) ? '' : 'none';
     // Map: one range (motorway speed) when available, else the span.
     window._bmsReal = now.cruise ? {km_low: null, km_high: now.cruise.km} : (now.real || null);
     if (window.updateRangeCircle) window.updateRangeCircle();
@@ -1220,5 +1220,4 @@
   bmsLoad();
   setInterval(() => { if (!_bmsTimer) bmsLoad(); }, 30000);
   </script>
-  {% endif %}
 {% endblock %}
