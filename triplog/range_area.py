@@ -125,7 +125,7 @@ def area(lat, lon, kms):
 RENDER_EVERY_S = 10 * 60
 # Bump when the stored geometry changes how it is built: an area from an
 # older version is rendered again at once, even if nothing else changed.
-GEOM_VERSION = 3          # 3: grid outline (1.2.290)
+GEOM_VERSION = 4          # 3: grid outline (1.2.290), 4: 32 directions (1.2.294)
 _fail_at = {}          # device -> time of the last failed render (no retry every minute)
 
 

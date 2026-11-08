@@ -6,6 +6,10 @@ import math
 import bms_learn as bl
 import wind_range as wr
 
+N = wr.N_DIRS
+H = N // 2          # index of south
+Q = N // 4          # index of east
+
 MODEL = {"a": 16.0, "b": 5.0, "c": 0.3, "temp": True, "n": 100, "km": 5000}
 
 
@@ -24,13 +28,13 @@ def test_calm_is_the_same_everywhere_and_matches_the_model():
 def test_north_wind_costs_range_to_the_north():
     pts = [_point(53.8 + i * 0.45, 10.4 + j * 0.75, 40, 0) for i in range(-4, 5) for j in range(-4, 5)]
     d = wr.direction_ranges(50.0, MODEL, 10, 110, 53.8, 10.4, pts, now=100)
-    north, south, east = d[0], d[8], d[4]
+    north, south, east = d[0], d[H], d[Q]
     assert north < east < south
     assert south - north > 20
 
 
 def test_levels():
-    assert wr.levels([200] * 16) == [200]
+    assert wr.levels([200] * N) == [200]
     lv = wr.levels([150, 160, 200, 230])
     assert len(lv) == 4 and lv[0] == 150 and lv[-1] == 230
 
@@ -47,19 +51,19 @@ def _circle(lat0, lon0, r_km, n=180):
 
 def test_compose_picks_contour_per_wedge_one_clean_outline():
     iso = {"type": "FeatureCollection", "features": [_circle(53.8, 10.4, r) for r in (100, 150, 200)]}
-    dirs = [100] * 8 + [200] * 8            # east half short, west half long
+    dirs = [100] * H + [200] * H            # east half short, west half long
     gj = wr.compose(iso, dirs, 53.8, 10.4)
     fill = gj["features"][0]["geometry"]["coordinates"]
     lines = gj["features"][1]["geometry"]["coordinates"]
     assert len(fill) == 1 and len(lines) == 1          # one area, one closed outline
     assert lines[0][0] == lines[0][-1]
     # outline points lie on the circles, except the two radial steps where
-    # the wedges change contour (bearings 168.75° and 348.75°)
+    # the wedges change contour (half a wedge before south and north)
     for lo, la in lines[0]:
         x, y = wr._xy(53.8, 10.4, la, lo)
         r = math.hypot(x, y)
         ang = (math.degrees(math.atan2(x, y)) + 360) % 360
-        near_step = min(abs((ang - b + 180) % 360 - 180) for b in (168.75, 348.75)) < 3
+        near_step = min(abs((ang - b + 180) % 360 - 180) for b in (180 - 180 / N, 360 - 180 / N)) < 3
         assert near_step or min(abs(r - 100), abs(r - 200)) < 2.5
 
     def reach(deg):
@@ -91,7 +95,7 @@ def test_render_with_dirs_composes(app_module, db, monkeypatch):
         asked.append(sorted(kms))
         return {"type": "FeatureCollection", "features": [_circle(lat, lon, k) for k in kms]}
     monkeypatch.setattr(ra, "_fetch", fake)
-    dirs = [150] * 8 + [210] * 8
+    dirs = [150] * H + [210] * H
     assert ra.render_if_due(db, "dev1", 53.8, 10.4, [180], dirs=dirs, now=1000) == "rendered"
     rec = ra.load_last(db, "dev1")
     assert rec["dirs"] == dirs and asked[0] == wr.levels(dirs)
@@ -99,7 +103,7 @@ def test_render_with_dirs_composes(app_module, db, monkeypatch):
     # same wind picture: nothing to do
     assert ra.render_if_due(db, "dev1", 53.8, 10.4, [180], dirs=dirs, now=5000) == "unchanged"
     # calm (all equal): back to a single contour without composing
-    assert ra.render_if_due(db, "dev1", 53.8, 10.4, [180], dirs=[180] * 16, now=1000 + 700) == "rendered"
+    assert ra.render_if_due(db, "dev1", 53.8, 10.4, [180], dirs=[180] * N, now=1000 + 700) == "rendered"
     assert "dirs" not in ra.load_last(db, "dev1")
 
 
@@ -108,12 +112,12 @@ def test_mountains_to_the_south_cost_range_there():
     pts = [_point(53.8 + i * 0.45, 10.4 + j * 0.75, 0, 0, elev=max(0, -i) * 200)
            for i in range(-6, 7) for j in range(-4, 5)]
     d = wr.direction_ranges(50.0, MODEL, 10, 110, 53.8, 10.4, pts, now=100)
-    north, south = d[0], d[8]
+    north, south = d[0], d[H]
     assert south < north - 15
     # 1200 m climb ≈ 2200·9.81·1200/3.6e6/0.9 ≈ 8 kWh → clearly shorter
     flat = wr.direction_ranges(50.0, MODEL, 10, 110, 53.8, 10.4,
                                [dict(p, data=dict(p["data"], elev=0)) for p in pts], now=100)
-    assert flat[0] == north and flat[8] > south
+    assert flat[0] == north and flat[H] > south
 
 
 def test_downhill_wins_back_a_part():
@@ -185,14 +189,14 @@ def test_short_route_continues_straight():
 
 
 def test_directions_fall_back_without_route():
-    guess = [200] * 16
+    guess = [200] * N
     def fn(la0, lo0, la1, lo1):
         if la1 > la0 + 0.5:                                # only the northern half has roads
             return _resp(la0, lo0, 400, 90)
         raise OSError("no route")
     out, used = wr.direction_ranges_routes(50.0, MODEL, 10, 53.8, 10.4, [], 0, guess, route_fn=fn)
-    assert 0 < used < 16
-    assert out[0] > 200 and out[8] == 200
+    assert 0 < used < N
+    assert out[0] > 200 and out[H] == 200
 
 
 def test_refine_runs_only_when_due(app_module, db, monkeypatch):
@@ -204,9 +208,9 @@ def test_refine_runs_only_when_due(app_module, db, monkeypatch):
     calls = []
     def refine():
         calls.append(1)
-        return [160] * 8 + [240] * 8
-    dirs = [150] * 8 + [210] * 8
+        return [160] * H + [240] * H
+    dirs = [150] * H + [210] * H
     assert ra.render_if_due(db, "dev2", 53.8, 10.4, [180], dirs=dirs, now=1000, refine=refine) == "rendered"
-    assert ra.load_last(db, "dev2")["dirs"] == [160] * 8 + [240] * 8
+    assert ra.load_last(db, "dev2")["dirs"] == [160] * H + [240] * H
     assert ra.render_if_due(db, "dev2", 53.8, 10.4, [180], dirs=dirs, now=2000, refine=refine) == "unchanged"
     assert len(calls) == 1

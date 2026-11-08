@@ -1,6 +1,6 @@
 """Range per direction with the wind forecast, and the road area built from it.
 
-1. direction_ranges(): for 16 bearings the car "drives out" in STEP_KM road
+1. direction_ranges(): for N_DIRS bearings the car "drives out" in STEP_KM road
    steps. At every step the wind of the nearest forecast raster point at the
    expected arrival time is split into head/tail wind along the bearing; the
    air speed replaces the driving speed in the drag term of the own
@@ -18,7 +18,7 @@ import math
 
 import bms_learn as bl
 
-N_DIRS = 16
+N_DIRS = 32              # bearings; wedge 11.25°, ~40 km wide at 200 km
 STEP_KM = 10.0
 DETOUR = 1.25            # road km per straight-line km
 WIND_AT_CAR = 0.7        # wind at car height vs. the 10 m forecast
