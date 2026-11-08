@@ -143,6 +143,9 @@ def test_not_enabled_vehicle_cannot_save(app_module, db):
         _state(app_module, 5)
         assert c.post("/api/bms-learn", json={"disp_soc": "72"}).status_code == 400
         assert c.get("/api/bms-learn").get_json()["enabled"] is False
-        assert "bmsBox" not in c.get("/").get_data(as_text=True)
+        # since 1.2.287 the range box stays, the learning button and dialog go
+        page = c.get("/").get_data(as_text=True)
+        assert 'id="bmsBox"' in page
+        assert 'data-onclick="openBms"' not in page and 'id="bmsOv"' not in page
     finally:
         app_module._state_cache.pop("dev1", None)
