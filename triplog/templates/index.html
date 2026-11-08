@@ -20,6 +20,23 @@
   #map{width:100%;flex:1;min-height:200px;max-height:calc(100vh - 45px);border-radius:22px;overflow:hidden}
   .leaflet-container{border-radius:22px}
 
+  /* Map controls in IDmate style (no Leaflet defaults): glass buttons top right */
+  .map-col{position:relative}
+  .map-ctl{position:absolute;top:12px;right:calc(0.5rem + 12px);z-index:800;display:flex;flex-direction:column;gap:8px}
+  .map-ctl button{width:40px;height:40px;border-radius:12px;border:1px solid var(--border);
+    background:color-mix(in srgb,var(--bg-card) 82%,transparent);color:var(--text-2);
+    -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;
+    cursor:pointer;padding:0;box-shadow:0 2px 8px rgba(0,0,0,.25);transition:color .15s,border-color .15s,box-shadow .15s}
+  .map-ctl button svg{width:20px;height:20px}
+  .map-ctl button:hover{color:var(--text-1);border-color:var(--accent)}
+  .map-ctl button[aria-pressed="true"]{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 60%,var(--border));
+    box-shadow:0 0 10px color-mix(in srgb,var(--accent) 35%,transparent)}
+  .map-ctl button[hidden]{display:none}
+  /* Full screen inside the app (works on iPhone too, no Fullscreen API needed) */
+  .map-col.map-max{position:fixed;inset:0;z-index:2000;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0);background:var(--bg)}
+  .map-col.map-max #map,.map-col.map-max .leaflet-container{border-radius:0;max-height:none;height:100%}
+  .map-col.map-max .map-ctl{top:calc(12px + env(safe-area-inset-top,0px));right:12px}
+
   /* Heading arrow marker */
   .arrow-icon{width:32px;height:32px}
   .arrow-icon svg{filter:drop-shadow(0 0 4px color-mix(in srgb,var(--accent) 50%,transparent))}
@@ -128,6 +145,20 @@
     <!-- Map -->
     <div class="map-col">
       <div id="map"></div>
+      <div class="map-ctl" role="toolbar" aria-label="{{ t.dash_map_tools }}">
+        <button type="button" id="mapFull" title="{{ t.dash_map_full }}" aria-label="{{ t.dash_map_full }}" aria-pressed="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="ico-max" d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/><path class="ico-min" style="display:none" d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3"/></svg>
+        </button>
+        <button type="button" id="mapCenter" title="{{ t.dash_map_center }}" aria-label="{{ t.dash_map_center }}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+        </button>
+        <button type="button" id="mapRange" title="{{ t.dash_map_range }}" aria-label="{{ t.dash_map_range }}" aria-pressed="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 3c3 0 4.5 1.2 6.4 2.6S21 9 21 12s-1 4.6-2.6 6.4S15 21 12 21s-4.6-1-6.4-2.6S3 15 3 12s1-4.5 2.6-6.4S9 3 12 3z" stroke-dasharray="3 2.4"/><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/></svg>
+        </button>
+        <button type="button" id="mapWind" title="{{ t.dash_map_wind }}" aria-label="{{ t.dash_map_wind }}" aria-pressed="true" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10a3 3 0 1 0-3-3M3 12h15a3 3 0 1 1-3 3M3 16h7"/></svg>
+        </button>
+      </div>
     </div>
 
     <!-- Stats -->
@@ -278,6 +309,17 @@
       map.getContainer().addEventListener(ev, () => { mapTouched = true; }, {passive: true}));
     // Road area rendered in the background (/api/range-area/last).
     let rangeArea = null, rangeAreaTs = null, rangeAreaOff = false, rangeAreaBoot = false;
+    // Map buttons: range and wind can be switched off (remembered per browser).
+    const mapPref = (k, d) => { try { const v = localStorage.getItem('map_' + k); return v == null ? d : v === '1'; } catch (e) { return d; } };
+    const setMapPref = (k, v) => { try { localStorage.setItem('map_' + k, v ? '1' : '0'); } catch (e) {} };
+    let rangeHidden = !mapPref('range', true), windHidden = !mapPref('wind', true);
+    function applyRangeVisibility() {
+      if (rangeHidden) [rangeInner, rangeOuter].forEach(c => c && c.setStyle({opacity: 0, fillOpacity: 0}));
+      if (rangeArea) {
+        if (!rangeHidden && !map.hasLayer(rangeArea)) map.addLayer(rangeArea);
+        else if (rangeHidden && map.hasLayer(rangeArea)) map.removeLayer(rangeArea);
+      }
+    }
     function updateRangeCircle(pos, fallbackKm) {
       if (pos) rangePos = pos;
       if (fallbackKm !== undefined) rangeFallback = fallbackKm;
@@ -322,6 +364,7 @@
           setTimeout(() => updateRangeCircle(), 300);
         }
       }
+      applyRangeVisibility();
     }
     window.updateRangeCircle = updateRangeCircle;
     // New values (range, position) are picked up every 10 s even when no
@@ -421,7 +464,7 @@
           + `<path d="M10 1 L15.5 10 H12 V19 H8 V10 H4.5 Z" fill="${col}" fill-opacity="0.85" stroke="#fff" stroke-width="0.8"/></svg>`});
     }
     function syncWindLayer() {
-      const want = map.getZoom() >= 6 && windLayer.getLayers().length > 0;
+      const want = !windHidden && map.getZoom() >= 6 && windLayer.getLayers().length > 0;
       if (want && !map.hasLayer(windLayer)) map.addLayer(windLayer);
       else if (!want && map.hasLayer(windLayer)) map.removeLayer(windLayer);
     }
@@ -430,6 +473,7 @@
       try {
         const d = await (await fetch('/api/wind')).json();
         if (d.status === 'off') { windOff = true; return; }
+        document.getElementById('mapWind').hidden = false;
         windLayer.clearLayers();
         (d.points || []).forEach(p => {
           const title = `${T.wind} ${Math.round(p.kmh)} km/h` + (p.gust != null ? ` · ${T.wind_gust} ${Math.round(p.gust)}` : '');
@@ -439,6 +483,39 @@
       } catch (e) {}
     }
     map.on('zoomend', syncWindLayer);
+
+    // ── Map buttons ──
+    const btnFull = document.getElementById('mapFull'), btnRange = document.getElementById('mapRange'),
+          btnWind = document.getElementById('mapWind'), mapCol = document.querySelector('.map-col');
+    function setFull(on) {
+      mapCol.classList.toggle('map-max', on);
+      btnFull.setAttribute('aria-pressed', on ? 'true' : 'false');
+      btnFull.querySelector('.ico-max').style.display = on ? 'none' : '';
+      btnFull.querySelector('.ico-min').style.display = on ? '' : 'none';
+      const lbl = on ? {{ t.dash_map_exit | tojson }} : {{ t.dash_map_full | tojson }};
+      btnFull.title = lbl; btnFull.setAttribute('aria-label', lbl);
+      setTimeout(() => map.invalidateSize(), 50);
+    }
+    btnFull.addEventListener('click', () => setFull(!mapCol.classList.contains('map-max')));
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && mapCol.classList.contains('map-max')) setFull(false); });
+    document.getElementById('mapCenter').addEventListener('click', () => {
+      // back to the automatic view: the whole range, else the car
+      mapTouched = false; rangeFitKm = null;
+      updateRangeCircle();
+      if (rangeFitKm == null && marker) map.setView(marker.getLatLng(), 13, {animate: true});
+    });
+    const syncBtns = () => {
+      btnRange.setAttribute('aria-pressed', rangeHidden ? 'false' : 'true');
+      btnWind.setAttribute('aria-pressed', windHidden ? 'false' : 'true');
+    };
+    btnRange.addEventListener('click', () => {
+      rangeHidden = !rangeHidden; setMapPref('range', !rangeHidden); syncBtns();
+      updateRangeCircle(); applyRangeVisibility();
+    });
+    btnWind.addEventListener('click', () => {
+      windHidden = !windHidden; setMapPref('wind', !windHidden); syncBtns(); syncWindLayer();
+    });
+    syncBtns();
     pollWind();
     setInterval(pollWind, 10 * 60 * 1000);
     let locMarkers = [];
