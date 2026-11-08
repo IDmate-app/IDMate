@@ -123,6 +123,8 @@ def area(lat, lon, kms):
 # RENDER_EVERY_S, so Valhalla is not asked on every page view.
 
 RENDER_EVERY_S = 10 * 60
+DIR_TOL_KM = 15          # a direction must move more than this (or 8 %) to count
+DIR_TOL_SHARE = 0.08
 # Bump when the stored geometry changes how it is built: an area from an
 # older version is rendered again at once, even if nothing else changed.
 GEOM_VERSION = 5          # 3: grid outline (1.2.290), 4: 32 directions (1.2.294), 5: islands/ferries kept (1.2.295)
@@ -152,13 +154,21 @@ def render_if_due(db, device, lat, lon, kms, dirs=None, now=None, refine=None):
     if lv and len(lv) == 1:              # wind changes nothing worth a shape
         kms, dirs, lv = [lv[0]], None, None
     req = lv or kms
-    k = list(key(lat, lon, req))
+    # key: place + base range (the one number of the box) + rounded
+    # directions; the contour levels follow from those and stay out of it
+    k = list(key(lat, lon, kms))
     kk = [k[0], k[1], list(k[2])] + ([[int(round(d / 10.0)) * 10 for d in dirs]] if dirs else [])
     last = load_last(db, device)
     if last and last.get("v") != GEOM_VERSION:
         last = None                       # built the old way: render now
     if last:
         if last.get("key") == kk:
+            return "unchanged"
+        # Same place and base range, the wind picture only drifted a little
+        # (forecast hour to hour): no new area for that.
+        lk = last.get("key") or []
+        if dirs and len(lk) == 4 and len(kk) == 4 and lk[:3] == kk[:3] and len(lk[3]) == len(kk[3]) \
+                and all(abs(a - b) <= max(DIR_TOL_KM, DIR_TOL_SHARE * b) for a, b in zip(kk[3], lk[3])):
             return "unchanged"
         # A different kind of range (one value instead of a span, with or
         # without wind) is a new display, not a small change: no waiting.
