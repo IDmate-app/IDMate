@@ -392,6 +392,7 @@ def route_profile(resp):
         cum.append(cum[-1] + math.hypot(x, y))
     speed = [None] * (len(pts) - 1)
     ferry = [False] * (len(pts) - 1)
+    crossings = []
     for m in leg.get("maneuvers") or []:
         ln, tm = m.get("length"), m.get("time")
         b0, b1 = m.get("begin_shape_index"), m.get("end_shape_index")
@@ -401,6 +402,9 @@ def route_profile(resp):
         on_ferry = m.get("type") == 28 or m.get("travel_type") == "ferry"
         for k in range(b0, min(b1, len(speed))):
             ferry[k] = ferry[k] or on_ferry
+        if on_ferry and b1 > b0:
+            crossings.append({"b0": b0, "b1": min(b1, len(pts) - 1), "h": (tm or 0) / 3600,
+                              "name": ", ".join((m.get("street_names") or [])[:1])})
         if ln and tm and tm > 0 and not on_ferry:
             v = ln / tm * 3600
             for k in range(b0, min(b1, len(speed))):
@@ -410,7 +414,10 @@ def route_profile(resp):
     speed = [v or fill for v in speed]
     elev = leg.get("elevation") or resp.get("trip", {}).get("elevation")
     ferry_km = sum(cum[k + 1] - cum[k] for k in range(len(ferry)) if ferry[k])
+    for c in crossings:
+        c["km_from"], c["km_to"] = cum[c["b0"]], cum[c["b1"]]
     return {"pts": pts, "cum": cum, "speed": speed, "ferry": ferry, "ferry_km": ferry_km,
+            "crossings": crossings,
             "elev": elev if elev and all(e is not None for e in elev) else None, "km": cum[-1]}
 
 
@@ -426,9 +433,11 @@ def _at_km(prof, km):
 
 
 def range_along_route(remaining_kwh, model, temp_now, prof, points, now, v_fixed=None,
-                      speed_factor=None, mass_kg=None):
+                      speed_factor=None, mass_kg=None, until_km=None):
     """Road km until the energy runs out along one route profile; beyond the
-    route's end it carries on with the last section's speed and heading."""
+    route's end it carries on with the last section's speed and heading.
+    until_km: stop there and return the energy left (kWh, ≤ 0 = not reached)
+    instead — e.g. at a ferry terminal."""
     import config
     import wind
     mass = mass_kg or config.VEHICLE_MASS_KG
@@ -452,7 +461,7 @@ def range_along_route(remaining_kwh, model, temp_now, prof, points, now, v_fixed
     left, road, t = remaining_kwh, 0.0, now
     h_prev = height(0.0, lat0, lon0)
     last_head, last_v = None, None
-    while left > 0 and road < 1500:
+    while left > 0 and road < 1500 and (until_km is None or road < until_km):
         mid = road + STEP_KM / 2
         if mid <= prof["km"]:
             lat, lon, head, k = _at_km(prof, mid)
@@ -494,6 +503,8 @@ def range_along_route(remaining_kwh, model, temp_now, prof, points, now, v_fixed
         else:
             road += STEP_KM
             left -= need
+    if until_km is not None:
+        return left
     return round(road)
 
 

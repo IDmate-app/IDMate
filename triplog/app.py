@@ -1495,7 +1495,7 @@ def dashboard():
 def _map_boot(device):
     """Stored range area and the wind of the current hour, delivered with the
     page: both are on the map at once, no waiting for the first fetch."""
-    out = {"area": None, "wind": None}
+    out = {"area": None, "wind": None, "valhalla": bool(config.VALHALLA_URL)}
     if not config.VALHALLA_URL:
         return out
     try:
@@ -1567,6 +1567,38 @@ def wind_now():
     finally:
         db.close()
     return jsonify({"status": "ok", "points": pts})
+
+
+@app.route("/api/ferries/start", methods=["POST"])
+def ferries_start():
+    """Map button "Fähren": search long ferries once (background), see
+    ferries.py. Short crossings are part of the normal area anyway."""
+    import ferries
+    if not config.VALHALLA_URL:
+        return jsonify({"status": "off"})
+    db = get_db()
+    try:
+        v = db.execute("SELECT * FROM vehicles WHERE device = ?", (active_device(),)).fetchone()
+        inp = _range_inputs(db, v) if v and v["device"] else None
+        cruise = getattr(_range_inputs, "cruise", None) if inp else None
+        if not inp or not cruise or not cruise.get("model"):
+            return jsonify({"status": "error", "error": "no_model"})
+        points = []
+        if config.WIND_SOURCE:
+            import wind
+            points = wind.points_near(db, inp[0], inp[1], max(inp[2]) * 1.3)
+    finally:
+        db.close()
+    return jsonify(ferries.start(v["device"], inp[0], inp[1], dict(cruise), points))
+
+
+@app.route("/api/ferries")
+def ferries_status():
+    import ferries
+    st = ferries.status(active_device())
+    st.pop("lat", None)
+    st.pop("lon", None)             # no position in the answer
+    return jsonify(st)
 
 
 def _range_inputs(db, v):
