@@ -1604,6 +1604,8 @@
   "bms_vw_range": "VW range rebuilt",
   "bms_real_range": "Real range",
   "bms_real_hint": "from {0} trips at a similar temperature, avg {1} kWh/100 km",
+  "bms_cruise": "Range at {0} km/h",
+  "bms_cruise_hint": "from your trips, {0} kWh/100 km at {1} °C (no wind or elevation yet)",
   "bms_buffer": "Display 0 % at CAN {0} %",
   "bms_window": "VW average follows about the last {0} km",
   "bms_e": "E = {0} kWh per 100 % display",

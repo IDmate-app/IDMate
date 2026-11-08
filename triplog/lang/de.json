@@ -1604,6 +1604,8 @@
   "bms_vw_range": "VW-Reichweite nachgerechnet",
   "bms_real_range": "Reichweite real",
   "bms_real_hint": "aus {0} Fahrten bei ähnlicher Temperatur, Ø {1} kWh/100 km",
+  "bms_cruise": "Reichweite bei {0} km/h",
+  "bms_cruise_hint": "aus deinen Fahrten, {0} kWh/100 km bei {1} °C (ohne Wind und Höhe)",
   "bms_buffer": "Anzeige 0 % bei CAN {0} %",
   "bms_window": "VW-Ø folgt etwa den letzten {0} km",
   "bms_e": "E = {0} kWh pro 100 % Anzeige",
