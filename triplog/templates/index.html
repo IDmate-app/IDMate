@@ -610,21 +610,26 @@
     if (MAP_BOOT.ferries) btnFerry.hidden = false;        // Valhalla + ferry source set
     function drawFerries(list) {
       ferryLayer.clearLayers();
-      const teal = getComputedStyle(document.documentElement).getPropertyValue('--teal').trim() || '#1de9b6';
+      // The map tiles are light in both themes: a fixed dark purple with a
+      // white halo (like the range line) stands out on sea, land and roads.
+      const col = '#7a3fd6';
+      const halo = {color: '#ffffff', opacity: 0.6, interactive: false, lineJoin: 'round', lineCap: 'round'};
       list.forEach(f => {
-        L.polyline(f.line, {color: teal, weight: 2.5, opacity: 0.9, dashArray: '8 6', interactive: false}).addTo(ferryLayer);
+        L.polyline(f.line, {...halo, weight: 4.5}).addTo(ferryLayer);
+        L.polyline(f.line, {color: col, weight: 2, opacity: 0.95, dashArray: '6 5', interactive: false}).addTo(ferryLayer);
         if (f.area) {
           const outl = (f.area.features || []).find(x => (x.properties || {}).kind === 'line');
           if (outl) {
             const rings = outl.geometry.coordinates.map(c => smoothRing(c, 2));
-            L.geoJSON({type: 'Feature', geometry: {type: 'MultiLineString', coordinates: rings}},
-              {interactive: false, style: () => ({color: teal, weight: 2.5, opacity: 0.9, lineJoin: 'round'})}).addTo(ferryLayer);
+            const g = {type: 'Feature', geometry: {type: 'MultiLineString', coordinates: rings}};
+            L.geoJSON(g, {interactive: false, style: () => ({...halo, weight: 5})}).addTo(ferryLayer);
+            L.geoJSON(g, {interactive: false, style: () => ({color: col, weight: 2.5, opacity: 0.95, lineJoin: 'round'})}).addTo(ferryLayer);
           }
         }
         const tip = T.ferry_tip.replace('{0}', f.name || '').replace('{1}', f.sea_km).replace('{2}', f.hours)
           .replace('{3}', f.to_terminal_km).replace('{4}', f.km_after);
-        L.circleMarker(f.to, {radius: 6, color: '#fff', weight: 2, fillColor: teal, fillOpacity: 1}).bindTooltip(tip).addTo(ferryLayer);
-        L.circleMarker(f.from, {radius: 4, color: '#fff', weight: 1.5, fillColor: teal, fillOpacity: 1}).bindTooltip(tip).addTo(ferryLayer);
+        L.circleMarker(f.to, {radius: 3.5, color: '#fff', weight: 1.5, fillColor: col, fillOpacity: 1}).bindTooltip(tip).addTo(ferryLayer);
+        L.circleMarker(f.from, {radius: 2.5, color: '#fff', weight: 1, fillColor: col, fillOpacity: 1}).bindTooltip(tip).addTo(ferryLayer);
       });
       if (!map.hasLayer(ferryLayer)) map.addLayer(ferryLayer);
       // show range and ferries together; held while the ferry button is on
