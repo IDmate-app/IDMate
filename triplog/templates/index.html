@@ -626,22 +626,33 @@
     }
     let ferryOn = false, ferryPoll = null;
     if (MAP_BOOT.ferries) btnFerry.hidden = false;        // Valhalla + ferry source set
-    function drawFerries(list) {
-      ferryLayer.clearLayers(); ferrySea.clearLayers();
+    const ferryHover = L.layerGroup();
+    function drawFerries(list, union) {
+      ferryLayer.clearLayers(); ferrySea.clearLayers(); ferryHover.clearLayers();
       // The map tiles are light in both themes: a fixed dark purple with a
       // white halo (like the range line) stands out on sea, land and roads.
       const col = '#7a3fd6';
       const halo = {color: '#ffffff', opacity: 0.6, interactive: false, lineJoin: 'round', lineCap: 'round'};
+      const outline = rings => {
+        const g = {type: 'Feature', geometry: {type: 'MultiLineString', coordinates: rings}};
+        L.geoJSON(g, {interactive: false, style: () => ({...halo, weight: 5.4})}).addTo(ferryLayer);   // 90 % of the range line (6/3)
+        L.geoJSON(g, {interactive: false, style: () => ({color: col, weight: 2.7, opacity: 0.95, lineJoin: 'round', lineCap: 'round'})}).addTo(ferryLayer);
+      };
+      const ports = [];
       list.forEach(f => {
         L.polyline(f.line, {...halo, weight: 4.5}).addTo(ferrySea);
         L.polyline(f.line, {color: col, weight: 2, opacity: 0.95, dashArray: '6 5', interactive: false}).addTo(ferrySea);
+        // its own area only while its port is pointed at (the common
+        // outline below shows them all once)
+        let own = null;
         if (f.area) {
           const outl = (f.area.features || []).find(x => (x.properties || {}).kind === 'line');
           if (outl) {
             const rings = outl.geometry.coordinates.map(c => smoothRing(c, 2));
-            const g = {type: 'Feature', geometry: {type: 'MultiLineString', coordinates: rings}};
-            L.geoJSON(g, {interactive: false, style: () => ({...halo, weight: 5.4})}).addTo(ferryLayer);   // 90 % of the range line (6/3)
-            L.geoJSON(g, {interactive: false, style: () => ({color: col, weight: 2.7, opacity: 0.95, lineJoin: 'round', lineCap: 'round'})}).addTo(ferryLayer);
+            const g = {type: 'Feature', geometry: {type: 'MultiPolygon', coordinates: rings.map(r => [r])}};
+            own = L.geoJSON(g, {interactive: false, style: () => ({color: col, weight: 2.7, opacity: 1, lineJoin: 'round',
+                                fill: true, fillColor: col, fillOpacity: 0.18})});
+            if (!union) outline(rings);
           }
         }
         const row = (k, v) => `<div class="row"><span>${k}</span><span>${v}</span></div>`;
@@ -650,9 +661,18 @@
           + row(T.ferry_tip_term, `${f.to_terminal_km} km`)
           + row(T.ferry_tip_after, `≈ ${f.km_after} km`);
         const tipOpt = {className: 'ferry-tip', direction: 'auto', opacity: 1};
-        L.circleMarker(f.to, {radius: 3.5, color: '#fff', weight: 1.5, fillColor: col, fillOpacity: 1}).bindTooltip(tip, tipOpt).addTo(ferryLayer);
-        L.circleMarker(f.from, {radius: 2.5, color: '#fff', weight: 1, fillColor: col, fillOpacity: 1}).bindTooltip(tip, tipOpt).addTo(ferryLayer);
+        const show = () => { ferryHover.clearLayers(); if (own) ferryHover.addLayer(own); };
+        const hide = () => ferryHover.clearLayers();
+        [L.circleMarker(f.to, {radius: 3.5, color: '#fff', weight: 1.5, fillColor: col, fillOpacity: 1}),
+         L.circleMarker(f.from, {radius: 2.5, color: '#fff', weight: 1, fillColor: col, fillOpacity: 1})].forEach(m =>
+          ports.push(m.bindTooltip(tip, tipOpt).on('tooltipopen', show).on('tooltipclose', hide)));
       });
+      if (union) {
+        const outl = (union.features || []).find(x => (x.properties || {}).kind === 'line');
+        if (outl) outline(outl.geometry.coordinates.map(c => smoothRing(c, 2)));
+      }
+      ferryHover.addTo(ferryLayer);
+      ports.forEach(m => m.addTo(ferryLayer));      // the points on top
       if (!map.hasLayer(ferryLayer)) map.addLayer(ferryLayer);
       syncFerrySea();
       // show range and ferries together; held while the ferry button is on
@@ -671,7 +691,7 @@
         if (!ferryOn) return;
         if (d.status === 'ok') {
           if (!(d.ferries || []).length) toast(T.ferry_none, 'info');
-          drawFerries(d.ferries || []);
+          drawFerries(d.ferries || [], d.union || null);
         } else {
           ferryOn = false; btnFerry.setAttribute('aria-pressed', 'false');   // next click tries again
           toast(/overpass busy/.test(d.error || '') ? T.ferry_busy : T.ferry_err, 'error');

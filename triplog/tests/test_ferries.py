@@ -251,3 +251,16 @@ def test_short_and_long_from_file(tmp_path):
     f.write_text(json.dumps(data))
     assert [c["name"] for c in ferries.file_chains(str(f))] == ["Travemünde - Trelleborg"]
     assert [c["name"] for c in ferries.short_ferries(str(f))] == ["Puttgarden - Rødby"]
+
+
+def test_overlapping_port_areas_become_one_outline():
+    import wind_range as w
+    def area(lat, lon, d):
+        iso = {"features": [{"properties": {"contour": 100}, "geometry": {"type": "Polygon",
+               "coordinates": [_sq(lat, lon, d)]}}]}
+        return w.compose(iso, None, lat, lon)
+    a, b, far = area(55.6, 13.0, 0.6), area(55.4, 13.4, 0.6), area(59.9, 10.7, 0.5)   # Malmö, Ystad-ish, Oslo
+    u = ferries.union_areas([a, b, None, far])
+    line = [f for f in u["features"] if f["properties"]["kind"] == "line"][0]
+    assert len(line["geometry"]["coordinates"]) == 2                 # the two overlapping ones as one
+    assert ferries.union_areas([None]) is None
