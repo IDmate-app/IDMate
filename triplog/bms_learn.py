@@ -337,6 +337,8 @@ def cruise_range(remaining_kwh, model, temp_now, v=CRUISE_KMH):
 
 DRIVE_WINDOW_H = 2
 DRIVE_MIN_KM = 10.0
+RECENT_S = 30 * 60
+V_MAX = 200
 
 
 def recent_speed(series):
@@ -350,7 +352,13 @@ def recent_speed(series):
         return None
     first = next(pts[i - 1] for i in range(1, len(pts)) if pts[i][1] > pts[i - 1][1])
     last = moved[-1]
+    # The current pace: only the last RECENT_S of driving when that is
+    # already DRIVE_MIN_KM, so a fast motorway stretch is not watered down
+    # by the slow start of the trip.
+    recent = [p for p in pts if first[0] <= p[0] <= last[0] - RECENT_S]
+    if recent and last[1] - recent[-1][1] >= DRIVE_MIN_KM:
+        first = recent[-1]
     km, h = last[1] - first[1], (last[0] - first[0]) / 3600
     if km < DRIVE_MIN_KM or h <= 0:
         return None
-    return {"v": round(min(km / h, 160)), "km": round(km)}
+    return {"v": round(min(km / h, V_MAX)), "km": round(km)}
