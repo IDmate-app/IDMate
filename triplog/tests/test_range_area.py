@@ -98,3 +98,73 @@ def test_api_validates(app_module, db, monkeypatch):
         assert c.get("/api/range-area?lat=52.5&lon=13.4&km=2").status_code == 400
         assert c.get("/api/range-area?lat=x&lon=13.4&km=200").status_code == 400
         assert c.get("/api/range-area?lat=52.5&lon=13.4&km=1,2,3").status_code == 400
+
+
+# ── pre-rendered area per vehicle (1.2.279) ─────────────────────────────────
+
+def test_render_if_due_stores_and_throttles(app_module, db, monkeypatch):
+    import range_area as ra
+    ra._fail_at.clear()
+    monkeypatch.setattr(ra, "_down_until", 0.0)
+    calls = []
+    monkeypatch.setattr(ra, "_fetch", lambda lat, lon, kms: calls.append(kms) or GJ)
+    assert ra.load_last(db, "dev1") is None
+    assert ra.render_if_due(db, "dev1", 52.5, 13.4, [198, 294], now=1000) == "rendered"
+    rec = ra.load_last(db, "dev1")
+    assert rec["geojson"] == GJ and rec["kms"] == [198, 294] and rec["ts"] == 1000
+    # same place and range: nothing to do, also much later
+    assert ra.render_if_due(db, "dev1", 52.501, 13.401, [199, 292], now=99999) == "unchanged"
+    # moved: waits until 10 min after the last render, then renders
+    assert ra.render_if_due(db, "dev1", 53.0, 10.0, [198, 294], now=1000 + 300) == "wait"
+    assert ra.render_if_due(db, "dev1", 53.0, 10.0, [198, 294], now=1000 + 601) == "rendered"
+    assert len(calls) == 2
+    assert ra.load_last(db, "dev1")["lat"] == 53.0
+
+
+def test_render_failure_keeps_last(app_module, db, monkeypatch):
+    import range_area as ra
+    ra._fail_at.clear()
+    monkeypatch.setattr(ra, "_down_until", 0.0)
+    monkeypatch.setattr(ra, "_fetch", lambda lat, lon, kms: GJ)
+    ra.render_if_due(db, "dev1", 52.5, 13.4, [250], now=1000)
+    def boom(*a):
+        raise OSError("timeout")
+    monkeypatch.setattr(ra, "_fetch", boom)
+    assert ra.render_if_due(db, "dev1", 48.2, 16.4, [250], now=5000) == "failed"
+    assert ra.load_last(db, "dev1")["lat"] == 52.5
+    # no new attempt for 10 min after a failure
+    assert ra.render_if_due(db, "dev1", 48.2, 16.4, [250], now=5300) == "wait"
+    ra._fail_at.clear()
+
+
+def test_last_endpoint(app_module, db, monkeypatch):
+    import config
+    import range_area as ra
+    db.execute("INSERT INTO vehicles (id, plate, device) VALUES (1, 'EV1', 'dev1')")
+    db.execute("INSERT INTO users (id, username, password_hash, is_admin, active_vehicle_id) "
+               "VALUES (1, 'admin', 'x', 1, 1)")
+    db.commit()
+    app_module.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+    with app_module.app.test_client() as c:
+        with c.session_transaction() as s:
+            s["_user_id"] = "1"
+        monkeypatch.setattr(config, "VALHALLA_URL", "")
+        assert c.get("/api/range-area/last").get_json() == {"status": "off"}
+        monkeypatch.setattr(config, "VALHALLA_URL", "http://valhalla:8002")
+        assert c.get("/api/range-area/last").get_json() == {"status": "none"}
+        monkeypatch.setattr(ra, "_down_until", 0.0)
+        monkeypatch.setattr(ra, "_fetch", lambda lat, lon, kms: GJ)
+        ra.render_if_due(db, "dev1", 52.5, 13.4, [250], now=1000)
+        d = c.get("/api/range-area/last").get_json()
+        assert d["status"] == "ok" and d["geojson"] == GJ and d["ts"] == 1000
+
+
+def test_range_inputs_bms_or_fallback(app_module, db, monkeypatch):
+    db.execute("INSERT INTO vehicles (id, plate, device, bms_learn) VALUES (1, 'EV1', 'dev1', 0)")
+    db.commit()
+    v = db.execute("SELECT * FROM vehicles WHERE id = 1").fetchone()
+    monkeypatch.setattr(app_module, "_vehicle_state",
+                        lambda dev: {"lat": 52.5, "lon": 13.4, "calc_range": 240})
+    assert app_module._range_inputs(db, v) == (52.5, 13.4, [240])
+    monkeypatch.setattr(app_module, "_vehicle_state", lambda dev: {"calc_range": 240})
+    assert app_module._range_inputs(db, v) is None

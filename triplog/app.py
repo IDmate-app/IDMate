@@ -1508,6 +1508,69 @@ def range_area_api():
     return jsonify(range_area.area(lat, lon, kms))
 
 
+@app.route("/api/range-area/last")
+def range_area_last():
+    """The area rendered in the background for the active vehicle — shown
+    right away when the dashboard opens, no waiting for Valhalla."""
+    import range_area
+    if not config.VALHALLA_URL:
+        return jsonify({"status": "off"})
+    db = get_db()
+    try:
+        rec = range_area.load_last(db, active_device())
+    finally:
+        db.close()
+    if not rec:
+        return jsonify({"status": "none"})
+    return jsonify({"status": "ok", **rec})
+
+
+def _range_inputs(db, v):
+    """Position and range span the dashboard would draw: lower/upper end of
+    the learned real range ("BMS lernen"), else the computed range."""
+    st = _vehicle_state(v["device"])
+    lat, lon = st.get("lat"), st.get("lon")
+    lo = hi = None
+    if v["bms_learn"]:
+        from blueprints import bms
+        real = ((bms._state(db, dict(v)).get("now") or {}).get("real")) or {}
+        lo = real.get("km_low") if (real.get("km_low") or 0) > 0 else None
+        hi = real.get("km_high") if (real.get("km_high") or 0) > 0 else None
+    if hi is None:
+        fb = st.get("calc_range") if st.get("calc_range") is not None else st.get("range_km")
+        hi = fb if fb and fb > 0 else None
+    if lat is None or lon is None or hi is None:
+        return None
+    kms = [k for k in ([lo, hi] if lo is not None else [hi]) if 5 <= k <= 1000]
+    return (lat, lon, kms) if kms else None
+
+
+def _range_area_loop():
+    """Background thread: renders the road area per vehicle and stores it, at
+    most every RENDER_EVERY_S when position or range changed."""
+    import range_area
+    time.sleep(30)                      # let the state cache fill first
+    while True:
+        try:
+            if config.VALHALLA_URL:
+                db = get_db()
+                try:
+                    vehicles = db.execute(
+                        "SELECT * FROM vehicles WHERE device IS NOT NULL AND device != ''").fetchall()
+                    for v in vehicles:
+                        try:
+                            inp = _range_inputs(db, v)
+                            if inp:
+                                range_area.render_if_due(db, v["device"], *inp)
+                        except Exception as e:      # one vehicle must not block the other
+                            log.warning("range area for %s: %s", v["device"], e)
+                finally:
+                    db.close()
+        except Exception as e:
+            log.warning("range area loop: %s", e, exc_info=True)
+        time.sleep(60)
+
+
 @app.route("/api/stick-update/refresh", methods=["POST"])
 def stick_update_refresh():
     """Dashboard refresh button: look for a newer stick firmware now instead
@@ -1521,7 +1584,12 @@ def stick_update_refresh():
 @app.route("/api/vehicle-state")
 def vehicle_state():
     """Current vehicle state — from cache (updated every 10s in background)."""
-    device = active_device()
+    return jsonify(_vehicle_state(active_device()))
+
+
+def _vehicle_state(device):
+    """State dict of one vehicle (cache + SQLite ranges); also used by the
+    background range-area renderer, so it needs no request context."""
 
     with _state_lock:
         state = dict(_state_cache.get(device, {}))
@@ -1627,7 +1695,7 @@ def vehicle_state():
             state["real_cons_grid"] = real["cons_grid"]
 
     db.close()
-    return jsonify(state)
+    return state
 
 
 # ── SSE stream: real-time vehicle data via MQTT ──────────────
@@ -6710,6 +6778,7 @@ if __name__ == "__main__":
     threading.Thread(target=background_detector, daemon=True).start()
     threading.Thread(target=background_geocoder, daemon=True).start()
     threading.Thread(target=_state_poller, daemon=True).start()
+    threading.Thread(target=_range_area_loop, name="range-area-loop", daemon=True).start()
     threading.Thread(target=background_mqtt, daemon=True).start()
     # journeys list pictures for anything missing (first run, rendering change)
     try:

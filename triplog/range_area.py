@@ -47,6 +47,20 @@ def _fetch(lat, lon, kms):
         return json.loads(r.read().decode("utf-8"))
 
 
+def compute(lat, lon, kms):
+    """Synchronous Valhalla request → (geojson, error). Respects the global
+    back-off while Valhalla is unreachable."""
+    if time.time() < _down_until:
+        return None, "Valhalla not reachable"
+    k = key(lat, lon, kms)
+    with _lock:
+        _busy.add(k)
+    _run(k, lat, lon, kms)
+    with _lock:
+        c = _cache.get(k) or {}
+    return c.get("geojson"), c.get("error")
+
+
 def _run(k, lat, lon, kms):
     gj, err = None, None
     try:
@@ -101,3 +115,52 @@ def area(lat, lon, kms):
             for old in sorted(_cache, key=lambda x: _cache[x]["t"])[:len(_cache) - 50]:
                 _cache.pop(old, None)
     return {"status": "pending"}
+
+
+# ── Pre-rendered area per vehicle (background, persisted) ──────────────────
+# The dashboard shows the last stored area at once; the background loop
+# renders a new one only when position/range changed, at most every
+# RENDER_EVERY_S, so Valhalla is not asked on every page view.
+
+RENDER_EVERY_S = 10 * 60
+_fail_at = {}          # device -> time of the last failed render (no retry every minute)
+
+
+def load_last(db, device):
+    """Stored area of a vehicle (own table, not settings: holds the car's
+    position, which must stay out of the diagnostic export)."""
+    row = db.execute("SELECT data FROM range_area_last WHERE device = ?", (device,)).fetchone()
+    if not row or not row["data"]:
+        return None
+    try:
+        return json.loads(row["data"])
+    except ValueError:
+        return None
+
+
+def render_if_due(db, device, lat, lon, kms, now=None):
+    """Render and store when nothing is stored yet, or the inputs changed and
+    the stored area is at least RENDER_EVERY_S old. Returns "rendered",
+    "unchanged", "wait" or "failed"."""
+    now = now if now is not None else time.time()
+    k = list(key(lat, lon, kms))
+    last = load_last(db, device)
+    if last:
+        if last.get("key") == [k[0], k[1], list(k[2])]:
+            return "unchanged"
+        if now - (last.get("ts") or 0) < RENDER_EVERY_S:
+            return "wait"
+    if now - _fail_at.get(device, 0) < RENDER_EVERY_S:
+        return "wait"
+    gj, err = compute(lat, lon, kms)
+    if gj is None:
+        _fail_at[device] = now
+        return "failed"
+    _fail_at.pop(device, None)
+    rec = {"key": [k[0], k[1], list(k[2])], "lat": lat, "lon": lon,
+           "kms": [round(x) for x in kms], "ts": now, "geojson": gj}
+    db.execute("INSERT OR REPLACE INTO range_area_last (device, data, ts) VALUES (?, ?, ?)",
+               (device, json.dumps(rec, separators=(",", ":")), now))
+    db.commit()
+    log.info("range area: rendered for %s (%s km)", device, "/".join(str(x) for x in rec["kms"]))
+    return "rendered"
