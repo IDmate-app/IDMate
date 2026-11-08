@@ -112,3 +112,90 @@ def test_downhill_wins_back_a_part():
     flat = wr.direction_ranges(50.0, MODEL, 10, 110, 53.8, 10.4,
                                [dict(p, data=dict(p["data"], elev=0)) for p in pts], now=100)
     assert all(a >= b for a, b in zip(d, flat))     # starting high: downhill helps
+
+
+# ── along routes (1.2.289): speed limits and elevation from Valhalla ────────
+
+def _enc(pts):
+    def one(v):
+        v = ~(v << 1) if v < 0 else v << 1
+        out = ""
+        while v >= 0x20:
+            out += chr((0x20 | (v & 0x1F)) + 63)
+            v >>= 5
+        return out + chr(v + 63)
+    s, plat, plon = "", 0, 0
+    for la, lo in pts:
+        ila, ilo = round(la * 1e6), round(lo * 1e6)
+        s += one(ila - plat) + one(ilo - plon)
+        plat, plon = ila, ilo
+    return s
+
+
+def _resp(lat0, lon0, km, speed, elev=None, n=200):
+    """Straight route north, km long, one maneuver at speed km/h."""
+    pts = [wr._ll(lat0, lon0, 0.0, km * i / n) for i in range(n + 1)]
+    leg = {"shape": _enc(pts), "maneuvers": [{"length": km, "time": km / speed * 3600,
+                                              "begin_shape_index": 0, "end_shape_index": n}]}
+    if elev is not None:
+        leg["elevation"] = elev
+    return {"trip": {"legs": [leg]}}
+
+
+def test_polyline6_roundtrip():
+    pts = [(53.8, 10.4), (53.81234, 10.39876), (48.2, 16.37)]
+    out = wr.decode_polyline6(_enc(pts))
+    assert all(abs(a - c) < 1e-6 and abs(b - d) < 1e-6 for (a, b), (c, d) in zip(pts, out))
+
+
+def test_route_speed_limits_change_range():
+    fast = wr.route_profile(_resp(53.8, 10.4, 400, 130))
+    slow = wr.route_profile(_resp(53.8, 10.4, 400, 90))
+    r_fast = wr.range_along_route(50.0, MODEL, 10, fast, [], now=0)
+    r_slow = wr.range_along_route(50.0, MODEL, 10, slow, [], now=0)
+    assert r_slow > r_fast + 15
+    # motorway at top speed 130 = the same as the flat 130 estimate (avg 110)
+    assert abs(r_fast - bl.cruise_range(50.0, MODEL, 10, v=110)["km"]) <= 3
+
+
+def test_route_elevation_profile_costs_range():
+    n = int(400 * 1000 / wr.ELEV_INTERVAL_M) + 1
+    climb = [min(1500, i * 10) for i in range(n)]          # +10 m per 500 m up to 1500 m
+    flat = wr.route_profile(_resp(53.8, 10.4, 400, 130, elev=[0] * n))
+    hill = wr.route_profile(_resp(53.8, 10.4, 400, 130, elev=climb))
+    assert hill["elev"] and wr.range_along_route(50.0, MODEL, 10, hill, [], 0) < \
+        wr.range_along_route(50.0, MODEL, 10, flat, [], 0) - 20
+
+
+def test_short_route_continues_straight():
+    prof = wr.route_profile(_resp(53.8, 10.4, 60, 130))
+    r = wr.range_along_route(50.0, MODEL, 10, prof, [], now=0)
+    assert r > 150                                          # energy for far more than 60 km
+
+
+def test_directions_fall_back_without_route():
+    guess = [200] * 16
+    def fn(la0, lo0, la1, lo1):
+        if la1 > la0 + 0.5:                                # only the northern half has roads
+            return _resp(la0, lo0, 400, 90)
+        raise OSError("no route")
+    out, used = wr.direction_ranges_routes(50.0, MODEL, 10, 53.8, 10.4, [], 0, guess, route_fn=fn)
+    assert 0 < used < 16
+    assert out[0] > 200 and out[8] == 200
+
+
+def test_refine_runs_only_when_due(app_module, db, monkeypatch):
+    import range_area as ra
+    ra._fail_at.clear()
+    monkeypatch.setattr(ra, "_down_until", 0.0)
+    monkeypatch.setattr(ra, "_fetch", lambda lat, lon, kms: {
+        "type": "FeatureCollection", "features": [_circle(lat, lon, k) for k in kms]})
+    calls = []
+    def refine():
+        calls.append(1)
+        return [160] * 8 + [240] * 8
+    dirs = [150] * 8 + [210] * 8
+    assert ra.render_if_due(db, "dev2", 53.8, 10.4, [180], dirs=dirs, now=1000, refine=refine) == "rendered"
+    assert ra.load_last(db, "dev2")["dirs"] == [160] * 8 + [240] * 8
+    assert ra.render_if_due(db, "dev2", 53.8, 10.4, [180], dirs=dirs, now=2000, refine=refine) == "unchanged"
+    assert len(calls) == 1

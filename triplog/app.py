@@ -1605,7 +1605,19 @@ def _range_area_loop():
                                             cruise["left"], cruise["model"], cruise.get("temp"),
                                             cruise["v_eval"], lat, lon,
                                             wind.points_near(db, lat, lon, max(kms) * 1.3), time.time())
-                                range_area.render_if_due(db, v["device"], lat, lon, kms, dirs=dirs)
+                                refine = None
+                                if dirs and cruise:
+                                    # along real routes: speed limits, elevation
+                                    v_fix = cruise["v_eval"] if cruise.get("mode") == "drive" else None
+                                    pts_w = wind.points_near(db, lat, lon, max(kms) * 1.3)
+                                    def refine(c=cruise, g=dirs, p=pts_w, la=lat, lo=lon, vf=v_fix):
+                                        out, used = wind_range.direction_ranges_routes(
+                                            c["left"], c["model"], c.get("temp"), la, lo, p,
+                                            time.time(), g, v_fixed=vf)
+                                        log.info("range area: %d/16 directions along routes", used)
+                                        return out
+                                range_area.render_if_due(db, v["device"], lat, lon, kms, dirs=dirs,
+                                                         refine=refine)
                         except Exception as e:      # one vehicle must not block the other
                             log.warning("range area for %s: %s", v["device"], e)
                 finally:

@@ -254,3 +254,182 @@ def compose(isochrone, dirs, lat0, lon0):
         {"type": "Feature", "properties": {"kind": "line"},
          "geometry": {"type": "MultiLineString", "coordinates": [ll(c) for c in lines]}},
     ]}
+
+
+# ── along real routes: speed limits and elevation from Valhalla ─────────────
+# Per bearing a Valhalla route to a point beyond the range. Walking it in
+# STEP_KM steps: the speed of the road section (speed limits, road class,
+# top_speed 130) instead of one flat speed, the heading of the road for the
+# wind, the route's elevation profile (Valhalla elevation tiles) for the climb.
+# Without a route (sea, no road) or without elevation the straight-line walk
+# and the raster height above stay in place for that bearing.
+
+TOP_SPEED = 130
+ELEV_INTERVAL_M = 500
+ROUTE_TIMEOUT_S = 30
+
+
+def decode_polyline6(s):
+    """Valhalla's encoded shape (precision 6) → [(lat, lon)]."""
+    out, i, lat, lon = [], 0, 0, 0
+    while i < len(s):
+        vals = []
+        for _ in range(2):
+            shift = result = 0
+            while True:
+                b = ord(s[i]) - 63
+                i += 1
+                result |= (b & 0x1F) << shift
+                shift += 5
+                if b < 0x20:
+                    break
+            vals.append(~(result >> 1) if result & 1 else result >> 1)
+        lat += vals[0]
+        lon += vals[1]
+        out.append((lat / 1e6, lon / 1e6))
+    return out
+
+
+def _route(lat0, lon0, lat1, lon1):
+    import urllib.request
+    import config
+    body = {"locations": [{"lat": lat0, "lon": lon0}, {"lat": lat1, "lon": lon1}],
+            "costing": "auto", "costing_options": {"auto": {"top_speed": TOP_SPEED}},
+            "elevation_interval": ELEV_INTERVAL_M, "narrative": False,
+            "directions_options": {"units": "kilometers"}}
+    req = urllib.request.Request(config.VALHALLA_URL + "/route", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=ROUTE_TIMEOUT_S) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def route_profile(resp):
+    """Valhalla /route response → {"pts": [(lat, lon)], "cum": [km],
+    "speed": [km/h per shape segment], "elev": [m every ELEV_INTERVAL_M] or
+    None, "km": total} or None."""
+    try:
+        leg = resp["trip"]["legs"][0]
+        pts = decode_polyline6(leg["shape"])
+    except (KeyError, IndexError, TypeError):
+        return None
+    if len(pts) < 2:
+        return None
+    cum = [0.0]
+    for (a, b), (c, d) in zip(pts, pts[1:]):
+        x, y = _xy(a, b, c, d)
+        cum.append(cum[-1] + math.hypot(x, y))
+    speed = [None] * (len(pts) - 1)
+    for m in leg.get("maneuvers") or []:
+        ln, tm = m.get("length"), m.get("time")
+        b0, b1 = m.get("begin_shape_index"), m.get("end_shape_index")
+        if ln and tm and b0 is not None and b1 is not None and tm > 0:
+            v = ln / tm * 3600
+            for k in range(b0, min(b1, len(speed))):
+                speed[k] = v
+    known = [v for v in speed if v]
+    fill = sum(known) / len(known) if known else None
+    speed = [v or fill for v in speed]
+    elev = leg.get("elevation") or resp.get("trip", {}).get("elevation")
+    return {"pts": pts, "cum": cum, "speed": speed,
+            "elev": elev if elev and all(e is not None for e in elev) else None, "km": cum[-1]}
+
+
+def _at_km(prof, km):
+    """(lat, lon, heading°, segment index) at road km along the profile."""
+    cum, pts = prof["cum"], prof["pts"]
+    k = max(0, min(len(cum) - 2, next((i for i in range(len(cum) - 1) if cum[i + 1] >= km), len(cum) - 2)))
+    seg = cum[k + 1] - cum[k] or 1e-9
+    f = max(0.0, min(1.0, (km - cum[k]) / seg))
+    (a, b), (c, d) = pts[k], pts[k + 1]
+    x, y = _xy(a, b, c, d)
+    return a + (c - a) * f, b + (d - b) * f, (math.degrees(math.atan2(x, y)) + 360) % 360, k
+
+
+def range_along_route(remaining_kwh, model, temp_now, prof, points, now, v_fixed=None,
+                      speed_factor=None, mass_kg=None):
+    """Road km until the energy runs out along one route profile; beyond the
+    route's end it carries on with the last section's speed and heading."""
+    import config
+    import wind
+    mass = mass_kg or config.VEHICLE_MASS_KG
+    sf = speed_factor if speed_factor is not None else bl.CRUISE_AVG_KMH / bl.CRUISE_KMH
+    lat0, lon0 = prof["pts"][0]
+    pts = [(*_xy(lat0, lon0, p["lat"], p["lon"]), p["data"]) for p in points]
+
+    def raster(lat, lon):
+        if not pts:
+            return None
+        x, y = _xy(lat0, lon0, lat, lon)
+        return min(pts, key=lambda q: (q[0] - x) ** 2 + (q[1] - y) ** 2)[2]
+
+    def height(km, lat, lon):
+        if prof["elev"]:
+            i = min(len(prof["elev"]) - 1, int(km * 1000 / ELEV_INTERVAL_M))
+            return prof["elev"][i]
+        d = raster(lat, lon)
+        return d.get("elev") if d else None
+
+    left, road, t = remaining_kwh, 0.0, now
+    h_prev = height(0.0, lat0, lon0)
+    last_head, last_v = None, None
+    while left > 0 and road < 1500:
+        mid = road + STEP_KM / 2
+        if mid <= prof["km"]:
+            lat, lon, head, k = _at_km(prof, mid)
+            v_road = prof["speed"][k]
+            last_head, last_v = head, v_road
+        else:                                   # beyond the route: straight on
+            head, v_road = last_head or 0.0, last_v
+            lat, lon, _, _ = _at_km(prof, prof["km"])
+            extra = (mid - prof["km"]) / DETOUR
+            lat += extra * math.cos(math.radians(head)) / KY
+            lon += extra * math.sin(math.radians(head)) / (KX0 * math.cos(math.radians(lat)))
+        v = v_fixed or ((v_road or bl.CRUISE_KMH) * sf)
+        t += STEP_KM / max(v, 5.0) * 3600 / 2
+        along, temp = 0.0, temp_now
+        d = raster(lat, lon)
+        w = wind.at(d, t) if d else None
+        if w and w.get("kmh") is not None and w.get("dir") is not None:
+            along = w["kmh"] * WIND_AT_CAR * math.cos(math.radians((w["dir"] + 180.0) % 360.0 - head))
+            if w.get("temp") is not None:
+                temp = w["temp"]
+        t += STEP_KM / max(v, 5.0) * 3600 / 2
+        cold = max(0.0, bl.COLD_C - temp) if temp is not None else 0.0
+        cons = model["a"] + model["b"] * (max(0.0, v - along) / 100) ** 2 + model["c"] * cold
+        need = max(cons, 5.0) * STEP_KM / 100
+        h = height(min(mid + STEP_KM / 2, prof["km"]), lat, lon)
+        if h is not None and h_prev is not None and h != h_prev:
+            pot = mass * G * (h - h_prev) / 3.6e6
+            need = max(0.0, need + (pot / DRIVE_EFF if pot > 0 else pot * REGEN_EFF))
+        if h is not None:
+            h_prev = h
+        if need >= left:
+            road += STEP_KM * left / need if need > 0 else STEP_KM
+            left = 0
+        else:
+            road += STEP_KM
+            left -= need
+    return round(road)
+
+
+def direction_ranges_routes(remaining_kwh, model, temp_now, lat0, lon0, points, now,
+                            guess, v_fixed=None, route_fn=None):
+    """Range per bearing along Valhalla routes; bearings without a route keep
+    their value from guess (the straight-line walk)."""
+    route_fn = route_fn or _route
+    out, used = [], 0
+    for th, g in zip(bearings(), guess):
+        dist = max(g, 30) * 1.3 / DETOUR       # aim beyond the expected range
+        lat1 = lat0 + dist * math.cos(math.radians(th)) / KY
+        lon1 = lon0 + dist * math.sin(math.radians(th)) / (KX0 * math.cos(math.radians(lat0)))
+        prof = None
+        try:
+            prof = route_profile(route_fn(lat0, lon0, lat1, lon1))
+        except Exception:
+            prof = None
+        if not prof or prof["km"] < 5:
+            out.append(g)
+            continue
+        used += 1
+        out.append(range_along_route(remaining_kwh, model, temp_now, prof, points, now, v_fixed=v_fixed))
+    return out, used
