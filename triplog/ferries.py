@@ -224,9 +224,26 @@ def crossings(osm):
     return chains
 
 
-def _run(device, lat, lon, cruise, points, route_fn=None, area_fn=None, osm_fn=None):
+def _by_road(lat, lon, b, cruise, points, land_fn):
+    """Is the port of arrival reachable by car anyway (no long ferry)? Then
+    the ferry is a detour along the coast (Travemünde–Rostock) and only
+    clutters the map."""
+    try:
+        prof = wr.route_profile(land_fn(lat, lon, b[0], b[1]))
+    except Exception:
+        return False
+    if not prof or (prof.get("ferry_km") or 0) > wr.MAX_FERRY_KM:
+        return False
+    left = wr.range_along_route(cruise["left"], cruise["model"], cruise.get("temp"),
+                                prof, points, time.time(), until_km=prof["km"])
+    return left is not None and left > 0
+
+
+def _run(device, lat, lon, cruise, points, route_fn=None, area_fn=None, osm_fn=None, land_fn=None):
     import range_area
     try:
+        if land_fn is None:
+            land_fn = route_fn or (lambda a, b, c, d: wr._route(a, b, c, d, use_ferry=0.0))
         route_fn = route_fn or wr._route
         reach = cruise["km"] if cruise.get("km") else 300
         local = file_chains() if osm_fn is None else None
@@ -253,6 +270,7 @@ def _run(device, lat, lon, cruise, points, route_fn=None, area_fn=None, osm_fn=N
         cands = uniq
         energy_at = {}                                    # terminal → kWh left (one route each)
         ferries = []
+        skipped = 0
         for c in cands:
             if len(ferries) >= MAX_FERRIES:
                 break
@@ -272,6 +290,9 @@ def _run(device, lat, lon, cruise, points, route_fn=None, area_fn=None, osm_fn=N
             left, via = energy_at[tk]
             if left is None or left <= 0:
                 continue                                  # terminal out of reach
+            if _by_road(lat, lon, b, cruise, points, land_fn):
+                skipped += 1
+                continue                                  # port reachable by road anyway
             ride = bl.cruise_range(left, cruise["model"], cruise.get("temp"), v=bl.CRUISE_AVG_KMH)
             km_after = ride["km"] if ride else 0
             item = {"from": [round(a[0], 5), round(a[1], 5)], "to": [round(b[0], 5), round(b[1], 5)],
@@ -286,7 +307,8 @@ def _run(device, lat, lon, cruise, points, route_fn=None, area_fn=None, osm_fn=N
                     item["area"] = wr.compose(gj, None, b[0], b[1]) or gj
             ferries.append(item)
         res = {"status": "ok", "ts": time.time(), "lat": lat, "lon": lon, "ferries": ferries}
-        log.info("ferries: %d long crossings found, %d reachable", len(cands), len(ferries))
+        log.info("ferries: %d long crossings found, %d reachable, %d skipped (port reachable by road)",
+                 len(cands), len(ferries), skipped)
     except Exception as e:
         log.warning("ferries: search failed: %s", e, exc_info=True)
         res = {"status": "error", "ts": time.time(), "lat": lat, "lon": lon, "error": str(e)}

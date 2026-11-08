@@ -362,11 +362,14 @@ def decode_polyline6(s):
     return out
 
 
-def _route(lat0, lon0, lat1, lon1):
+def _route(lat0, lon0, lat1, lon1, use_ferry=None):
     import urllib.request
     import config
+    auto = {"top_speed": TOP_SPEED}
+    if use_ferry is not None:
+        auto["use_ferry"] = use_ferry          # 0 = avoid ferries where a road exists
     body = {"locations": [{"lat": lat0, "lon": lon0}, {"lat": lat1, "lon": lon1}],
-            "costing": "auto", "costing_options": {"auto": {"top_speed": TOP_SPEED}},
+            "costing": "auto", "costing_options": {"auto": auto},
             "elevation_interval": ELEV_INTERVAL_M, "narrative": False,
             "directions_options": {"units": "kilometers"}}
     req = urllib.request.Request(config.VALHALLA_URL + "/route", data=json.dumps(body).encode(),
