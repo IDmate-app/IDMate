@@ -173,3 +173,10 @@ def test_two_ferries_from_one_port_stay_apart():
     cs = ferries.crossings({"elements": [_way(_line(kiel, oslo), name="Kiel - Oslo"),
                                          _way(_line(kiel, gbg), name="Kiel - Göteborg")]})
     assert sorted(c["name"] for c in cs) == ["Kiel - Göteborg", "Kiel - Oslo"]
+
+
+def test_both_directions_count_once():
+    back = _way(_line(PORT, TERMINAL, 25), name="Trelleborg - Travemünde")     # other direction, own way
+    osm = {"elements": OSM["elements"] + [back]}
+    ferries._run("devK", 53.81, 10.37, CRUISE, [], route_fn=_road, area_fn=lambda *a: None, osm_fn=lambda box: osm)
+    assert len(ferries.status("devK")["ferries"]) == 1
