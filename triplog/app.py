@@ -1552,7 +1552,9 @@ def _range_inputs(db, v):
     lat, lon = st.get("lat"), st.get("lon")
     lo = hi = None
     cruise = {}
-    if v["bms_learn"]:
+    # Independent of the "BMS lernen" switch: learned values stay in use
+    # after switching it off; without any, the BMS is taken as it is.
+    if v["device"]:
         from blueprints import bms
         now = bms._state(db, dict(v)).get("now") or {}
         cruise = now.get("cruise") or {}
