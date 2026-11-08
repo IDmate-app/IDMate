@@ -45,20 +45,23 @@ def _circle(lat0, lon0, r_km, n=180):
             "geometry": {"type": "Polygon", "coordinates": [ring]}}
 
 
-def test_compose_picks_contour_per_wedge_and_drops_cut_edges():
+def test_compose_picks_contour_per_wedge_one_clean_outline():
     iso = {"type": "FeatureCollection", "features": [_circle(53.8, 10.4, r) for r in (100, 150, 200)]}
     dirs = [100] * 8 + [200] * 8            # east half short, west half long
     gj = wr.compose(iso, dirs, 53.8, 10.4)
     fill = gj["features"][0]["geometry"]["coordinates"]
     lines = gj["features"][1]["geometry"]["coordinates"]
-    assert len(fill) == 16
-    # every outline point lies on one of the circles (no radial cut edges)
-    for chain in lines:
-        for lo, la in chain:
-            x, y = wr._xy(53.8, 10.4, la, lo)
-            r = math.hypot(x, y)
-            assert min(abs(r - 100), abs(r - 200)) < 2
-    # bearing 45° (north-east) reaches ~100 km, 225° (south-west) ~200 km
+    assert len(fill) == 1 and len(lines) == 1          # one area, one closed outline
+    assert lines[0][0] == lines[0][-1]
+    # outline points lie on the circles, except the two radial steps where
+    # the wedges change contour (bearings 168.75° and 348.75°)
+    for lo, la in lines[0]:
+        x, y = wr._xy(53.8, 10.4, la, lo)
+        r = math.hypot(x, y)
+        ang = (math.degrees(math.atan2(x, y)) + 360) % 360
+        near_step = min(abs((ang - b + 180) % 360 - 180) for b in (168.75, 348.75)) < 3
+        assert near_step or min(abs(r - 100), abs(r - 200)) < 2.5
+
     def reach(deg):
         best = 0
         for poly in fill:
@@ -69,6 +72,14 @@ def test_compose_picks_contour_per_wedge_and_drops_cut_edges():
                     best = max(best, math.hypot(x, y))
         return best
     assert abs(reach(45) - 100) < 3 and abs(reach(225) - 200) < 3
+
+
+def test_compose_drops_holes_and_slivers():
+    big = _circle(53.8, 10.4, 150)
+    hole = [list(reversed(_circle(53.8, 10.4, 40)["geometry"]["coordinates"][0]))]
+    big["geometry"]["coordinates"] += hole                      # a lake inside
+    gj = wr.compose({"features": [big]}, None, 53.8, 10.4)
+    assert len(gj["features"][1]["geometry"]["coordinates"]) == 1   # no ring for the hole
 
 
 def test_render_with_dirs_composes(app_module, db, monkeypatch):

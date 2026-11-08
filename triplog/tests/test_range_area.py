@@ -156,7 +156,8 @@ def test_last_endpoint(app_module, db, monkeypatch):
         monkeypatch.setattr(ra, "_fetch", lambda lat, lon, kms: GJ)
         ra.render_if_due(db, "dev1", 52.5, 13.4, [250], now=1000)
         d = c.get("/api/range-area/last").get_json()
-        assert d["status"] == "ok" and d["geojson"] == GJ and d["ts"] == 1000
+        assert d["status"] == "ok" and d["ts"] == 1000
+        assert d["geojson"]["features"][1]["properties"]["kind"] == "line"   # cleaned outline
 
 
 def test_range_inputs_bms_or_fallback(app_module, db, monkeypatch):

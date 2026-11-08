@@ -304,9 +304,12 @@
     // one circle at the computed range. Straight-line radius — an estimate,
     // roads are longer. Zooms to fit; once the user zooms or pans, theirs stays.
     let rangeInner = null, rangeOuter = null, rangeFitKm = null, rangePos = null, rangeFallback = null;
-    let mapTouched = false;   // the user zoomed or panned: no more automatic fit
-    ['wheel', 'touchstart', 'mousedown'].forEach(ev =>
-      map.getContainer().addEventListener(ev, () => { mapTouched = true; }, {passive: true}));
+    // The user zoomed or panned: no automatic fit or follow-the-car until
+    // USER_IDLE_MS without touching the map, then back to the normal view.
+    let mapTouched = false, lastUserMove = 0;
+    const USER_IDLE_MS = 30000;
+    ['wheel', 'touchstart', 'touchmove', 'mousedown', 'keydown'].forEach(ev =>
+      map.getContainer().addEventListener(ev, () => { mapTouched = true; lastUserMove = Date.now(); }, {passive: true}));
     // Road area rendered in the background (/api/range-area/last).
     let rangeArea = null, rangeAreaTs = null, rangeAreaOff = false, rangeAreaBoot = false;
     // Map buttons: range and wind can be switched off (remembered per browser).
@@ -370,6 +373,12 @@
     // New values (range, position) are picked up every 10 s even when no
     // live update arrives; unchanged values cost nothing.
     setInterval(() => updateRangeCircle(), 10000);
+    setInterval(() => {
+      if (!mapTouched || Date.now() - lastUserMove < USER_IDLE_MS) return;
+      mapTouched = false; rangeFitKm = null;          // back to the normal view
+      updateRangeCircle();
+      if (rangeFitKm == null && marker) map.panTo(marker.getLatLng());
+    }, 2000);
 
     // ── Road-based range area (own Valhalla) ──
     // IDmate renders it in the background and stores it (at most every
@@ -437,13 +446,17 @@
     // Area with wind: built from several road contours per direction
     // (wind_range.py) — a fill of all pieces and one outline without the cuts.
     function showWindArea(gj, k, col) {
-      const fill = gj.features.find(f => (f.properties || {}).kind === 'fill');
       const outl = gj.features.find(f => (f.properties || {}).kind === 'line');
       const base = {interactive: false, smoothFactor: 0.3};
       const layers = [];
-      if (fill) layers.push(L.geoJSON(fill, {...base, style: () => ({stroke: false, fillColor: col, fillOpacity: 0.12})}));
       if (outl) {
-        const lines = outl.geometry.coordinates.map(c => smoothLine(c, 2));
+        // Closed loops (grid outline) are smoothed as rings; fill and line
+        // come from the same smoothed loops, so they match exactly.
+        const closed = c => c.length > 3 && c[0][0] === c[c.length - 1][0] && c[0][1] === c[c.length - 1][1];
+        const lines = outl.geometry.coordinates.map(c => closed(c) ? smoothRing(c, 2) : smoothLine(c, 2));
+        const rings = lines.filter(closed);
+        if (rings.length) layers.push(L.geoJSON({type: 'Feature', geometry: {type: 'MultiPolygon', coordinates: rings.map(r => [r])}},
+          {...base, style: () => ({stroke: false, fillColor: col, fillOpacity: 0.12})}));
         const soft = {...outl, geometry: {...outl.geometry, coordinates: lines}};
         layers.push(L.geoJSON(soft, {...base, style: () => ({color: '#ffffff', weight: 6, opacity: 0.55, lineJoin: 'round', lineCap: 'round'})}));
         layers.push(L.geoJSON(soft, {...base, style: () => ({color: col, weight: 3, opacity: 0.95, lineJoin: 'round', lineCap: 'round'})}));
@@ -918,7 +931,7 @@
           marker = L.marker(pos, {icon: icon, zIndexOffset: 1000}).addTo(map);
           map.setView(pos, 15, {animate: false});   // no zoom animation: it would undo the range fit below
         }
-        map.panTo(pos);
+        if (!mapTouched) map.panTo(pos);
         updateRangeCircle(pos, d.calc_range != null ? d.calc_range : d.range_km);
       }
 
