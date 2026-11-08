@@ -89,6 +89,7 @@ def test_endpoints_off_and_no_model(app_module, db, monkeypatch):
     with app_module.app.test_client() as c:
         with c.session_transaction() as s:
             s["_user_id"] = "1"
+        monkeypatch.setattr(config, "FERRY_FILE", "")
         monkeypatch.setattr(config, "VALHALLA_URL", "")
         assert c.post("/api/ferries/start").get_json() == {"status": "off"}
         monkeypatch.setattr(config, "VALHALLA_URL", "http://valhalla:8002")
@@ -135,3 +136,40 @@ def test_overpass_all_busy_reports_busy(monkeypatch):
         assert False
     except OSError as e:
         assert "overpass busy" in str(e) and "a.example: HTTP 504" in str(e)
+
+
+def _geojson(osm):
+    return {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": el["tags"],
+         "geometry": {"type": "LineString", "coordinates": [[p["lon"], p["lat"]] for p in el["geometry"]]}}
+        for el in osm["elements"]]}
+
+
+def test_file_chains_from_osmium_export(tmp_path, monkeypatch):
+    import json
+    import config
+    data = _geojson(OSM)
+    data["features"].append({"type": "Feature", "properties": {"route": "ferry", "foot": "yes"},   # no cars
+                             "geometry": {"type": "LineString", "coordinates": [[10.0, 54.0], [12.0, 56.0]]}})
+    f = tmp_path / "ferries.geojson"
+    f.write_text(json.dumps(data))
+    cs = ferries.file_chains(str(f))
+    assert len(cs) == 1 and cs[0]["name"] == "Travemünde - Trelleborg"
+    seq = tmp_path / "ferries.geojsonseq"
+    seq.write_text("\n".join("\x1e" + json.dumps(ft) for ft in data["features"]))
+    assert len(ferries.file_chains(str(seq))) == 1
+    assert ferries.file_chains(str(tmp_path / "missing.geojson")) is None
+    # the search uses the file and never asks Overpass
+    monkeypatch.setattr(config, "FERRY_FILE", str(f))
+    monkeypatch.setattr(ferries, "_overpass", lambda box: (_ for _ in ()).throw(AssertionError("overpass")))
+    assert ferries.enabled()
+    ferries._run("devJ", 53.81, 10.37, CRUISE, [], route_fn=_road, area_fn=lambda *a: None)
+    st = ferries.status("devJ")
+    assert st["status"] == "ok" and len(st["ferries"]) == 1
+
+
+def test_two_ferries_from_one_port_stay_apart():
+    kiel, oslo, gbg = (54.32, 10.14), (59.90, 10.75), (57.70, 11.95)
+    cs = ferries.crossings({"elements": [_way(_line(kiel, oslo), name="Kiel - Oslo"),
+                                         _way(_line(kiel, gbg), name="Kiel - Göteborg")]})
+    assert sorted(c["name"] for c in cs) == ["Kiel - Göteborg", "Kiel - Oslo"]
