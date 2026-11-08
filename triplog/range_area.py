@@ -138,29 +138,41 @@ def load_last(db, device):
         return None
 
 
-def render_if_due(db, device, lat, lon, kms, now=None):
+def render_if_due(db, device, lat, lon, kms, dirs=None, now=None):
     """Render and store when nothing is stored yet, or the inputs changed and
-    the stored area is at least RENDER_EVERY_S old. Returns "rendered",
-    "unchanged", "wait" or "failed"."""
+    the stored area is at least RENDER_EVERY_S old. dirs: road km per
+    bearing (wind_range) — the area is then composed from several contours.
+    Returns "rendered", "unchanged", "wait" or "failed"."""
+    import wind_range
     now = now if now is not None else time.time()
-    k = list(key(lat, lon, kms))
+    lv = wind_range.levels(dirs) if dirs else None
+    if lv and len(lv) == 1:              # wind changes nothing worth a shape
+        kms, dirs, lv = [lv[0]], None, None
+    req = lv or kms
+    k = list(key(lat, lon, req))
+    kk = [k[0], k[1], list(k[2])] + ([[int(round(d / 10.0)) * 10 for d in dirs]] if dirs else [])
     last = load_last(db, device)
     if last:
-        if last.get("key") == [k[0], k[1], list(k[2])]:
+        if last.get("key") == kk:
             return "unchanged"
-        # A different kind of range (one value instead of a span) is a new
-        # display, not a small change: no waiting for that.
-        if now - (last.get("ts") or 0) < RENDER_EVERY_S and len(last.get("kms") or []) == len(kms):
+        # A different kind of range (one value instead of a span, with or
+        # without wind) is a new display, not a small change: no waiting.
+        same_kind = (len(last.get("kms") or []) == len(kms)) and bool(last.get("dirs")) == bool(dirs)
+        if now - (last.get("ts") or 0) < RENDER_EVERY_S and same_kind:
             return "wait"
     if now - _fail_at.get(device, 0) < RENDER_EVERY_S:
         return "wait"
-    gj, err = compute(lat, lon, kms)
+    gj, err = compute(lat, lon, req)
+    if gj is not None and dirs:
+        gj = wind_range.compose(gj, dirs, lat, lon)
     if gj is None:
         _fail_at[device] = now
         return "failed"
     _fail_at.pop(device, None)
-    rec = {"key": [k[0], k[1], list(k[2])], "lat": lat, "lon": lon,
+    rec = {"key": kk, "lat": lat, "lon": lon,
            "kms": [round(x) for x in kms], "ts": now, "geojson": gj}
+    if dirs:
+        rec["dirs"] = dirs
     db.execute("INSERT OR REPLACE INTO range_area_last (device, data, ts) VALUES (?, ?, ?)",
                (device, json.dumps(rec, separators=(",", ":")), now))
     db.commit()

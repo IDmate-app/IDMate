@@ -152,3 +152,16 @@ def current(db, lat, lon, radius_km, now=None):
         if v and v["kmh"] is not None and v["dir"] is not None:
             out.append({"lat": r["lat"], "lon": r["lon"], **v})
     return out
+
+
+def points_near(db, lat, lon, radius_km):
+    """Stored raster points around a position: [{lat, lon, data}]."""
+    keys = {_key(p) for p in grid(lat, lon, radius_km)}
+    out = []
+    for r in db.execute("SELECT key, lat, lon, data FROM wind_points"):
+        if r["key"] in keys:
+            try:
+                out.append({"lat": r["lat"], "lon": r["lon"], "data": json.loads(r["data"])})
+            except ValueError:
+                pass
+    return out
