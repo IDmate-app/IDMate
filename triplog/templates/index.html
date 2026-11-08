@@ -276,10 +276,13 @@
     let mapTouched = false;   // the user zoomed or panned: no more automatic fit
     ['wheel', 'touchstart', 'mousedown'].forEach(ev =>
       map.getContainer().addEventListener(ev, () => { mapTouched = true; }, {passive: true}));
+    // Road area rendered in the background (/api/range-area/last).
+    let rangeArea = null, rangeAreaTs = null, rangeAreaOff = false, rangeAreaBoot = false;
     function updateRangeCircle(pos, fallbackKm) {
       if (pos) rangePos = pos;
       if (fallbackKm !== undefined) rangeFallback = fallbackKm;
       if (!rangePos) return;
+      if (!rangeAreaBoot) return;   // stored area first: no circles flashing up before it
       const real = window._bmsReal;
       let lo = real && real.km_low > 0 ? real.km_low : null;
       let hi = real && real.km_high > 0 ? real.km_high : null;
@@ -295,10 +298,7 @@
         if (!c) return L.circle(rangePos, Object.assign({radius: km * 1000, interactive: false}, opt)).addTo(map);
         c.setLatLng(rangePos); c.setRadius(km * 1000); return c;
       };
-      const kms = lo != null ? [lo, hi] : [hi];
-      if (typeof loadRangeArea === 'function') loadRangeArea(rangePos, kms, col);
-      // The last area stays while the next one is computed (car moved a
-      // few km, range changed): no flicker back to the circles in between.
+      // The stored area stays until the background renders the next one.
       const areaHere = !!rangeArea;
       // Circles only while there is no road area for this position/range; the
       // outer one stays (invisible) as the frame for the automatic zoom.
@@ -328,12 +328,10 @@
     // live update arrives; unchanged values cost nothing.
     setInterval(() => updateRangeCircle(), 10000);
 
-    // ── Road-based range area (own Valhalla, /api/range-area) ──
-    // Replaces the circles once the area for the current position/range is
-    // there; until then (or without Valhalla) the circles stay.
-    let rangeArea = null, rangeAreaKey = null, rangeAreaWant = null, rangeAreaTimer = null, rangeAreaOff = false;
-    const areaKey = (pos, kms) => (Math.round(pos[0] * 50) / 50) + ',' + (Math.round(pos[1] * 50) / 50) + ','
-      + kms.map(k => Math.round(k / 10) * 10).sort((a, b) => a - b).join('/');
+    // ── Road-based range area (own Valhalla) ──
+    // IDmate renders it in the background and stores it (at most every
+    // 10 min when position/range changed); the page only shows the stored
+    // one: right away on open, then checked every 30 s.
     // Chaikin corner cutting: the road area comes as a jagged polygon (it
     // follows every road finger); two passes round it off into a soft edge.
     function smoothRing(ring, passes) {
@@ -390,29 +388,25 @@
                 fillColor: col, fillOpacity: outer && many ? 0.06 : 0.12};
       }});
       rangeArea = L.layerGroup([halo, line]).addTo(map);
-      rangeAreaKey = k;
+      rangeAreaTs = k;
     }
-    async function loadRangeArea(pos, kms, col) {
-      if (rangeAreaOff) return;
-      const k = areaKey(pos, kms);
-      rangeAreaWant = k;
-      if (rangeAreaKey === k || rangeAreaTimer) return;
-      try {
-        const r = await fetch(`/api/range-area?lat=${pos[0]}&lon=${pos[1]}&km=${kms.map(x => Math.round(x)).join(',')}`);
-        const d = await r.json();
-        if (d.status === 'off') { rangeAreaOff = true; return; }
-        if (d.status === 'ok' && rangeAreaWant === k) { showRangeArea(d.geojson, k, col); updateRangeCircle(); }
-        else if (d.status === 'pending' || d.status === 'error') {
-          // Pending: ask again soon. Error: the server holds its own back-off,
-          // so a short retry is cheap and the area shows up without a reload.
-          rangeAreaTimer = setTimeout(() => { rangeAreaTimer = null; updateRangeCircle(); }, d.status === 'pending' ? 3000 : 30000);
-          // Failed and the shown area belongs to another place: back to the circles.
-          if (d.status === 'error' && rangeArea && rangeAreaKey !== k) {
-            map.removeLayer(rangeArea); rangeArea = null; rangeAreaKey = null; updateRangeCircle();
+    async function pollRangeArea() {
+      if (!rangeAreaOff) {
+        try {
+          const d = await (await fetch('/api/range-area/last')).json();
+          if (d.status === 'off') rangeAreaOff = true;
+          else if (d.status === 'ok' && d.geojson && d.ts !== rangeAreaTs) {
+            const col = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#58a6ff';
+            showRangeArea(d.geojson, d.ts, col);
           }
-        }
-      } catch (e) {}
+        } catch (e) {}
+      }
+      rangeAreaBoot = true;
+      updateRangeCircle();
     }
+    pollRangeArea();
+    setTimeout(() => { if (!rangeAreaBoot) { rangeAreaBoot = true; updateRangeCircle(); } }, 4000);
+    setInterval(pollRangeArea, 30000);
     let locMarkers = [];
     let chargeLocMarkers = [];
 

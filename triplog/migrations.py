@@ -1021,6 +1021,17 @@ def m077_vehicle_trash(db, log):
         log.info("Migration: vehicle_trash table created")
 
 
+def m078_range_area_last(db, log):
+    """Pre-rendered road range area per vehicle (range_area.py)."""
+    if "range_area_last" not in _tables(db):
+        db.execute("""CREATE TABLE range_area_last (
+            device TEXT PRIMARY KEY,
+            data   TEXT NOT NULL,
+            ts     REAL NOT NULL
+        )""")
+        log.info("Migration: range_area_last table created")
+
+
 MIGRATIONS = [
     (1,  "trips_is_gpx",            m001_trips_is_gpx),
     (2,  "trips_odo",              m002_trips_odo),
@@ -1099,6 +1110,7 @@ MIGRATIONS = [
     (75, "stick_info",             m075_stick_info),
     (76, "bms_disp_odo",           m076_bms_disp_odo),
     (77, "vehicle_trash",          m077_vehicle_trash),
+    (78, "range_area_last",        m078_range_area_last),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]
