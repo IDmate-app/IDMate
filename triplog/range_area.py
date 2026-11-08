@@ -180,6 +180,9 @@ def render_if_due(db, device, lat, lon, kms, dirs=None, now=None, refine=None):
     gj, err = compute(lat, lon, req)
     if gj is not None and dirs:
         gj = wind_range.compose(gj, dirs, lat, lon)
+    elif gj is not None and len(req) == 1:
+        # one contour: same clean outline (no holes, slivers, little loops)
+        gj = wind_range.compose(gj, None, lat, lon) or gj
     if gj is None:
         _fail_at[device] = now
         return "failed"

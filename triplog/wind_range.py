@@ -153,11 +153,6 @@ def _wedge(th, half, r):
     return [(0.0, 0.0), u(th + half), u(th), u(th - half)]
 
 
-def _on_ray(p, deg, eps=1e-6):
-    ux, uy = math.sin(math.radians(deg)), math.cos(math.radians(deg))
-    return abs(p[0] * uy - p[1] * ux) < eps and (p[0] * ux + p[1] * uy) >= -eps
-
-
 def _outer_rings(feature):
     g = feature.get("geometry") or {}
     if g.get("type") == "Polygon":
@@ -167,40 +162,120 @@ def _outer_rings(feature):
     return []
 
 
-def _bearing(p):
-    return (math.degrees(math.atan2(p[0], p[1])) + 360.0) % 360.0
+CELL_KM_MIN = 1.0
+MAX_CELLS = 450
+MIN_LOOP_KM2 = 30.0
 
 
-def _join(chains):
-    """Link the outline pieces of neighbouring wedges: where one ends on a
-    wedge ray and the next starts on the same ray (other contour), connect
-    them, so the outline runs through with a small step instead of a gap."""
-    def delta(a, b):
-        return (b - a + 540.0) % 360.0 - 180.0
-    arcs, rest = [], []
-    for c in chains:
-        if len(c) < 2:
-            continue
-        if delta(_bearing(c[0]), _bearing(c[-1])) < 0:
-            c = c[::-1]                       # all arcs run clockwise
-        (arcs if abs(delta(_bearing(c[0]), _bearing(c[-1]))) > 1.0 else rest).append(c)
-    arcs.sort(key=lambda c: _bearing(c[0]))
+def _rasterize(polys):
+    """Union of polygons (local km) on a grid of cells → (grid rows, x0, y0, cell)."""
+    xs = [p[0] for poly in polys for p in poly]
+    ys = [p[1] for poly in polys for p in poly]
+    x0, y0 = min(xs), min(ys)
+    cell = max(CELL_KM_MIN, max(max(xs) - x0, max(ys) - y0) / MAX_CELLS)
+    x0, y0 = x0 - 2 * cell, y0 - 2 * cell
+    nx = int((max(xs) - x0) / cell) + 3
+    ny = int((max(ys) - y0) / cell) + 3
+    grid = [bytearray(nx) for _ in range(ny)]
+    for poly in polys:
+        rows = {}
+        n = len(poly)
+        for i in range(n):
+            (ax, ay), (bx, by) = poly[i], poly[(i + 1) % n]
+            if ay == by:
+                continue
+            if ay > by:
+                ax, ay, bx, by = bx, by, ax, ay
+            j0 = math.ceil((ay - y0) / cell - 0.5)
+            j1 = math.ceil((by - y0) / cell - 0.5) - 1
+            for j in range(max(j0, 0), min(j1, ny - 1) + 1):
+                yc = y0 + (j + 0.5) * cell
+                rows.setdefault(j, []).append(ax + (yc - ay) * (bx - ax) / (by - ay))
+        for j, cross in rows.items():
+            cross.sort()
+            for k in range(0, len(cross) - 1, 2):
+                i0 = max(0, math.ceil((cross[k] - x0) / cell - 0.5))
+                i1 = min(nx - 1, math.ceil((cross[k + 1] - x0) / cell - 0.5) - 1)
+                if i1 >= i0:
+                    grid[j][i0:i1 + 1] = b"\x01" * (i1 - i0 + 1)
+    return grid, x0, y0, cell
+
+
+# marching squares: corners a (i,j) b (i+1,j) c (i+1,j+1) d (i,j+1), y up;
+# edge midpoints on a doubled integer grid; saddles stay apart.
+_MS = {1: [("L", "B")], 2: [("B", "R")], 3: [("L", "R")], 4: [("R", "T")],
+       5: [("L", "B"), ("R", "T")], 6: [("B", "T")], 7: [("L", "T")], 8: [("T", "L")],
+       9: [("B", "T")], 10: [("B", "R"), ("T", "L")], 11: [("R", "T")], 12: [("R", "L")],
+       13: [("B", "R")], 14: [("L", "B")]}
+
+
+_EDGE_CORNERS = {"B": ("a", "b"), "R": ("b", "c"), "T": ("c", "d"), "L": ("d", "a")}
+
+
+def _outline(grid):
+    """Closed boundary loops of the filled cells, inside on the left (outer
+    loops counter-clockwise), in doubled grid coordinates."""
+    ny, nx = len(grid), len(grid[0])
+    nxt = {}
+    for j in range(ny - 1):
+        r0, r1 = grid[j], grid[j + 1]
+        for i in range(nx - 1):
+            a, b, c, d = r0[i], r0[i + 1], r1[i + 1], r1[i]
+            case = a | b << 1 | c << 2 | d << 3
+            if case in (0, 15):
+                continue
+            mid = {"B": (2 * i + 1, 2 * j), "R": (2 * i + 2, 2 * j + 1),
+                   "T": (2 * i + 1, 2 * j + 2), "L": (2 * i, 2 * j + 1)}
+            corner_pt = {"a": (2 * i, 2 * j), "b": (2 * i + 2, 2 * j), "c": (2 * i + 2, 2 * j + 2), "d": (2 * i, 2 * j + 2)}
+            corners = {corner_pt["a"]: a, corner_pt["b"]: b, corner_pt["c"]: c, corner_pt["d"]: d}
+            for e1, e2 in _MS[case]:
+                p, q = mid[e1], mid[e2]
+                # reference corner: the one both edges share, or for opposite
+                # edges a fixed one on one side; inside must end up on the left
+                shared = set(_EDGE_CORNERS[e1]) & set(_EDGE_CORNERS[e2])
+                ref = next(iter(shared)) if shared else ("a" if {e1, e2} in ({"L", "R"}, {"B", "T"}) else None)
+                k = corner_pt[ref]
+                cross = (q[0] - p[0]) * (k[1] - p[1]) - (q[1] - p[1]) * (k[0] - p[0])
+                inside = corners[k]
+                if (cross > 0) != bool(inside):
+                    p, q = q, p
+                nxt[p] = q
+    loops = []
+    while nxt:
+        start, cur = next(iter(nxt.items()))
+        loop = [start]
+        del nxt[start]
+        while cur != start and cur in nxt:
+            loop.append(cur)
+            cur = nxt.pop(cur)
+        if cur == start and len(loop) > 3:
+            loops.append(loop)
+    return loops
+
+
+def _area(pts):
+    return sum(pts[i][0] * pts[(i + 1) % len(pts)][1] - pts[(i + 1) % len(pts)][0] * pts[i][1]
+               for i in range(len(pts))) / 2
+
+
+def _simplify(pts):
+    """Drop points on straight runs (the grid staircase keeps its corners)."""
     out = []
-    for c in arcs:
-        if out and abs(delta(_bearing(out[-1][-1]), _bearing(c[0]))) < 0.5:
-            out[-1] = out[-1] + c
-        else:
-            out.append(list(c))
-    if len(out) > 1 and abs(delta(_bearing(out[-1][-1]), _bearing(out[0][0]))) < 0.5:
-        out[0] = out.pop() + out[0]           # across north
-    if len(out) == 1 and abs(delta(_bearing(out[0][-1]), _bearing(out[0][0]))) < 0.5:
-        out[0] = out[0] + [out[0][0]]         # closed loop
-    return out + rest
+    n = len(pts)
+    for i in range(n):
+        a, b, c = pts[i - 1], pts[i], pts[(i + 1) % n]
+        if (b[0] - a[0]) * (c[1] - b[1]) != (b[1] - a[1]) * (c[0] - b[0]):
+            out.append(b)
+    return out or pts
 
 
 def compose(isochrone, dirs, lat0, lon0):
     """Valhalla isochrone (contours = levels(dirs)) → GeoJSON with one fill
-    feature (MultiPolygon) and one outline feature (MultiLineString)."""
+    feature (MultiPolygon) and one outline feature (MultiLineString of
+    closed loops). Every bearing wedge takes the contour closest to its own
+    range; the pieces are joined on a grid (~1–1.5 km) and the outline is
+    traced from it: one clean boundary, no cut edges, no holes, no slivers.
+    dirs=None: the single contour as it is, cleaned the same way."""
     feats = (isochrone or {}).get("features") or []
     by_level = {}
     for f in feats:
@@ -210,49 +285,44 @@ def compose(isochrone, dirs, lat0, lon0):
     if not by_level:
         return None
     lv = sorted(by_level)
-    r = max(lv) * 2.0                    # wedge reaches beyond every contour
-    half = 180.0 / N_DIRS
-    fills, lines = [], []
-    for th, want in zip(bearings(), dirs):
-        level = min(lv, key=lambda c: abs(c - want))
-        wedge = _wedge(th, half, r)
-        for ring in by_level[level]:
-            piece = ring
-            for i in range(len(wedge)):
-                if len(piece) < 3:
-                    break
-                piece = _clip(piece, wedge[i], wedge[(i + 1) % len(wedge)])
-            if len(piece) < 3:
-                continue
-            fills.append(piece)
-            # outline: the ring without the edges lying on the wedge's rays
-            chain = []
-            n = len(piece)
-            for i in range(n):
-                p, q = piece[i], piece[(i + 1) % n]
-                cut_edge = any(_on_ray(p, d) and _on_ray(q, d) for d in (th - half, th + half))
-                if cut_edge:
-                    if len(chain) > 1:
-                        lines.append(chain)
-                    chain = []
-                else:
-                    if not chain:
-                        chain = [p]
-                    chain.append(q)
-            if len(chain) > 1:
-                lines.append(chain)
+    pieces = []
+    if not dirs or len(lv) == 1:
+        pieces = [r for ring_set in (by_level[max(lv)],) for r in ring_set if len(r) >= 3]
+    else:
+        r = max(lv) * 2.0                    # wedge reaches beyond every contour
+        half = 180.0 / N_DIRS
+        for th, want in zip(bearings(), dirs):
+            level = min(lv, key=lambda c: abs(c - want))
+            wedge = _wedge(th, half, r)
+            for ring in by_level[level]:
+                piece = ring
+                for i in range(len(wedge)):
+                    if len(piece) < 3:
+                        break
+                    piece = _clip(piece, wedge[i], wedge[(i + 1) % len(wedge)])
+                if len(piece) >= 3:
+                    pieces.append(piece)
+    if not pieces:
+        return None
+    grid, x0, y0, cell = _rasterize(pieces)
+    loops = []
+    for loop in _outline(grid):
+        pts = [(x0 + (gx / 2 + 0.5) * cell, y0 + (gy / 2 + 0.5) * cell) for gx, gy in _simplify(loop)]
+        if _area(pts) >= MIN_LOOP_KM2:      # outer boundaries only (holes run clockwise)
+            loops.append(pts)
+    if not loops:
+        return None
 
-    lines = _join(lines)
-
-    def ll(pts, close=False):
+    def ll(pts):
         c = [[round(lo, 5), round(la, 5)] for la, lo in (_ll(lat0, lon0, x, y) for x, y in pts)]
-        return c + [c[0]] if close else c
+        return c + [c[0]]
 
+    rings = [ll(p) for p in loops]
     return {"type": "FeatureCollection", "features": [
         {"type": "Feature", "properties": {"kind": "fill", "levels": lv},
-         "geometry": {"type": "MultiPolygon", "coordinates": [[ll(p, True)] for p in fills]}},
+         "geometry": {"type": "MultiPolygon", "coordinates": [[r] for r in rings]}},
         {"type": "Feature", "properties": {"kind": "line"},
-         "geometry": {"type": "MultiLineString", "coordinates": [ll(c) for c in lines]}},
+         "geometry": {"type": "MultiLineString", "coordinates": rings}},
     ]}
 
 
