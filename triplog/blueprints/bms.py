@@ -109,10 +109,21 @@ def _trips(db, device):
     since = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
     temps = _daily_temps(device)
     return [{"km": r["distance_km"], "cons": fm.trip_consumption(r["energy_kwh"], r["distance_km"]),
-             "temp": temps.get((r["start_time"] or "")[:10])}
+             "temp": temps.get((r["start_time"] or "")[:10]),
+             "v": _avg_kmh(r["start_time"], r["end_time"], r["distance_km"])}
             for r in db.execute(
-                "SELECT start_time, distance_km, energy_kwh FROM trips WHERE device = ? "
+                "SELECT start_time, end_time, distance_km, energy_kwh FROM trips WHERE device = ? "
                 "AND start_time >= ? AND energy_kwh > 0 AND distance_km > 0", (device, since))]
+
+
+def _avg_kmh(start, end, km):
+    """Average speed of a trip (start/end ISO), None if unusable."""
+    try:
+        h = (datetime.fromisoformat(str(end).replace("Z", "+00:00"))
+             - datetime.fromisoformat(str(start).replace("Z", "+00:00"))).total_seconds() / 3600
+    except (TypeError, ValueError):
+        return None
+    return round(km / h, 1) if h > 0 and km else None
 
 
 def _state(db, v):
@@ -142,7 +153,13 @@ def _state(db, v):
         cons = bl.window_consumption(_series(device), cap).get(rng["window_km"])
         if cons:
             now["vw_range"] = round(now["display_soc"] / 100.0 * rng["e_kwh"] / (rng["cons_factor"] * cons) * 100)
-    now["real"] = bl.real_range(left, _trips(db, device), et) if left else None
+    trips = _trips(db, device) if left else []
+    now["real"] = bl.real_range(left, trips, et) if left else None
+    # One number for map and box: range at motorway speed and today's temperature.
+    cruise = bl.cruise_range(left, bl.speed_model(trips), et) if left else None
+    if cruise:
+        cruise["temp"] = et
+    now["cruise"] = cruise
     out["now"] = now
     return out
 

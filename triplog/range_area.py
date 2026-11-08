@@ -148,7 +148,9 @@ def render_if_due(db, device, lat, lon, kms, now=None):
     if last:
         if last.get("key") == [k[0], k[1], list(k[2])]:
             return "unchanged"
-        if now - (last.get("ts") or 0) < RENDER_EVERY_S:
+        # A different kind of range (one value instead of a span) is a new
+        # display, not a small change: no waiting for that.
+        if now - (last.get("ts") or 0) < RENDER_EVERY_S and len(last.get("kms") or []) == len(kms):
             return "wait"
     if now - _fail_at.get(device, 0) < RENDER_EVERY_S:
         return "wait"

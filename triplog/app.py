@@ -1526,16 +1526,22 @@ def range_area_last():
 
 
 def _range_inputs(db, v):
-    """Position and range span the dashboard would draw: lower/upper end of
-    the learned real range ("BMS lernen"), else the computed range."""
+    """Position and range the dashboard would draw: the range at motorway
+    speed ("BMS lernen"), else the span of the real range, else the computed
+    range."""
     st = _vehicle_state(v["device"])
     lat, lon = st.get("lat"), st.get("lon")
     lo = hi = None
     if v["bms_learn"]:
         from blueprints import bms
-        real = ((bms._state(db, dict(v)).get("now") or {}).get("real")) or {}
-        lo = real.get("km_low") if (real.get("km_low") or 0) > 0 else None
-        hi = real.get("km_high") if (real.get("km_high") or 0) > 0 else None
+        now = bms._state(db, dict(v)).get("now") or {}
+        cruise = now.get("cruise") or {}
+        if (cruise.get("km") or 0) > 0:            # one range at motorway speed
+            hi = cruise["km"]
+        else:
+            real = now.get("real") or {}
+            lo = real.get("km_low") if (real.get("km_low") or 0) > 0 else None
+            hi = real.get("km_high") if (real.get("km_high") or 0) > 0 else None
     if hi is None:
         fb = st.get("calc_range") if st.get("calc_range") is not None else st.get("range_km")
         hi = fb if fb and fb > 0 else None

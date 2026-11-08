@@ -924,7 +924,8 @@
     'bat': t.dash_bat_temp, 'ext': t.dash_ext_temp, 'none': t.bms_no_value, 'can_range': t.bms_can_range,
     'learn': t.bms_learn_state, 'learn_temp': t.bms_learn_temp, 'range_can': t.bms_range_from_can,
     'range_prog': t.bms_range_progress, 'range_unst': t.bms_range_unstable,
-    'stick': t.bms_stick, 'stick_soc': t.bms_stick_soc, 'stick_odo': t.bms_stick_odo } | tojson }};
+    'stick': t.bms_stick, 'stick_soc': t.bms_stick_soc, 'stick_odo': t.bms_stick_odo,
+    'cruise': t.bms_cruise, 'cruise_hint': t.bms_cruise_hint } | tojson }};
   let _bms = null, _bmsTimer = null;
   const _bmsNum = (v, d = 1) => (v === null || v === undefined) ? '–' : Number(v).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: 0 });
   function _bmsAge(s) {
@@ -952,9 +953,17 @@
       lines.push(BMS_T.need.replace('{0}', Math.max(0, 3 - (d.n || 0))));
     }
     if (now.vw_range) lines.push(`${BMS_T.vw} <b>${now.vw_range} km</b>`);
+    // One number in the box: range at motorway speed and today's temperature;
+    // the span of all trips stays in the dialog for reference.
+    if (now.cruise) {
+      lines.push(`${BMS_T.cruise.replace('{0}', now.cruise.v)} <b>≈ ${now.cruise.km} km</b>`);
+      info.push(BMS_T.cruise.replace('{0}', now.cruise.v) + ': ' + BMS_T.cruise_hint
+        .replace('{0}', _bmsNum(now.cruise.cons, 1)).replace('{1}', now.cruise.temp != null ? _bmsNum(now.cruise.temp, 0) : '–'));
+    }
     if (now.real) {
-      lines.push(`${BMS_T.real} <b>${now.real.km_low}–${now.real.km_high} km</b>`);
-      info.push(BMS_T.real + ': ' + BMS_T.real_hint.replace('{0}', now.real.trips).replace('{1}', _bmsNum(now.real.cons_mid, 1)));
+      if (!now.cruise) lines.push(`${BMS_T.real} <b>${now.real.km_low}–${now.real.km_high} km</b>`);
+      info.push(BMS_T.real + ' ' + now.real.km_low + '–' + now.real.km_high + ' km: '
+        + BMS_T.real_hint.replace('{0}', now.real.trips).replace('{1}', _bmsNum(now.real.cons_mid, 1)));
     }
     const det = [];
     if (d.display) { const z = d.display.coef[1] ? -d.display.coef[0] / d.display.coef[1] : null; if (z !== null) det.push(BMS_T.buffer.replace('{0}', _bmsNum(z, 1))); }
@@ -986,7 +995,8 @@
       rn.textContent = note; rn.style.display = '';
     }
     const sum = document.getElementById('bmsSum'); if (sum) sum.innerHTML = lines.join('<br>');
-    window._bmsReal = now.real || null;
+    // Map: one range (motorway speed) when available, else the span.
+    window._bmsReal = now.cruise ? {km_low: null, km_high: now.cruise.km} : (now.real || null);
     if (window.updateRangeCircle) window.updateRangeCircle();
     const live = d.live || {}, el = document.getElementById('bmsLive');
     if (el) {

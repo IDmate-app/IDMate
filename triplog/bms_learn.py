@@ -267,3 +267,65 @@ def real_range(remaining_kwh, trips, temp_now):
     return {"km_low": round(remaining_kwh / hi_c * 100), "km_mid": round(remaining_kwh / mid_c * 100),
             "km_high": round(remaining_kwh / lo_c * 100), "cons_mid": round(mid_c, 1),
             "trips": len(pick), "km": round(sum(t["km"] for t in pick)), "temp_band": band}
+
+
+# ── range at motorway speed (one number instead of a span) ──────────────────
+# Consumption of the own trips as a function of trip speed and cold:
+#   cons = a + b·(v/100)² + c·max(0, COLD_C − T)
+# (rolling + drive train, air drag, heating). Fitted km-weighted on trips
+# with 25–125 km/h average speed, evaluated at CRUISE_KMH and today's
+# temperature. Wind and topography come in later steps.
+
+CRUISE_KMH = 130.0
+COLD_C = 15.0
+FIT_MIN_TRIPS = 20
+FIT_MIN_KM = 300.0
+FIT_MIN_FAST_KM = 100.0        # trips ≥ 80 km/h: anchor for the drag term
+
+
+def _fit_speed(rows, ys, ws):
+    x = fm._solve(rows, ys, ws)
+    if not x:
+        return None
+    # one pass against outliers (GPS jumps, bad energy): drop > 3·MAD, refit
+    res = [y - sum(a * b for a, b in zip(r, x)) for r, y in zip(rows, ys)]
+    lim = 3 * (fm.mad(res) or 0) or None
+    if lim:
+        keep = [i for i, e in enumerate(res) if abs(e) <= lim]
+        if len(keep) >= FIT_MIN_TRIPS and len(keep) < len(rows):
+            x = fm._solve([rows[i] for i in keep], [ys[i] for i in keep], [ws[i] for i in keep]) or x
+    return x
+
+
+def speed_model(trips):
+    """trips: [{km, cons, v, temp}] → {"a", "b", "c", "n", "km"} or None."""
+    ok = [t for t in trips
+          if (t.get("km") or 0) >= fm.MIN_CONS_KM and t.get("v") and 25 <= t["v"] <= 125
+          and t.get("cons") and 5 <= t["cons"] <= 60]
+    if len(ok) < FIT_MIN_TRIPS or sum(t["km"] for t in ok) < FIT_MIN_KM \
+            or sum(t["km"] for t in ok if t["v"] >= 80) < FIT_MIN_FAST_KM:
+        return None
+    warm = [t for t in ok if t.get("temp") is not None]
+    x = None
+    if len(warm) >= FIT_MIN_TRIPS and sum(t["km"] for t in warm) >= FIT_MIN_KM:
+        x = _fit_speed([[1.0, (t["v"] / 100) ** 2, max(0.0, COLD_C - t["temp"])] for t in warm],
+                 [t["cons"] for t in warm], [t["km"] for t in warm])
+        used = warm
+    if not x or x[2] < 0:                          # no usable temperature effect
+        x2 = _fit_speed([[1.0, (t["v"] / 100) ** 2] for t in ok], [t["cons"] for t in ok], [t["km"] for t in ok])
+        x, used = (x2 + [0.0], ok) if x2 else (None, ok)
+    if not x or x[1] <= 0:
+        return None
+    return {"a": round(x[0], 3), "b": round(x[1], 3), "c": round(x[2], 3),
+            "n": len(used), "km": round(sum(t["km"] for t in used))}
+
+
+def cruise_range(remaining_kwh, model, temp_now, v=CRUISE_KMH):
+    """{"km", "cons", "v"} at speed v and today's temperature, or None."""
+    if not model or not remaining_kwh or remaining_kwh <= 0:
+        return None
+    cold = max(0.0, COLD_C - temp_now) if temp_now is not None else 0.0
+    cons = model["a"] + model["b"] * (v / 100) ** 2 + model["c"] * cold
+    if cons <= 5:
+        return None
+    return {"km": round(remaining_kwh / cons * 100), "cons": round(cons, 1), "v": round(v)}
