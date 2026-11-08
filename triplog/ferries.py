@@ -362,6 +362,28 @@ def drop_long_ferry_parts(isochrone, lat, lon, kms):
     return keep_by_road(isochrone, lat, lon, land, short)
 
 
+def union_areas(areas):
+    """Areas behind several ports overlap (Malmö, Trelleborg, Ystad …): one
+    common outline, the single areas stay for the port under the mouse."""
+    polys, pts = [], []
+    for a in areas:
+        for f in (a or {}).get("features") or []:
+            g = f.get("geometry") or {}
+            if (f.get("properties") or {}).get("kind") != "fill":
+                continue
+            for poly in (g.get("coordinates") or []) if g.get("type") == "MultiPolygon" else [g.get("coordinates")]:
+                if poly and poly[0]:
+                    polys.append([poly[0]])
+                    pts.extend(poly[0])
+    if not polys:
+        return None
+    lat0 = sum(p[1] for p in pts) / len(pts)
+    lon0 = sum(p[0] for p in pts) / len(pts)
+    iso = {"features": [{"properties": {"contour": 1},
+                         "geometry": {"type": "MultiPolygon", "coordinates": polys}}]}
+    return wr.compose(iso, None, lat0, lon0)
+
+
 def _run(device, lat, lon, cruise, points, route_fn=None, area_fn=None, osm_fn=None, land_fn=None):
     import range_area
     try:
@@ -429,7 +451,8 @@ def _run(device, lat, lon, cruise, points, route_fn=None, area_fn=None, osm_fn=N
                 if gj:
                     item["area"] = wr.compose(gj, None, b[0], b[1]) or gj
             ferries.append(item)
-        res = {"status": "ok", "ts": time.time(), "lat": lat, "lon": lon, "ferries": ferries}
+        res = {"status": "ok", "ts": time.time(), "lat": lat, "lon": lon, "ferries": ferries,
+               "union": union_areas([f["area"] for f in ferries])}
         log.info("ferries: %d long crossings found, %d reachable, %d skipped (port reachable by road)",
                  len(cands), len(ferries), skipped)
     except Exception as e:
