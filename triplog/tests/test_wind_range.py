@@ -9,8 +9,9 @@ import wind_range as wr
 MODEL = {"a": 16.0, "b": 5.0, "c": 0.3, "temp": True, "n": 100, "km": 5000}
 
 
-def _point(lat, lon, kmh, frm, temp=10):
-    return {"lat": lat, "lon": lon, "data": {"t": [0], "kmh": [kmh], "dir": [frm], "gust": [kmh], "temp": [temp]}}
+def _point(lat, lon, kmh, frm, temp=10, elev=None):
+    return {"lat": lat, "lon": lon, "data": {"t": [0], "kmh": [kmh], "dir": [frm], "gust": [kmh], "temp": [temp],
+                                             "elev": elev}}
 
 
 def test_calm_is_the_same_everywhere_and_matches_the_model():
@@ -89,3 +90,25 @@ def test_render_with_dirs_composes(app_module, db, monkeypatch):
     # calm (all equal): back to a single contour without composing
     assert ra.render_if_due(db, "dev1", 53.8, 10.4, [180], dirs=[180] * 16, now=1000 + 700) == "rendered"
     assert "dirs" not in ra.load_last(db, "dev1")
+
+
+def test_mountains_to_the_south_cost_range_there():
+    # calm; terrain rises 200 m per raster row to the south (Alps-like), flat north
+    pts = [_point(53.8 + i * 0.45, 10.4 + j * 0.75, 0, 0, elev=max(0, -i) * 200)
+           for i in range(-6, 7) for j in range(-4, 5)]
+    d = wr.direction_ranges(50.0, MODEL, 10, 110, 53.8, 10.4, pts, now=100)
+    north, south = d[0], d[8]
+    assert south < north - 15
+    # 1200 m climb ≈ 2200·9.81·1200/3.6e6/0.9 ≈ 8 kWh → clearly shorter
+    flat = wr.direction_ranges(50.0, MODEL, 10, 110, 53.8, 10.4,
+                               [dict(p, data=dict(p["data"], elev=0)) for p in pts], now=100)
+    assert flat[0] == north and flat[8] > south
+
+
+def test_downhill_wins_back_a_part():
+    pts = [_point(53.8 + i * 0.45, 10.4 + j * 0.75, 0, 0, elev=1000 if i == 0 and j == 0 else 0)
+           for i in range(-6, 7) for j in range(-4, 5)]
+    d = wr.direction_ranges(50.0, MODEL, 10, 110, 53.8, 10.4, pts, now=100)
+    flat = wr.direction_ranges(50.0, MODEL, 10, 110, 53.8, 10.4,
+                               [dict(p, data=dict(p["data"], elev=0)) for p in pts], now=100)
+    assert all(a >= b for a, b in zip(d, flat))     # starting high: downhill helps
