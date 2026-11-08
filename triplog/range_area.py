@@ -138,7 +138,7 @@ def load_last(db, device):
         return None
 
 
-def render_if_due(db, device, lat, lon, kms, dirs=None, now=None):
+def render_if_due(db, device, lat, lon, kms, dirs=None, now=None, refine=None):
     """Render and store when nothing is stored yet, or the inputs changed and
     the stored area is at least RENDER_EVERY_S old. dirs: road km per
     bearing (wind_range) — the area is then composed from several contours.
@@ -162,6 +162,21 @@ def render_if_due(db, device, lat, lon, kms, dirs=None, now=None):
             return "wait"
     if now - _fail_at.get(device, 0) < RENDER_EVERY_S:
         return "wait"
+    # Due: now the expensive part — ranges along real routes (speed limits,
+    # elevation); the key above stays on the cheap estimate, so this runs
+    # only when a new area is rendered anyway.
+    if refine and dirs:
+        try:
+            better = refine()
+        except Exception as e:
+            log.warning("range area: routes per direction failed: %s", e)
+            better = None
+        if better:
+            dirs = better
+            lv = wind_range.levels(dirs)
+            if len(lv) == 1:
+                kms, dirs, lv = [lv[0]], None, None
+            req = lv or [round(x) for x in kms]
     gj, err = compute(lat, lon, req)
     if gj is not None and dirs:
         gj = wind_range.compose(gj, dirs, lat, lon)
