@@ -166,10 +166,12 @@ def _state(db, v):
     if left:
         model = bl.speed_model(trips)
         drv = bl.recent_speed(_series(device, hours=bl.DRIVE_WINDOW_H, with_time=True)) if model else None
-        cruise = bl.cruise_range(left, model, et, v=drv["v"] if drv else bl.CRUISE_AVG_KMH)
+        v_eval = drv["v"] if drv else bl.CRUISE_AVG_KMH
+        cruise = bl.cruise_range(left, model, et, v=v_eval)
         if cruise:
             cruise.update(mode="drive" if drv else "model", temp=et, trips=model["n"],
-                          with_temp=model["temp"], dist=drv["km"] if drv else None)
+                          with_temp=model["temp"], dist=drv["km"] if drv else None,
+                          model=model, left=round(left, 2), v_eval=v_eval)   # for the wind per direction
             if not drv:                 # shown as cruise control 130, computed at its trip average
                 cruise.update(v=round(bl.CRUISE_KMH), v_avg=round(bl.CRUISE_AVG_KMH))
     now["cruise"] = cruise

@@ -411,8 +411,49 @@
         return f;
       })};
     }
+    // Open polyline version of smoothRing (ends stay where they are).
+    function smoothLine(pts, passes) {
+      if (pts.length > 8) {
+        const w = [1, 2, 3, 2, 1], n = pts.length;
+        pts = pts.map((p, i) => {
+          if (i < 2 || i > n - 3) return p;
+          let x = 0, y = 0;
+          for (let j = -2; j <= 2; j++) { const q = pts[i + j]; x += q[0] * w[j + 2]; y += q[1] * w[j + 2]; }
+          return [x / 9, y / 9];
+        });
+      }
+      for (let p = 0; p < passes && pts.length > 2; p++) {
+        const out = [pts[0]];
+        for (let i = 0; i < pts.length - 1; i++) {
+          const a = pts[i], b = pts[i + 1];
+          out.push([0.75 * a[0] + 0.25 * b[0], 0.75 * a[1] + 0.25 * b[1]],
+                   [0.25 * a[0] + 0.75 * b[0], 0.25 * a[1] + 0.75 * b[1]]);
+        }
+        out.push(pts[pts.length - 1]);
+        pts = out;
+      }
+      return pts;
+    }
+    // Area with wind: built from several road contours per direction
+    // (wind_range.py) — a fill of all pieces and one outline without the cuts.
+    function showWindArea(gj, k, col) {
+      const fill = gj.features.find(f => (f.properties || {}).kind === 'fill');
+      const outl = gj.features.find(f => (f.properties || {}).kind === 'line');
+      const base = {interactive: false, smoothFactor: 0.3};
+      const layers = [];
+      if (fill) layers.push(L.geoJSON(fill, {...base, style: () => ({stroke: false, fillColor: col, fillOpacity: 0.12})}));
+      if (outl) {
+        const lines = outl.geometry.coordinates.map(c => smoothLine(c, 2));
+        const soft = {...outl, geometry: {...outl.geometry, coordinates: lines}};
+        layers.push(L.geoJSON(soft, {...base, style: () => ({color: '#ffffff', weight: 6, opacity: 0.55, lineJoin: 'round', lineCap: 'round'})}));
+        layers.push(L.geoJSON(soft, {...base, style: () => ({color: col, weight: 3, opacity: 0.95, lineJoin: 'round', lineCap: 'round'})}));
+      }
+      rangeArea = L.layerGroup(layers).addTo(map);
+      rangeAreaTs = k;
+    }
     function showRangeArea(gj, k, col) {
       if (rangeArea) map.removeLayer(rangeArea);
+      if (gj.features.some(f => (f.properties || {}).kind)) return showWindArea(gj, k, col);
       const soft = smoothArea(gj);
       const max = Math.max(...soft.features.map(f => (f.properties || {}).contour || 0));
       const many = soft.features.length > 1;
@@ -438,7 +479,14 @@
         try {
           const d = await (await fetch('/api/range-area/last')).json();
           if (d.status === 'off') rangeAreaOff = true;
-          else if (d.status === 'ok' && d.geojson && d.ts !== rangeAreaTs) {
+          if (d.status === 'ok') {
+            const nd = d.dirs && d.dirs.length ? d.dirs : null;
+            if (JSON.stringify(nd) !== JSON.stringify(window._windDirs || null)) {
+              window._windDirs = nd;
+              if (typeof bmsRender === 'function' && typeof _bms !== 'undefined' && _bms) bmsRender();
+            }
+          }
+          if (d.status === 'ok' && d.geojson && d.ts !== rangeAreaTs) {
             const col = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#58a6ff';
             showRangeArea(d.geojson, d.ts, col);
           }
@@ -1039,7 +1087,7 @@
     'range_prog': t.bms_range_progress, 'range_unst': t.bms_range_unstable,
     'stick': t.bms_stick, 'stick_soc': t.bms_stick_soc, 'stick_odo': t.bms_stick_odo,
     'cruise': t.bms_cruise, 'cruise_hint': t.bms_cruise_hint, 'cruise_notemp': t.bms_cruise_notemp,
-    'drive': t.bms_drive, 'drive_hint': t.bms_drive_hint } | tojson }};
+    'drive': t.bms_drive, 'drive_hint': t.bms_drive_hint, 'wind_dirs': t.bms_wind_dirs } | tojson }};
   let _bms = null, _bmsTimer = null;
   const _bmsNum = (v, d = 1) => (v === null || v === undefined) ? '–' : Number(v).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: 0 });
   function _bmsAge(s) {
@@ -1080,6 +1128,11 @@
         .replace('{0}', _bmsNum(now.cruise.cons, 1)).replace('{1}', now.cruise.temp != null ? _bmsNum(now.cruise.temp, 0) : '–')
         .replace('{2}', now.cruise.trips).replace('{3}', now.cruise.v_avg || now.cruise.v)
         + (now.cruise.with_temp ? '' : ' ' + BMS_T.cruise_notemp));
+    }
+    // With the wind forecast the reach differs by direction (wind_range.py).
+    if (now.cruise && window._windDirs) {
+      const lo = Math.min(...window._windDirs), hi = Math.max(...window._windDirs);
+      if (hi - lo >= 10) lines.push(`${BMS_T.wind_dirs} <b>${lo}–${hi} km</b>`);
     }
     if (now.real) {
       if (!now.cruise) lines.push(`${BMS_T.real} <b>${now.real.km_low}–${now.real.km_high} km</b>`);

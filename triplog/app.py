@@ -1551,6 +1551,7 @@ def _range_inputs(db, v):
     st = _vehicle_state(v["device"])
     lat, lon = st.get("lat"), st.get("lon")
     lo = hi = None
+    cruise = {}
     if v["bms_learn"]:
         from blueprints import bms
         now = bms._state(db, dict(v)).get("now") or {}
@@ -1567,7 +1568,10 @@ def _range_inputs(db, v):
     if lat is None or lon is None or hi is None:
         return None
     kms = [k for k in ([lo, hi] if lo is not None else [hi]) if 5 <= k <= 1000]
-    return (lat, lon, kms) if kms else None
+    if not kms:
+        return None
+    _range_inputs.cruise = cruise if (cruise.get("km") or 0) > 0 else None
+    return (lat, lon, kms)
 
 
 def _range_area_loop():
@@ -1586,10 +1590,20 @@ def _range_area_loop():
                         try:
                             inp = _range_inputs(db, v)
                             if inp:
-                                range_area.render_if_due(db, v["device"], *inp)
+                                lat, lon, kms = inp
+                                dirs = None
+                                cruise = getattr(_range_inputs, "cruise", None)
                                 if config.WIND_SOURCE:
                                     import wind
-                                    wind.ensure(db, inp[0], inp[1], max(inp[2]))
+                                    import wind_range
+                                    wind.ensure(db, lat, lon, max(kms))
+                                    # range per direction with the wind forecast
+                                    if cruise and cruise.get("model"):
+                                        dirs = wind_range.direction_ranges(
+                                            cruise["left"], cruise["model"], cruise.get("temp"),
+                                            cruise["v_eval"], lat, lon,
+                                            wind.points_near(db, lat, lon, max(kms) * 1.3), time.time())
+                                range_area.render_if_due(db, v["device"], lat, lon, kms, dirs=dirs)
                         except Exception as e:      # one vehicle must not block the other
                             log.warning("range area for %s: %s", v["device"], e)
                 finally:
