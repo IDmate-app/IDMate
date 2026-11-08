@@ -644,7 +644,10 @@
         if (d.status === 'ok') {
           if (!(d.ferries || []).length) toast(T.ferry_none, 'info');
           drawFerries(d.ferries || []);
-        } else toast(T.ferry_err, 'error');
+        } else {
+          ferryOn = false; btnFerry.setAttribute('aria-pressed', 'false');   // next click tries again
+          toast(/overpass busy/.test(d.error || '') ? T.ferry_busy : T.ferry_err, 'error');
+        }
       } catch (e) {}
     }
     btnFerry.addEventListener('click', async () => {
@@ -871,6 +874,7 @@
       ferry_none: {{ t.dash_ferry_none | tojson }},
       ferry_err: {{ t.dash_ferry_err | tojson }},
       ferry_nomodel: {{ t.dash_ferry_nomodel | tojson }},
+      ferry_busy: {{ t.dash_ferry_busy | tojson }},
       wind: {{ t.dash_wind | tojson }},
       wind_gust: {{ t.dash_wind_gust | tojson }},
       dc: '{{ t.dash_status_dc }}',

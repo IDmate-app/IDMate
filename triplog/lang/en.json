@@ -1638,6 +1638,7 @@
   "dash_ferry_none": "No long ferries in reach",
   "dash_ferry_err": "Ferry search failed",
   "dash_ferry_nomodel": "The ferry search needs the consumption model (too few fast trips)",
+  "dash_ferry_busy": "Ferry server is busy right now – please switch on again in a few minutes",
   "dash_cabin_temp": "Cabin temp",
   "dash_stick_fw": "Stick firmware",
   "dash_stick_update": "Download update {0}",
