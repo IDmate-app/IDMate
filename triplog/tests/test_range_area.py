@@ -169,3 +169,18 @@ def test_range_inputs_bms_or_fallback(app_module, db, monkeypatch):
     assert app_module._range_inputs(db, v) == (52.5, 13.4, [240])
     monkeypatch.setattr(app_module, "_vehicle_state", lambda dev: {"calc_range": 240})
     assert app_module._range_inputs(db, v) is None
+
+
+def test_area_from_an_older_version_is_rendered_again(app_module, db, monkeypatch):
+    import json
+    import range_area as ra
+    ra._fail_at.clear()
+    monkeypatch.setattr(ra, "_down_until", 0.0)
+    monkeypatch.setattr(ra, "_fetch", lambda lat, lon, kms: GJ)
+    assert ra.render_if_due(db, "dev3", 52.5, 13.4, [250], now=1000) == "rendered"
+    assert ra.render_if_due(db, "dev3", 52.5, 13.4, [250], now=1100) == "unchanged"
+    rec = ra.load_last(db, "dev3")
+    rec.pop("v")                                        # as stored by 1.2.289
+    db.execute("UPDATE range_area_last SET data = ? WHERE device = 'dev3'", (json.dumps(rec),))
+    db.commit()
+    assert ra.render_if_due(db, "dev3", 52.5, 13.4, [250], now=1200) == "rendered"

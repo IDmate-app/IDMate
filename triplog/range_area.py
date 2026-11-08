@@ -123,6 +123,9 @@ def area(lat, lon, kms):
 # RENDER_EVERY_S, so Valhalla is not asked on every page view.
 
 RENDER_EVERY_S = 10 * 60
+# Bump when the stored geometry changes how it is built: an area from an
+# older version is rendered again at once, even if nothing else changed.
+GEOM_VERSION = 3          # 3: grid outline (1.2.290)
 _fail_at = {}          # device -> time of the last failed render (no retry every minute)
 
 
@@ -152,6 +155,8 @@ def render_if_due(db, device, lat, lon, kms, dirs=None, now=None, refine=None):
     k = list(key(lat, lon, req))
     kk = [k[0], k[1], list(k[2])] + ([[int(round(d / 10.0)) * 10 for d in dirs]] if dirs else [])
     last = load_last(db, device)
+    if last and last.get("v") != GEOM_VERSION:
+        last = None                       # built the old way: render now
     if last:
         if last.get("key") == kk:
             return "unchanged"
@@ -187,7 +192,7 @@ def render_if_due(db, device, lat, lon, kms, dirs=None, now=None, refine=None):
         _fail_at[device] = now
         return "failed"
     _fail_at.pop(device, None)
-    rec = {"key": kk, "lat": lat, "lon": lon,
+    rec = {"key": kk, "lat": lat, "lon": lon, "v": GEOM_VERSION,
            "kms": [round(x) for x in kms], "ts": now, "geojson": gj}
     if dirs:
         rec["dirs"] = dirs
