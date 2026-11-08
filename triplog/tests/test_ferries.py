@@ -219,3 +219,35 @@ def test_area_around_port_excludes_ferries(monkeypatch):
     assert ferries._area_on_land(57.7, 11.95, [180])["features"]
     assert sent["costing_options"]["auto"]["exclude_ferries"] is True
     assert sent["contours"] == [{"distance": 180.0}]
+
+
+def _sq(lat, lon, d=0.2):
+    return [[lon - d, lat - d], [lon + d, lat - d], [lon + d, lat + d], [lon - d, lat + d], [lon - d, lat - d]]
+
+
+def test_parts_behind_long_ferries_are_left_out():
+    car = (54.0, 10.0)
+    main, isl_a, isl_c, far = _sq(54.0, 10.0, 0.5), _sq(54.0, 11.0), _sq(54.0, 11.6), _sq(57.7, 12.0)
+    iso = {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"contour": 200},
+           "geometry": {"type": "MultiPolygon", "coordinates": [[main], [isl_a], [isl_c], [far]]}}]}
+    land = {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"contour": 200},
+            "geometry": {"type": "Polygon", "coordinates": [main]}}]}
+    short = [{"pts": [(54.0, 10.5), (54.0, 10.8)]},        # mainland → island A (~20 km)
+             {"pts": [(54.0, 11.2), (54.0, 11.4)]}]        # island A → island C, chained
+    out = ferries.keep_by_road(iso, car[0], car[1], land, short)
+    rings = out["features"][0]["geometry"]["coordinates"]
+    assert [r[0] for r in rings] == [main, isl_a, isl_c]           # the far one (long ferry) is gone
+    # without the short ferries only the mainland stays
+    out = ferries.keep_by_road(iso, car[0], car[1], land, [])
+    assert [r[0] for r in out["features"][0]["geometry"]["coordinates"]] == [main]
+    # no land isochrone (Valhalla failed): unchanged
+    assert ferries.keep_by_road(iso, car[0], car[1], None, short) is iso
+
+
+def test_short_and_long_from_file(tmp_path):
+    import json
+    data = _geojson(OSM)
+    f = tmp_path / "ferries.geojson"
+    f.write_text(json.dumps(data))
+    assert [c["name"] for c in ferries.file_chains(str(f))] == ["Travemünde - Trelleborg"]
+    assert [c["name"] for c in ferries.short_ferries(str(f))] == ["Puttgarden - Rødby"]
