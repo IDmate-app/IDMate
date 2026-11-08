@@ -925,7 +925,8 @@
     'learn': t.bms_learn_state, 'learn_temp': t.bms_learn_temp, 'range_can': t.bms_range_from_can,
     'range_prog': t.bms_range_progress, 'range_unst': t.bms_range_unstable,
     'stick': t.bms_stick, 'stick_soc': t.bms_stick_soc, 'stick_odo': t.bms_stick_odo,
-    'cruise': t.bms_cruise, 'cruise_hint': t.bms_cruise_hint } | tojson }};
+    'cruise': t.bms_cruise, 'cruise_hint': t.bms_cruise_hint, 'cruise_notemp': t.bms_cruise_notemp,
+    'drive': t.bms_drive, 'drive_hint': t.bms_drive_hint } | tojson }};
   let _bms = null, _bmsTimer = null;
   const _bmsNum = (v, d = 1) => (v === null || v === undefined) ? '–' : Number(v).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: 0 });
   function _bmsAge(s) {
@@ -955,10 +956,16 @@
     if (now.vw_range) lines.push(`${BMS_T.vw} <b>${now.vw_range} km</b>`);
     // One number in the box: range at motorway speed and today's temperature;
     // the span of all trips stays in the dialog for reference.
-    if (now.cruise) {
+    if (now.cruise && now.cruise.mode === 'drive') {
+      lines.push(`${BMS_T.drive.replace('{0}', now.cruise.v)} <b>≈ ${now.cruise.km} km</b>`);
+      info.push(BMS_T.drive.replace('{0}', now.cruise.v) + ': ' + BMS_T.drive_hint
+        .replace('{0}', _bmsNum(now.cruise.cons, 1)).replace('{1}', now.cruise.dist)
+        .replace('{2}', now.cruise.temp != null ? _bmsNum(now.cruise.temp, 0) : '–'));
+    } else if (now.cruise) {
       lines.push(`${BMS_T.cruise.replace('{0}', now.cruise.v)} <b>≈ ${now.cruise.km} km</b>`);
       info.push(BMS_T.cruise.replace('{0}', now.cruise.v) + ': ' + BMS_T.cruise_hint
-        .replace('{0}', _bmsNum(now.cruise.cons, 1)).replace('{1}', now.cruise.temp != null ? _bmsNum(now.cruise.temp, 0) : '–'));
+        .replace('{0}', _bmsNum(now.cruise.cons, 1)).replace('{1}', now.cruise.temp != null ? _bmsNum(now.cruise.temp, 0) : '–')
+        .replace('{2}', now.cruise.trips) + (now.cruise.with_temp ? '' : ' ' + BMS_T.cruise_notemp));
     }
     if (now.real) {
       if (!now.cruise) lines.push(`${BMS_T.real} <b>${now.real.km_low}–${now.real.km_high} km</b>`);

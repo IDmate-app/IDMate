@@ -307,7 +307,8 @@ def speed_model(trips):
         return None
     warm = [t for t in ok if t.get("temp") is not None]
     x = None
-    if len(warm) >= FIT_MIN_TRIPS and sum(t["km"] for t in warm) >= FIT_MIN_KM:
+    if len(warm) >= FIT_MIN_TRIPS and sum(t["km"] for t in warm) >= FIT_MIN_KM \
+            and sum(t["km"] for t in warm if t["v"] >= 80) >= FIT_MIN_FAST_KM:
         x = _fit_speed([[1.0, (t["v"] / 100) ** 2, max(0.0, COLD_C - t["temp"])] for t in warm],
                  [t["cons"] for t in warm], [t["km"] for t in warm])
         used = warm
@@ -317,7 +318,8 @@ def speed_model(trips):
     if not x or x[1] <= 0:
         return None
     return {"a": round(x[0], 3), "b": round(x[1], 3), "c": round(x[2], 3),
-            "n": len(used), "km": round(sum(t["km"] for t in used))}
+            "n": len(used), "km": round(sum(t["km"] for t in used)),
+            "temp": used is warm}
 
 
 def cruise_range(remaining_kwh, model, temp_now, v=CRUISE_KMH):
@@ -329,3 +331,26 @@ def cruise_range(remaining_kwh, model, temp_now, v=CRUISE_KMH):
     if cons <= 5:
         return None
     return {"km": round(remaining_kwh / cons * 100), "cons": round(cons, 1), "v": round(v)}
+
+
+# ── driving or driven in the last 2 h: the model at the current speed ─────
+
+DRIVE_WINDOW_H = 2
+DRIVE_MIN_KM = 10.0
+
+
+def recent_speed(series):
+    """series: [(time s, odometer, SoC)] of the last DRIVE_WINDOW_H, oldest
+    first. Average speed from the first to the last odometer change (like a
+    trip average, which is what the model was fitted on) → {"v", "km"} or
+    None when the car did not drive at least DRIVE_MIN_KM lately."""
+    pts = [(t, o) for t, o, _s in series if t is not None and o is not None]
+    moved = [pts[i] for i in range(1, len(pts)) if pts[i][1] > pts[i - 1][1]]
+    if not moved:
+        return None
+    first = next(pts[i - 1] for i in range(1, len(pts)) if pts[i][1] > pts[i - 1][1])
+    last = moved[-1]
+    km, h = last[1] - first[1], (last[0] - first[0]) / 3600
+    if km < DRIVE_MIN_KM or h <= 0:
+        return None
+    return {"v": round(min(km / h, 160)), "km": round(km)}

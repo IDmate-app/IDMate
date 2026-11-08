@@ -43,3 +43,21 @@ def test_outliers_are_dropped():
     tr = _trips(c=0.0) + [{"km": 40, "cons": 55.0, "v": 40, "temp": 10}] * 3
     m = bl.speed_model(tr)
     assert abs(m["b"] - 5.0) < 0.5
+
+
+def test_recent_speed_like_a_trip_average():
+    # parked 10 min, then 60 km in 40 min (one stop included): 90 km/h
+    series = [(0, 1000, 80), (600, 1000, 80)] + [(600 + k * 60, 1000 + k * 1.5, 80 - k * 0.2) for k in range(1, 41)]
+    assert bl.recent_speed(series) == {"v": 90, "km": 60}
+
+
+def test_recent_speed_needs_distance():
+    assert bl.recent_speed([(0, 1000, 80), (600, 1004, 79)]) is None
+    assert bl.recent_speed([(0, 1000, 80), (7000, 1000, 80)]) is None
+    assert bl.recent_speed([]) is None
+
+
+def test_model_at_current_speed_gives_more_range_than_130():
+    m = bl.speed_model(_trips())
+    slow, fast = bl.cruise_range(50.0, m, 10, v=90), bl.cruise_range(50.0, m, 10)
+    assert slow["v"] == 90 and slow["km"] > fast["km"]

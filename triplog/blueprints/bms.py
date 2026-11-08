@@ -47,9 +47,9 @@ def _live(device):
     return out
 
 
-def _series(device, hours=36):
+def _series(device, hours=36, with_time=False):
     """[(odometer, SoC)] of the last hours, oldest first (delta-compressed
-    telemetry: both carried forward)."""
+    telemetry: both carried forward); with_time: [(epoch s, odometer, SoC)]."""
     client = detector.get_influx(timeout_ms=15000)
     if not client:
         return []
@@ -70,7 +70,11 @@ def _series(device, hours=36):
             od = r.get("od") if r.get("od") is not None else od
             soc = detector.sanitize_soc(r.get("s")) if r.get("s") is not None else soc
             if od is not None and soc is not None:
-                out.append((float(od), float(soc)))
+                if with_time:
+                    t = r.get("_time")
+                    out.append((t.timestamp() if t else None, float(od), float(soc)))
+                else:
+                    out.append((float(od), float(soc)))
         return out
     except Exception as e:      # the point is stored without the windows
         log.warning("bms learn: consumption series failed: %s", e)
@@ -155,10 +159,17 @@ def _state(db, v):
             now["vw_range"] = round(now["display_soc"] / 100.0 * rng["e_kwh"] / (rng["cons_factor"] * cons) * 100)
     trips = _trips(db, device) if left else []
     now["real"] = bl.real_range(left, trips, et) if left else None
-    # One number for map and box: range at motorway speed and today's temperature.
-    cruise = bl.cruise_range(left, bl.speed_model(trips), et) if left else None
-    if cruise:
-        cruise["temp"] = et
+    # One number for map and box: the model from the own trips at today's
+    # temperature, at motorway speed, or, while driving / driven in the last
+    # 2 h, at the current average speed (charge planning on the way).
+    cruise = None
+    if left:
+        model = bl.speed_model(trips)
+        drv = bl.recent_speed(_series(device, hours=bl.DRIVE_WINDOW_H, with_time=True)) if model else None
+        cruise = bl.cruise_range(left, model, et, v=drv["v"] if drv else bl.CRUISE_KMH)
+        if cruise:
+            cruise.update(mode="drive" if drv else "model", temp=et, trips=model["n"],
+                          with_temp=model["temp"], dist=drv["km"] if drv else None)
     now["cruise"] = cruise
     out["now"] = now
     return out
