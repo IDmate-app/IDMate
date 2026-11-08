@@ -180,3 +180,16 @@ def test_both_directions_count_once():
     osm = {"elements": OSM["elements"] + [back]}
     ferries._run("devK", 53.81, 10.37, CRUISE, [], route_fn=_road, area_fn=lambda *a: None, osm_fn=lambda box: osm)
     assert len(ferries.status("devK")["ferries"]) == 1
+
+
+def test_ferry_to_port_reachable_by_road_is_skipped():
+    # Travemünde–Rostock-like: the port across is close enough to drive there
+    near = {"elements": [_way(_line(TERMINAL, (54.6, 11.9)) + _line((54.6, 11.9), (54.18, 12.09))[1:],
+                              name="Travemünde - Rostock")]}
+    ferries._run("devL", 53.81, 10.37, CRUISE, [], route_fn=_road, area_fn=lambda *a: None,
+                 osm_fn=lambda box: near)
+    assert ferries.status("devL")["ferries"] == []
+    # the same ferry stays when the road to the port is blocked (no route)
+    ferries._run("devM", 53.81, 10.37, CRUISE, [], route_fn=_road, area_fn=lambda *a: None,
+                 osm_fn=lambda box: near, land_fn=lambda *a: {})
+    assert len(ferries.status("devM")["ferries"]) == 1
