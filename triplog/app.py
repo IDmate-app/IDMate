@@ -1492,11 +1492,20 @@ def dashboard():
                            map_boot=_map_boot(active_device()))
 
 
+def _ferries_enabled():
+    try:
+        import ferries
+        return ferries.enabled()
+    except Exception as e:
+        log.warning("ferries: %s", e)
+        return bool(config.FERRY_URL)
+
+
 def _map_boot(device):
     """Stored range area and the wind of the current hour, delivered with the
     page: both are on the map at once, no waiting for the first fetch."""
     out = {"area": None, "wind": None, "valhalla": bool(config.VALHALLA_URL),
-           "ferries": bool(config.VALHALLA_URL and config.FERRY_URL)}
+           "ferries": bool(config.VALHALLA_URL) and _ferries_enabled()}
     if not config.VALHALLA_URL:
         return out
     try:
@@ -1575,7 +1584,7 @@ def ferries_start():
     """Map button "Fähren": search long ferries once (background), see
     ferries.py. Short crossings are part of the normal area anyway."""
     import ferries
-    if not config.VALHALLA_URL or not config.FERRY_URL:
+    if not config.VALHALLA_URL or not ferries.enabled():
         return jsonify({"status": "off"})
     db = get_db()
     try:

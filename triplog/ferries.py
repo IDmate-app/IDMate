@@ -4,10 +4,12 @@ Short crossings (≤ wind_range.MAX_FERRY_KM) are part of the normal range
 area anyway. Long ones (Travemünde–Trelleborg/Helsinki, Kiel–Oslo, …) only
 when the user asks: one search, then shown until switched off.
 
-Valhalla routes by time and never picks a 9-hour ferry where a road exists,
-so the ferries come from OpenStreetMap (Overpass): car ferries (route=ferry,
-motor vehicles allowed) in a box around the car, rounded outward to whole
-degrees, so the service only learns the region. Per terminal in reach a
+Valhalla knows the ferries but has no request that lists them, so they come
+from OpenStreetMap: preferably from FERRY_FILE, extracted once with osmium
+from the same .osm.pbf Valhalla was built from (no request leaves the
+house); otherwise from Overpass: car ferries (route=ferry, motor vehicles
+allowed) in a box around the car, rounded outward to whole degrees, so the
+service only learns the region. Per terminal in reach a
 Valhalla route gives the energy left there; the remaining range is drawn
 around the port of arrival.
 """
@@ -72,6 +74,63 @@ def _urls():
     return [u.strip() for u in (config.FERRY_URL or "").split(",") if u.strip()]
 
 
+def _motor(tags):
+    return tags.get("route") == "ferry" and \
+        (tags.get("motor_vehicle") == "yes" or tags.get("motorcar") == "yes")
+
+
+_file_cache = {"key": None, "chains": None}
+
+
+def file_chains(path=None):
+    """Long car ferries from the local osmium export (GeoJSON, also
+    line-delimited), joined and filtered once, kept until the file changes.
+    None when there is no such file."""
+    import json
+    import os
+    path = path if path is not None else config.FERRY_FILE
+    if not path or not os.path.isfile(path):
+        return None
+    st = os.stat(path)
+    key = (path, st.st_mtime, st.st_size)
+    with _lock:
+        if _file_cache["key"] == key:
+            return _file_cache["chains"]
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    try:
+        feats = (json.loads(text) or {}).get("features") or []
+    except ValueError:                                    # GeoJSON sequence
+        feats = []
+        for line in text.splitlines():
+            line = line.strip().lstrip("\x1e")
+            if line:
+                try:
+                    feats.append(json.loads(line))
+                except ValueError:
+                    pass
+    els = []
+    for ft in feats:
+        tags = (ft or {}).get("properties") or {}
+        geom = ft.get("geometry") or {}
+        if not _motor(tags):
+            continue
+        lines = ([geom.get("coordinates")] if geom.get("type") == "LineString"
+                 else geom.get("coordinates") if geom.get("type") == "MultiLineString" else [])
+        for ln in lines or []:
+            els.append({"tags": tags, "geometry": [{"lat": c[1], "lon": c[0]} for c in ln or [] if len(c) >= 2]})
+    chains = crossings({"elements": els})
+    log.info("ferries: %d long car ferries loaded from %s", len(chains), os.path.basename(path))
+    with _lock:
+        _file_cache.update(key=key, chains=chains)
+    return chains
+
+
+def enabled():
+    import os
+    return bool(config.FERRY_URL) or bool(config.FERRY_FILE and os.path.isfile(config.FERRY_FILE))
+
+
 def _overpass(box, opener=None):
     import json
     import urllib.error
@@ -109,30 +168,46 @@ def crossings(osm):
         if len(g) >= 2:
             ways.append({"pts": g, "tags": el.get("tags") or {}})
     key = lambda p: (round(p[0], 5), round(p[1], 5))
+    ends = {}                                     # endpoint → indices of ways ending there
+    for i, w in enumerate(ways):
+        for p in (w["pts"][0], w["pts"][-1]):
+            ends.setdefault(key(p), []).append(i)
+    used = [False] * len(ways)
+
+    def name(t):
+        return t.get("name") or t.get("ref")
+
+    def take(p, tags):
+        """The other way ending at p — not at a port where several ferries
+        meet, and not one with a different name (Kiel–Oslo ≠ Kiel–Göteborg)."""
+        at = ends.get(key(p), ())
+        if len(at) != 2:
+            return None
+        for i in at:
+            if not used[i]:
+                a, b = name(tags), name(ways[i]["tags"])
+                if a and b and a != b:
+                    return None
+                used[i] = True
+                return ways[i]
+        return None
+
     chains = []
-    while ways:
-        cur = ways.pop()
-        pts, tags = list(cur["pts"]), dict(cur["tags"])
-        grown = True
-        while grown:
-            grown = False
-            for w in ways:
-                a, b = w["pts"][0], w["pts"][-1]
-                if key(a) == key(pts[-1]):
-                    pts += w["pts"][1:]
-                elif key(b) == key(pts[-1]):
-                    pts += w["pts"][::-1][1:]
-                elif key(b) == key(pts[0]):
-                    pts = w["pts"][:-1] + pts
-                elif key(a) == key(pts[0]):
-                    pts = w["pts"][::-1][:-1] + pts
-                else:
-                    continue
+    for i0 in range(len(ways)):
+        if used[i0]:
+            continue
+        used[i0] = True
+        pts, tags = list(ways[i0]["pts"]), dict(ways[i0]["tags"])
+        for at_end in (True, False):                  # grow at the end, then at the start
+            while True:
+                tip = pts[-1] if at_end else pts[0]
+                w = take(tip, tags)
+                if w is None:
+                    break
+                seg = w["pts"] if key(w["pts"][0]) == key(tip) else w["pts"][::-1]
+                pts = pts + seg[1:] if at_end else seg[::-1][:-1] + pts
                 for k, v in w["tags"].items():
                     tags.setdefault(k, v)
-                ways.remove(w)
-                grown = True
-                break
         km = sum(_km(pts[i], pts[i + 1]) for i in range(len(pts) - 1))
         if km <= wr.MAX_FERRY_KM:
             continue
@@ -153,9 +228,13 @@ def _run(device, lat, lon, cruise, points, route_fn=None, area_fn=None, osm_fn=N
     try:
         route_fn = route_fn or wr._route
         reach = cruise["km"] if cruise.get("km") else 300
-        osm = (osm_fn or _overpass)(bbox(lat, lon, reach))
+        local = file_chains() if osm_fn is None else None
+        if local is not None:
+            found = [dict(c) for c in local]
+        else:
+            found = crossings((osm_fn or _overpass)(bbox(lat, lon, reach)))
         cands = []
-        for c in crossings(osm):
+        for c in found:
             a, b = c["pts"][0], c["pts"][-1]
             if _km((lat, lon), b) < _km((lat, lon), a):
                 c["pts"] = c["pts"][::-1]                 # terminal = the end nearer to the car

@@ -1,6 +1,6 @@
 import os
 
-VERSION = "1.2.300"
+VERSION = "1.2.301"
 # Projektseite, steht in den Fusszeilen der Ausdrucke
 REPO_URL = "github.com/IDmate-app/IDMate"
 # Stick firmware (IDTelemetry): the dashboard says when a newer release exists.
@@ -47,6 +47,10 @@ VEHICLE_MASS_KG = float(os.environ.get("VEHICLE_MASS_KG", "2200") or 2200)
 FERRY_URL = os.environ.get("FERRY_URL", "https://overpass-api.de/api/interpreter,"
                            "https://overpass.private.coffee/api/interpreter,"
                            "https://overpass.kumi.systems/api/interpreter").strip()
+# Ferries extracted once from the same .osm.pbf Valhalla was built from
+# (osmium, see docs): used instead of the Overpass servers when present.
+FERRY_FILE = os.environ.get("FERRY_FILE", os.path.join(
+    os.path.dirname(os.environ.get("DB_PATH", "/data/triplog.db")) or ".", "ferries.geojson")).strip()
 
 # ── InfluxDB field types (measurement "v") — ONE truth for all writers ──
 # Field types are FIXED once a field has been written: a deviating type
