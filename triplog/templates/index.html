@@ -965,7 +965,8 @@
       lines.push(`${BMS_T.cruise.replace('{0}', now.cruise.v)} <b>≈ ${now.cruise.km} km</b>`);
       info.push(BMS_T.cruise.replace('{0}', now.cruise.v) + ': ' + BMS_T.cruise_hint
         .replace('{0}', _bmsNum(now.cruise.cons, 1)).replace('{1}', now.cruise.temp != null ? _bmsNum(now.cruise.temp, 0) : '–')
-        .replace('{2}', now.cruise.trips) + (now.cruise.with_temp ? '' : ' ' + BMS_T.cruise_notemp));
+        .replace('{2}', now.cruise.trips).replace('{3}', now.cruise.v_avg || now.cruise.v)
+        + (now.cruise.with_temp ? '' : ' ' + BMS_T.cruise_notemp));
     }
     if (now.real) {
       if (!now.cruise) lines.push(`${BMS_T.real} <b>${now.real.km_low}–${now.real.km_high} km</b>`);

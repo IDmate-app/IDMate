@@ -1605,7 +1605,7 @@
   "bms_real_range": "Real range",
   "bms_real_hint": "from {0} trips at a similar temperature, avg {1} kWh/100 km",
   "bms_cruise": "Range at {0} km/h",
-  "bms_cruise_hint": "from {2} trips, {0} kWh/100 km at {1} °C (no wind or elevation yet)",
+  "bms_cruise_hint": "cruise control 130 ≈ avg {3} km/h over the trip; from {2} trips: {0} kWh/100 km at {1} °C",
   "bms_cruise_notemp": "– no temperature data, rather a yearly average",
   "bms_drive": "Range at avg {0} km/h",
   "bms_drive_hint": "current speed over the last {1} km, {0} kWh/100 km at {2} °C (for charge planning)",

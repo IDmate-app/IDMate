@@ -277,6 +277,10 @@ def real_range(remaining_kwh, trips, temp_now):
 # temperature. Wind and topography come in later steps.
 
 CRUISE_KMH = 130.0
+# The model learns from trip averages; cruise control 130 averages about
+# 110 km/h over a motorway trip (ramps, traffic, junctions). Checked on the
+# own data: fast trips in the cold months matched the model at ~110, not 130.
+CRUISE_AVG_KMH = 110.0
 COLD_C = 15.0
 FIT_MIN_TRIPS = 20
 FIT_MIN_KM = 300.0
