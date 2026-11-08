@@ -640,8 +640,8 @@
           if (outl) {
             const rings = outl.geometry.coordinates.map(c => smoothRing(c, 2));
             const g = {type: 'Feature', geometry: {type: 'MultiLineString', coordinates: rings}};
-            L.geoJSON(g, {interactive: false, style: () => ({...halo, weight: 5})}).addTo(ferryLayer);
-            L.geoJSON(g, {interactive: false, style: () => ({color: col, weight: 2.5, opacity: 0.95, lineJoin: 'round'})}).addTo(ferryLayer);
+            L.geoJSON(g, {interactive: false, style: () => ({...halo, weight: 5.4})}).addTo(ferryLayer);   // 90 % of the range line (6/3)
+            L.geoJSON(g, {interactive: false, style: () => ({color: col, weight: 2.7, opacity: 0.95, lineJoin: 'round', lineCap: 'round'})}).addTo(ferryLayer);
           }
         }
         const row = (k, v) => `<div class="row"><span>${k}</span><span>${v}</span></div>`;
