@@ -80,7 +80,8 @@ def _fetch(points):
         h = d.get("hourly") or {}
         out.append({"t": h.get("time") or [], "kmh": h.get("wind_speed_10m") or [],
                     "dir": h.get("wind_direction_10m") or [], "gust": h.get("wind_gusts_10m") or [],
-                    "temp": h.get("temperature_2m") or []})
+                    "temp": h.get("temperature_2m") or [],
+                    "elev": d.get("elevation")})          # terrain height of the point (m)
     return out
 
 

@@ -1,6 +1,6 @@
 import os
 
-VERSION = "1.2.287"
+VERSION = "1.2.288"
 # Projektseite, steht in den Fusszeilen der Ausdrucke
 REPO_URL = "github.com/IDmate-app/IDMate"
 # Stick firmware (IDTelemetry): the dashboard says when a newer release exists.
@@ -40,6 +40,8 @@ VALHALLA_URL = os.environ.get("VALHALLA_URL", "").strip().rstrip("/")
 # fixed raster points of the region around the car, never its position.
 WIND_SOURCE = os.environ.get("WIND_SOURCE", "").strip().lower()
 WIND_URL = os.environ.get("WIND_URL", "https://api.open-meteo.com/v1/forecast").strip()
+# Vehicle mass incl. driver for the climb energy of the range per direction.
+VEHICLE_MASS_KG = float(os.environ.get("VEHICLE_MASS_KG", "2200") or 2200)
 
 # ── InfluxDB field types (measurement "v") — ONE truth for all writers ──
 # Field types are FIXED once a field has been written: a deviating type

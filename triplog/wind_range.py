@@ -23,6 +23,9 @@ STEP_KM = 10.0
 DETOUR = 1.25            # road km per straight-line km
 WIND_AT_CAR = 0.7        # wind at car height vs. the 10 m forecast
 MAX_LEVELS = 4           # Valhalla's default max contours per request
+G = 9.81
+DRIVE_EFF = 0.9          # battery → wheel when climbing
+REGEN_EFF = 0.6          # share of the potential energy won back downhill
 KY = 110.57              # km per degree latitude
 KX0 = 111.32             # km per degree longitude at the equator
 
@@ -50,16 +53,28 @@ def wind_points(rows):
     return out
 
 
-def direction_ranges(remaining_kwh, model, temp_now, v_kmh, lat0, lon0, points, now):
-    """Road km per bearing (list of N_DIRS), or None without model/energy."""
+def direction_ranges(remaining_kwh, model, temp_now, v_kmh, lat0, lon0, points, now, mass_kg=None):
+    """Road km per bearing (list of N_DIRS), or None without model/energy.
+    Topography: the terrain height of the raster points (Open-Meteo) gives
+    the climb along each bearing — uphill costs m·g·Δh, downhill wins part
+    of it back by recuperation."""
+    import config
     import wind
     if not model or not remaining_kwh or remaining_kwh <= 0 or not v_kmh:
         return None
+    mass = mass_kg or config.VEHICLE_MASS_KG
     pts = [(*_xy(lat0, lon0, p["lat"], p["lon"]), p["data"]) for p in points]
+
+    def elev_at(x, y):
+        if not pts:
+            return None
+        return min(pts, key=lambda q: (q[0] - x) ** 2 + (q[1] - y) ** 2)[2].get("elev")
+
+    h_start = elev_at(0.0, 0.0)
     out = []
     for th in bearings():
         ux, uy = math.sin(math.radians(th)), math.cos(math.radians(th))
-        left, road = remaining_kwh, 0.0
+        left, road, h_prev = remaining_kwh, 0.0, h_start
         while left > 0 and road < 1500:
             mid = road + STEP_KM / 2
             x, y = ux * mid / DETOUR, uy * mid / DETOUR
@@ -77,6 +92,13 @@ def direction_ranges(remaining_kwh, model, temp_now, v_kmh, lat0, lon0, points, 
             cold = max(0.0, bl.COLD_C - temp) if temp is not None else 0.0
             cons = model["a"] + model["b"] * (v_air / 100) ** 2 + model["c"] * cold
             need = max(cons, 5.0) * STEP_KM / 100
+            h = data.get("elev") if pts else None
+            if h is not None and h_prev is not None and h != h_prev:
+                pot = mass * G * (h - h_prev) / 3.6e6           # kWh
+                need += pot / DRIVE_EFF if pot > 0 else pot * REGEN_EFF
+                need = max(need, 0.0)
+            if h is not None:
+                h_prev = h
             if need >= left:
                 road += STEP_KM * left / need
                 left = 0
