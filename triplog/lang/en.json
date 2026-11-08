@@ -1624,6 +1624,8 @@
   "bms_learn_state": "Learning: {0} points · temperature joins from {1} points with enough temperature spread",
   "dash_soe": "Energy (BMS)",
   "dash_hvac": "Auxiliary load (heating, A/C)",
+  "dash_wind": "Wind",
+  "dash_wind_gust": "gusts",
   "dash_cabin_temp": "Cabin temp",
   "dash_stick_fw": "Stick firmware",
   "dash_stick_update": "Download update {0}",

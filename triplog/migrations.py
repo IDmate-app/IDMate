@@ -1032,6 +1032,19 @@ def m078_range_area_last(db, log):
         log.info("Migration: range_area_last table created")
 
 
+def m079_wind_points(db, log):
+    """Wind forecast raster around the car (wind.py)."""
+    if "wind_points" not in _tables(db):
+        db.execute("""CREATE TABLE wind_points (
+            key     TEXT PRIMARY KEY,
+            lat     REAL NOT NULL,
+            lon     REAL NOT NULL,
+            fetched REAL NOT NULL,
+            data    TEXT NOT NULL
+        )""")
+        log.info("Migration: wind_points table created")
+
+
 MIGRATIONS = [
     (1,  "trips_is_gpx",            m001_trips_is_gpx),
     (2,  "trips_odo",              m002_trips_odo),
@@ -1111,6 +1124,7 @@ MIGRATIONS = [
     (76, "bms_disp_odo",           m076_bms_disp_odo),
     (77, "vehicle_trash",          m077_vehicle_trash),
     (78, "range_area_last",        m078_range_area_last),
+    (79, "wind_points",            m079_wind_points),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

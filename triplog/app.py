@@ -1525,6 +1525,25 @@ def range_area_last():
     return jsonify({"status": "ok", **rec})
 
 
+@app.route("/api/wind")
+def wind_now():
+    """Wind of the current hour on the raster around the active vehicle's
+    range area (center and radius of the stored area)."""
+    import range_area
+    import wind
+    if not config.WIND_SOURCE:
+        return jsonify({"status": "off"})
+    db = get_db()
+    try:
+        rec = range_area.load_last(db, active_device())
+        if not rec:
+            return jsonify({"status": "none"})
+        pts = wind.current(db, rec["lat"], rec["lon"], max(rec["kms"]))
+    finally:
+        db.close()
+    return jsonify({"status": "ok", "points": pts})
+
+
 def _range_inputs(db, v):
     """Position and range the dashboard would draw: the range at motorway
     speed ("BMS lernen"), else the span of the real range, else the computed
@@ -1568,6 +1587,9 @@ def _range_area_loop():
                             inp = _range_inputs(db, v)
                             if inp:
                                 range_area.render_if_due(db, v["device"], *inp)
+                                if config.WIND_SOURCE:
+                                    import wind
+                                    wind.ensure(db, inp[0], inp[1], max(inp[2]))
                         except Exception as e:      # one vehicle must not block the other
                             log.warning("range area for %s: %s", v["device"], e)
                 finally:

@@ -1624,6 +1624,8 @@
   "bms_learn_state": "Lernstand: {0} Punkte · Temperatur-Einfluss kommt ab {1} Punkten mit genug Temperatur-Unterschied dazu",
   "dash_soe": "Energie (BMS)",
   "dash_hvac": "Nebenverbraucher (Heizung, Klima)",
+  "dash_wind": "Wind",
+  "dash_wind_gust": "Böen",
   "dash_cabin_temp": "Innen Temp",
   "dash_stick_fw": "Stick-Firmware",
   "dash_stick_update": "Update {0} laden",

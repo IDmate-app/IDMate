@@ -407,6 +407,40 @@
     pollRangeArea();
     setTimeout(() => { if (!rangeAreaBoot) { rangeAreaBoot = true; updateRangeCircle(); } }, 4000);
     setInterval(pollRangeArea, 30000);
+
+    // ── Wind of the current hour on the forecast raster (wind.py) ──
+    // Arrow points where the wind blows to; size and colour by strength.
+    const windLayer = L.layerGroup();
+    let windOff = false;
+    function windIcon(p) {
+      const k = p.kmh;
+      const col = k < 15 ? '#8b949e' : k < 30 ? '#58a6ff' : k < 45 ? '#d29922' : '#f85149';
+      const sz = k < 15 ? 14 : k < 30 ? 18 : 22;
+      return L.divIcon({className: 'wind-ico', iconSize: [sz, sz], iconAnchor: [sz / 2, sz / 2],
+        html: `<svg width="${sz}" height="${sz}" viewBox="0 0 20 20" style="transform:rotate(${(p.dir + 180) % 360}deg)">`
+          + `<path d="M10 1 L15.5 10 H12 V19 H8 V10 H4.5 Z" fill="${col}" fill-opacity="0.85" stroke="#fff" stroke-width="0.8"/></svg>`});
+    }
+    function syncWindLayer() {
+      const want = map.getZoom() >= 6 && windLayer.getLayers().length > 0;
+      if (want && !map.hasLayer(windLayer)) map.addLayer(windLayer);
+      else if (!want && map.hasLayer(windLayer)) map.removeLayer(windLayer);
+    }
+    async function pollWind() {
+      if (windOff) return;
+      try {
+        const d = await (await fetch('/api/wind')).json();
+        if (d.status === 'off') { windOff = true; return; }
+        windLayer.clearLayers();
+        (d.points || []).forEach(p => {
+          const title = `${T.wind} ${Math.round(p.kmh)} km/h` + (p.gust != null ? ` · ${T.wind_gust} ${Math.round(p.gust)}` : '');
+          L.marker([p.lat, p.lon], {icon: windIcon(p), title: title, keyboard: false}).addTo(windLayer);
+        });
+        syncWindLayer();
+      } catch (e) {}
+    }
+    map.on('zoomend', syncWindLayer);
+    pollWind();
+    setInterval(pollWind, 10 * 60 * 1000);
     let locMarkers = [];
     let chargeLocMarkers = [];
 
@@ -602,6 +636,8 @@
     }
 
     const T = {
+      wind: {{ t.dash_wind | tojson }},
+      wind_gust: {{ t.dash_wind_gust | tojson }},
       dc: '{{ t.dash_status_dc }}',
       ac: '{{ t.dash_status_ac }}',
       driving: '{{ t.dash_status_driving }}',
