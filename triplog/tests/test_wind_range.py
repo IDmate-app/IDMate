@@ -245,3 +245,23 @@ def test_long_ferry_route_is_not_used():
     out, used = wr.direction_ranges_routes(50.0, MODEL, 10, 53.8, 10.4, [], 0, [190] * N,
                                            route_fn=lambda *a: long_ferry)
     assert used == 0 and out == [190] * N
+
+
+def test_small_wind_drift_renders_nothing(app_module, db, monkeypatch):
+    """1.2.299: parked, the forecast moves some directions by a few km —
+    no new area (and no 33 Valhalla requests) for that."""
+    import range_area as ra
+    ra._fail_at.clear()
+    monkeypatch.setattr(ra, "_down_until", 0.0)
+    asked = []
+    def fake(lat, lon, kms):
+        asked.append(1)
+        return {"type": "FeatureCollection", "features": [_circle(lat, lon, k) for k in kms]}
+    monkeypatch.setattr(ra, "_fetch", fake)
+    dirs = [150] * H + [210] * H
+    assert ra.render_if_due(db, "dev4", 53.8, 10.4, [180], dirs=dirs, now=1000) == "rendered"
+    drift = [d + (9 if i % 3 else -7) for i, d in enumerate(dirs)]
+    assert ra.render_if_due(db, "dev4", 53.8, 10.4, [180], dirs=drift, now=1000 + 3600) == "unchanged"
+    turned = [210] * H + [150] * H                       # wind really turned
+    assert ra.render_if_due(db, "dev4", 53.8, 10.4, [180], dirs=turned, now=1000 + 7200) == "rendered"
+    assert len(asked) == 2
