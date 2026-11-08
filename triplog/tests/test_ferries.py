@@ -193,3 +193,29 @@ def test_ferry_to_port_reachable_by_road_is_skipped():
     ferries._run("devM", 53.81, 10.37, CRUISE, [], route_fn=_road, area_fn=lambda *a: None,
                  osm_fn=lambda box: near, land_fn=lambda *a: {})
     assert len(ferries.status("devM")["ferries"]) == 1
+
+
+def test_area_around_port_excludes_ferries(monkeypatch):
+    import io
+    import json
+    import urllib.request
+    import config
+    import range_area
+    monkeypatch.setattr(config, "VALHALLA_URL", "http://valhalla:8002")
+    monkeypatch.setattr(range_area, "_down_until", 0)
+    sent = {}
+
+    class Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake(req, timeout):
+        sent.update(json.loads(req.data))
+        return Resp(json.dumps({"type": "FeatureCollection", "features": [{"type": "Feature"}]}).encode())
+    monkeypatch.setattr(urllib.request, "urlopen", fake)
+    assert ferries._area_on_land(57.7, 11.95, [180])["features"]
+    assert sent["costing_options"]["auto"]["exclude_ferries"] is True
+    assert sent["contours"] == [{"distance": 180.0}]

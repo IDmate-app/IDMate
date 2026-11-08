@@ -239,6 +239,28 @@ def _by_road(lat, lon, b, cruise, points, land_fn):
     return left is not None and left > 0
 
 
+def _area_on_land(lat, lon, kms):
+    """Range area around the port of arrival without any further ferry —
+    otherwise the area from Göteborg jumps to Frederikshavn, from Helsinki
+    to Tallinn (the isochrone takes every ferry within the distance)."""
+    import json
+    import urllib.request
+    import range_area
+    if time.time() < range_area._down_until:
+        return None
+    body = range_area.request_body(lat, lon, kms)
+    body["costing_options"] = {"auto": {"exclude_ferries": True}}
+    req = urllib.request.Request(config.VALHALLA_URL + "/isochrone", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=range_area.TIMEOUT_S) as r:
+            gj = json.loads(r.read().decode("utf-8"))
+    except Exception as e:
+        log.info("ferries: area around the port failed: %s", e)
+        return None
+    return gj if isinstance(gj, dict) and gj.get("features") else None
+
+
 def _run(device, lat, lon, cruise, points, route_fn=None, area_fn=None, osm_fn=None, land_fn=None):
     import range_area
     try:
@@ -301,7 +323,7 @@ def _run(device, lat, lon, cruise, points, route_fn=None, area_fn=None, osm_fn=N
                     "line": [[round(la, 5), round(lo, 5)] for la, lo in c["pts"][::max(1, len(c["pts"]) // 200)]],
                     "area": None}
             if km_after >= 20:
-                res_area = (area_fn or range_area.compute)(b[0], b[1], [min(int(km_after), 800)])
+                res_area = (area_fn or _area_on_land)(b[0], b[1], [min(int(km_after), 800)])
                 gj = res_area[0] if isinstance(res_area, tuple) else res_area
                 if gj:
                     item["area"] = wr.compose(gj, None, b[0], b[1]) or gj
