@@ -26,6 +26,7 @@ import wind_range as wr
 log = logging.getLogger("triplog.ferries")
 
 MAX_FERRIES = 8
+DUP_KM = 10                      # same ports: terminals closer than this
 CACHE_S = 3 * 3600
 
 _lock = threading.Lock()
@@ -242,6 +243,14 @@ def _run(device, lat, lon, cruise, points, route_fn=None, area_fn=None, osm_fn=N
             if _km((lat, lon), a) <= reach:
                 cands.append(c)
         cands.sort(key=lambda c: _km((lat, lon), c["pts"][0]))
+        # OSM often maps both directions (Helsinki–Tallinn and Tallinn–Helsinki)
+        # or two operators on the same crossing: keep one per pair of ports
+        uniq = []
+        for c in cands:
+            a, b = c["pts"][0], c["pts"][-1]
+            if not any(_km(a, u["pts"][0]) < DUP_KM and _km(b, u["pts"][-1]) < DUP_KM for u in uniq):
+                uniq.append(c)
+        cands = uniq
         energy_at = {}                                    # terminal → kWh left (one route each)
         ferries = []
         for c in cands:
