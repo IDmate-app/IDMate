@@ -1639,7 +1639,7 @@ def _range_area_loop():
                                         out, used = wind_range.direction_ranges_routes(
                                             c["left"], c["model"], c.get("temp"), la, lo, p,
                                             time.time(), g, v_fixed=vf)
-                                        log.info("range area: %d/16 directions along routes", used)
+                                        log.info("range area: %d/%d directions along routes", used, wind_range.N_DIRS)
                                         return out
                                 range_area.render_if_due(db, v["device"], lat, lon, kms, dirs=dirs,
                                                          refine=refine)
