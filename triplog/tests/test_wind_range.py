@@ -214,3 +214,19 @@ def test_refine_runs_only_when_due(app_module, db, monkeypatch):
     assert ra.load_last(db, "dev2")["dirs"] == [160] * H + [240] * H
     assert ra.render_if_due(db, "dev2", 53.8, 10.4, [180], dirs=dirs, now=2000, refine=refine) == "unchanged"
     assert len(calls) == 1
+
+
+def test_ferry_stretch_costs_no_energy():
+    """1.2.295: the part of a route on a ferry (Valhalla maneuver type 28)
+    adds distance but uses no battery."""
+    n = 200
+    pts = [wr._ll(53.8, 10.4, 0.0, 400 * i / n) for i in range(n + 1)]
+    road = {"length": 400, "time": 400 / 130 * 3600, "begin_shape_index": 0, "end_shape_index": n}
+    plain = {"trip": {"legs": [{"shape": _enc(pts), "maneuvers": [road]}]}}
+    ferry = {"trip": {"legs": [{"shape": _enc(pts), "maneuvers": [
+        {"length": 80, "time": 80 / 130 * 3600, "begin_shape_index": 0, "end_shape_index": 40},
+        {"type": 28, "length": 20, "time": 3600, "begin_shape_index": 40, "end_shape_index": 50},
+        {"length": 300, "time": 300 / 130 * 3600, "begin_shape_index": 50, "end_shape_index": n}]}]}}
+    a = wr.range_along_route(50.0, MODEL, 10, wr.route_profile(plain), [], 0)
+    b = wr.range_along_route(50.0, MODEL, 10, wr.route_profile(ferry), [], 0)
+    assert b >= a + 15
