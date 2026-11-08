@@ -1,6 +1,6 @@
 import os
 
-VERSION = "1.2.297"
+VERSION = "1.2.298"
 # Projektseite, steht in den Fusszeilen der Ausdrucke
 REPO_URL = "github.com/IDmate-app/IDMate"
 # Stick firmware (IDTelemetry): the dashboard says when a newer release exists.
@@ -42,6 +42,9 @@ WIND_SOURCE = os.environ.get("WIND_SOURCE", "").strip().lower()
 WIND_URL = os.environ.get("WIND_URL", "https://api.open-meteo.com/v1/forecast").strip()
 # Vehicle mass incl. driver for the climb energy of the range per direction.
 VEHICLE_MASS_KG = float(os.environ.get("VEHICLE_MASS_KG", "2200") or 2200)
+# Long ferries on request (map button): OpenStreetMap via Overpass. Only a box
+# around the car rounded to whole degrees is sent. Empty = button off.
+FERRY_URL = os.environ.get("FERRY_URL", "https://overpass-api.de/api/interpreter").strip()
 
 # ── InfluxDB field types (measurement "v") — ONE truth for all writers ──
 # Field types are FIXED once a field has been written: a deviating type

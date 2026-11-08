@@ -607,7 +607,7 @@
     const btnFerry = document.getElementById('mapFerry');
     const ferryLayer = L.layerGroup();
     let ferryOn = false, ferryPoll = null;
-    if (MAP_BOOT.valhalla) btnFerry.hidden = false;       // only with Valhalla
+    if (MAP_BOOT.ferries) btnFerry.hidden = false;        // Valhalla + ferry source set
     function drawFerries(list) {
       ferryLayer.clearLayers();
       const teal = getComputedStyle(document.documentElement).getPropertyValue('--teal').trim() || '#1de9b6';

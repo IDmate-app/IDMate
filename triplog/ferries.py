@@ -4,12 +4,12 @@ Short crossings (≤ wind_range.MAX_FERRY_KM) are part of the normal range
 area anyway. Long ones (Travemünde–Trelleborg/Helsinki, Kiel–Oslo, …) only
 when the user asks: one search, then shown until switched off.
 
-Valhalla has no "list the ferries" call, so they are found by routing: far
-targets in all directions (across the Baltic, the North Sea, Scandinavia);
-every route Valhalla sends over a long ferry reveals terminal, destination,
-length and duration. For each reachable terminal the energy left on arrival
-gives a remaining range, and Valhalla draws the area around the port of
-arrival with it.
+Valhalla routes by time and never picks a 9-hour ferry where a road exists,
+so the ferries come from OpenStreetMap (Overpass): car ferries (route=ferry,
+motor vehicles allowed) in a box around the car, rounded outward to whole
+degrees, so the service only learns the region. Per terminal in reach a
+Valhalla route gives the energy left there; the remaining range is drawn
+around the port of arrival.
 """
 
 import logging
@@ -23,7 +23,6 @@ import wind_range as wr
 
 log = logging.getLogger("triplog.ferries")
 
-TARGET_KM = (500, 900, 1300)     # straight-line distances of the search targets
 MAX_FERRIES = 8
 CACHE_S = 3 * 3600
 
@@ -53,68 +52,134 @@ def start(device, lat, lon, cruise, points):
     return status(device)
 
 
-def _target(lat, lon, th, km):
-    return (lat + km * math.cos(math.radians(th)) / wr.KY,
-            lon + km * math.sin(math.radians(th)) / (wr.KX0 * math.cos(math.radians(lat))))
+def _km(a, b):
+    p1, p2 = math.radians(a[0]), math.radians(b[0])
+    h = (math.sin((p2 - p1) / 2) ** 2
+         + math.cos(p1) * math.cos(p2) * math.sin(math.radians(b[1] - a[1]) / 2) ** 2)
+    return 2 * 6371.0 * math.asin(math.sqrt(min(1.0, h)))
 
 
-def discover(lat, lon, route_fn=None):
-    """Long ferries Valhalla uses from here: [{"a", "b", "km", "h", "name",
-    "line", "prof", "via_km"}], one per terminal pair (the nearest way to it)."""
-    route_fn = route_fn or wr._route
-    found = {}
-    for th in wr.bearings():
-        for km in TARGET_KM:
-            la, lo = _target(lat, lon, th, km)
-            if abs(la) > 80:
-                continue
-            try:
-                prof = wr.route_profile(route_fn(lat, lon, la, lo))
-            except Exception:
-                prof = None
-            if not prof:
-                continue
-            for c in prof.get("crossings") or []:
-                sea = c["km_to"] - c["km_from"]
-                if sea <= wr.MAX_FERRY_KM:
-                    continue                      # short ones are in the normal area
-                a, b = prof["pts"][c["b0"]], prof["pts"][c["b1"]]
-                key = (round(a[0], 2), round(a[1], 2), round(b[0], 2), round(b[1], 2))
-                if key in found and found[key]["via_km"] <= c["km_from"]:
+def bbox(lat, lon, radius_km):
+    """(south, west, north, east) around a position, rounded outward to whole degrees."""
+    dlat = radius_km / wr.KY
+    dlon = radius_km / (wr.KX0 * math.cos(math.radians(lat)))
+    return (math.floor(lat - dlat), math.floor(lon - dlon), math.ceil(lat + dlat), math.ceil(lon + dlon))
+
+
+def _overpass(box):
+    import json
+    import urllib.parse
+    import urllib.request
+    s, w, n, e = box
+    q = ("[out:json][timeout:60];("
+         f'way["route"="ferry"]["motor_vehicle"="yes"]({s},{w},{n},{e});'
+         f'way["route"="ferry"]["motorcar"="yes"]({s},{w},{n},{e});'
+         ");out tags geom;")
+    req = urllib.request.Request(config.FERRY_URL, data=urllib.parse.urlencode({"data": q}).encode(),
+                                 headers={"User-Agent": "IDmate"})
+    with urllib.request.urlopen(req, timeout=90) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def crossings(osm):
+    """Overpass answer → [{"pts": [(lat, lon)], "km", "name", "h"}]: ways
+    joined at shared ends (a long ferry is often split), only > MAX_FERRY_KM."""
+    ways = []
+    for el in (osm or {}).get("elements") or []:
+        g = [(p["lat"], p["lon"]) for p in el.get("geometry") or [] if p]
+        if len(g) >= 2:
+            ways.append({"pts": g, "tags": el.get("tags") or {}})
+    key = lambda p: (round(p[0], 5), round(p[1], 5))
+    chains = []
+    while ways:
+        cur = ways.pop()
+        pts, tags = list(cur["pts"]), dict(cur["tags"])
+        grown = True
+        while grown:
+            grown = False
+            for w in ways:
+                a, b = w["pts"][0], w["pts"][-1]
+                if key(a) == key(pts[-1]):
+                    pts += w["pts"][1:]
+                elif key(b) == key(pts[-1]):
+                    pts += w["pts"][::-1][1:]
+                elif key(b) == key(pts[0]):
+                    pts = w["pts"][:-1] + pts
+                elif key(a) == key(pts[0]):
+                    pts = w["pts"][::-1][:-1] + pts
+                else:
                     continue
-                found[key] = {"a": a, "b": b, "km": round(sea), "h": round(c["h"], 1),
-                              "name": c["name"], "via_km": c["km_from"],
-                              "line": prof["pts"][c["b0"]:c["b1"] + 1], "prof": prof}
-    return sorted(found.values(), key=lambda f: f["via_km"])[:MAX_FERRIES]
+                for k, v in w["tags"].items():
+                    tags.setdefault(k, v)
+                ways.remove(w)
+                grown = True
+                break
+        km = sum(_km(pts[i], pts[i + 1]) for i in range(len(pts) - 1))
+        if km <= wr.MAX_FERRY_KM:
+            continue
+        h = None
+        dur = tags.get("duration") or ""
+        try:
+            parts = [int(x) for x in dur.split(":")]
+            h = parts[0] + (parts[1] / 60 if len(parts) > 1 else 0)
+        except ValueError:
+            h = None
+        chains.append({"pts": pts, "km": round(km), "name": tags.get("name") or tags.get("ref") or "",
+                       "h": round(h if h else km / 30.0, 1)})
+    return chains
 
 
-def _run(device, lat, lon, cruise, points, route_fn=None, area_fn=None):
+def _run(device, lat, lon, cruise, points, route_fn=None, area_fn=None, osm_fn=None):
     import range_area
     try:
+        route_fn = route_fn or wr._route
+        reach = cruise["km"] if cruise.get("km") else 300
+        osm = (osm_fn or _overpass)(bbox(lat, lon, reach))
+        cands = []
+        for c in crossings(osm):
+            a, b = c["pts"][0], c["pts"][-1]
+            if _km((lat, lon), b) < _km((lat, lon), a):
+                c["pts"] = c["pts"][::-1]                 # terminal = the end nearer to the car
+                a, b = b, a
+            if _km((lat, lon), a) <= reach:
+                cands.append(c)
+        cands.sort(key=lambda c: _km((lat, lon), c["pts"][0]))
+        energy_at = {}                                    # terminal → kWh left (one route each)
         ferries = []
-        for f in discover(lat, lon, route_fn=route_fn):
-            left = wr.range_along_route(cruise["left"], cruise["model"], cruise.get("temp"), f["prof"],
-                                        points, time.time(), until_km=f["via_km"])
+        for c in cands:
+            if len(ferries) >= MAX_FERRIES:
+                break
+            a, b = c["pts"][0], c["pts"][-1]
+            tk = (round(a[0], 3), round(a[1], 3))
+            if tk not in energy_at:
+                left, via = None, None
+                try:
+                    prof = wr.route_profile(route_fn(lat, lon, a[0], a[1]))
+                    if prof:
+                        via = prof["km"]
+                        left = wr.range_along_route(cruise["left"], cruise["model"], cruise.get("temp"),
+                                                    prof, points, time.time(), until_km=via)
+                except Exception:
+                    left = None
+                energy_at[tk] = (left, via)
+            left, via = energy_at[tk]
             if left is None or left <= 0:
-                continue                          # terminal out of reach
+                continue                                  # terminal out of reach
             ride = bl.cruise_range(left, cruise["model"], cruise.get("temp"), v=bl.CRUISE_AVG_KMH)
             km_after = ride["km"] if ride else 0
-            item = {"from": [round(f["a"][0], 5), round(f["a"][1], 5)],
-                    "to": [round(f["b"][0], 5), round(f["b"][1], 5)],
-                    "sea_km": f["km"], "hours": f["h"], "name": f["name"],
-                    "to_terminal_km": round(f["via_km"]), "kwh_left": round(left, 1),
-                    "km_after": km_after,
-                    "line": [[round(la, 5), round(lo, 5)] for la, lo in f["line"][::max(1, len(f["line"]) // 200)]],
+            item = {"from": [round(a[0], 5), round(a[1], 5)], "to": [round(b[0], 5), round(b[1], 5)],
+                    "sea_km": c["km"], "hours": c["h"], "name": c["name"],
+                    "to_terminal_km": round(via), "kwh_left": round(left, 1), "km_after": km_after,
+                    "line": [[round(la, 5), round(lo, 5)] for la, lo in c["pts"][::max(1, len(c["pts"]) // 200)]],
                     "area": None}
             if km_after >= 20:
-                k = min(int(km_after), 800)
-                res_area = (area_fn or range_area.compute)(f["b"][0], f["b"][1], [k])
+                res_area = (area_fn or range_area.compute)(b[0], b[1], [min(int(km_after), 800)])
                 gj = res_area[0] if isinstance(res_area, tuple) else res_area
                 if gj:
-                    item["area"] = wr.compose(gj, None, f["b"][0], f["b"][1]) or gj
+                    item["area"] = wr.compose(gj, None, b[0], b[1]) or gj
             ferries.append(item)
         res = {"status": "ok", "ts": time.time(), "lat": lat, "lon": lon, "ferries": ferries}
-        log.info("ferries: %d long crossings reachable", len(ferries))
+        log.info("ferries: %d long crossings found, %d reachable", len(cands), len(ferries))
     except Exception as e:
         log.warning("ferries: search failed: %s", e, exc_info=True)
         res = {"status": "error", "ts": time.time(), "lat": lat, "lon": lon, "error": str(e)}
