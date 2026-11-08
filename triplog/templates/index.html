@@ -8,6 +8,15 @@
 
 {% block extra_style %}
 <style>
+  /* Ferry tooltip: a small card in the IDmate look, several lines */
+  .leaflet-tooltip.ferry-tip{background:var(--bg-card);color:var(--text-1);border:1px solid var(--border);
+    border-left:3px solid #7a3fd6;border-radius:8px;padding:0.45rem 0.6rem;box-shadow:0 4px 14px rgba(0,0,0,.25);
+    white-space:normal;width:max-content;max-width:210px;font-size:0.75rem;line-height:1.35;
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-variant-numeric:tabular-nums}
+  .leaflet-tooltip.ferry-tip::before{display:none}
+  .ferry-tip b{display:block;font-size:0.8rem;font-weight:600;margin-bottom:0.25rem}
+  .ferry-tip .row{display:flex;justify-content:space-between;gap:0.8rem}
+  .ferry-tip .row span:first-child{color:var(--text-2)}
   html,body{height:100%;overflow:hidden}
   body{-webkit-user-select:none}
 
@@ -635,10 +644,14 @@
             L.geoJSON(g, {interactive: false, style: () => ({color: col, weight: 2.5, opacity: 0.95, lineJoin: 'round'})}).addTo(ferryLayer);
           }
         }
-        const tip = T.ferry_tip.replace('{0}', f.name || '').replace('{1}', f.sea_km).replace('{2}', f.hours)
-          .replace('{3}', f.to_terminal_km).replace('{4}', f.km_after);
-        L.circleMarker(f.to, {radius: 3.5, color: '#fff', weight: 1.5, fillColor: col, fillOpacity: 1}).bindTooltip(tip).addTo(ferryLayer);
-        L.circleMarker(f.from, {radius: 2.5, color: '#fff', weight: 1, fillColor: col, fillOpacity: 1}).bindTooltip(tip).addTo(ferryLayer);
+        const row = (k, v) => `<div class="row"><span>${k}</span><span>${v}</span></div>`;
+        const tip = `<b>${esc(f.name || T.ferry_tip_title)}</b>`
+          + row(T.ferry_tip_sea, `${f.sea_km} km · ${Number(f.hours).toLocaleString(document.documentElement.lang || undefined)} h`)
+          + row(T.ferry_tip_term, `${f.to_terminal_km} km`)
+          + row(T.ferry_tip_after, `≈ ${f.km_after} km`);
+        const tipOpt = {className: 'ferry-tip', direction: 'auto', opacity: 1};
+        L.circleMarker(f.to, {radius: 3.5, color: '#fff', weight: 1.5, fillColor: col, fillOpacity: 1}).bindTooltip(tip, tipOpt).addTo(ferryLayer);
+        L.circleMarker(f.from, {radius: 2.5, color: '#fff', weight: 1, fillColor: col, fillOpacity: 1}).bindTooltip(tip, tipOpt).addTo(ferryLayer);
       });
       if (!map.hasLayer(ferryLayer)) map.addLayer(ferryLayer);
       syncFerrySea();
@@ -886,7 +899,10 @@
     }
 
     const T = {
-      ferry_tip: {{ t.dash_ferry_tip | tojson }},
+      ferry_tip_title: {{ t.dash_ferry_tip_title | tojson }},
+      ferry_tip_sea: {{ t.dash_ferry_tip_sea | tojson }},
+      ferry_tip_term: {{ t.dash_ferry_tip_term | tojson }},
+      ferry_tip_after: {{ t.dash_ferry_tip_after | tojson }},
       ferry_none: {{ t.dash_ferry_none | tojson }},
       ferry_err: {{ t.dash_ferry_err | tojson }},
       ferry_nomodel: {{ t.dash_ferry_nomodel | tojson }},
