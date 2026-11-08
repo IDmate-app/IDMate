@@ -581,6 +581,7 @@
       const lbl = on ? {{ t.dash_map_exit | tojson }} : {{ t.dash_map_full | tojson }};
       btnFull.title = lbl; btnFull.setAttribute('aria-label', lbl);
       setTimeout(() => map.invalidateSize(), 50);
+      syncFerrySea();
     }
     btnFull.addEventListener('click', () => setFull(!mapCol.classList.contains('map-max')));
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && mapCol.classList.contains('map-max')) setFull(false); });
@@ -606,17 +607,25 @@
     // ── Long ferries on request (ferries.py) — off by default, one search per switch-on ──
     const btnFerry = document.getElementById('mapFerry');
     const ferryLayer = L.layerGroup();
+    // The crossings over the sea only in full screen: in the small map they
+    // cover the coast and the range outline (areas and ports stay).
+    const ferrySea = L.layerGroup();
+    function syncFerrySea() {
+      const show = ferryOn && mapCol.classList.contains('map-max');
+      if (show && !map.hasLayer(ferrySea)) map.addLayer(ferrySea);
+      if (!show && map.hasLayer(ferrySea)) map.removeLayer(ferrySea);
+    }
     let ferryOn = false, ferryPoll = null;
     if (MAP_BOOT.ferries) btnFerry.hidden = false;        // Valhalla + ferry source set
     function drawFerries(list) {
-      ferryLayer.clearLayers();
+      ferryLayer.clearLayers(); ferrySea.clearLayers();
       // The map tiles are light in both themes: a fixed dark purple with a
       // white halo (like the range line) stands out on sea, land and roads.
       const col = '#7a3fd6';
       const halo = {color: '#ffffff', opacity: 0.6, interactive: false, lineJoin: 'round', lineCap: 'round'};
       list.forEach(f => {
-        L.polyline(f.line, {...halo, weight: 4.5}).addTo(ferryLayer);
-        L.polyline(f.line, {color: col, weight: 2, opacity: 0.95, dashArray: '6 5', interactive: false}).addTo(ferryLayer);
+        L.polyline(f.line, {...halo, weight: 4.5}).addTo(ferrySea);
+        L.polyline(f.line, {color: col, weight: 2, opacity: 0.95, dashArray: '6 5', interactive: false}).addTo(ferrySea);
         if (f.area) {
           const outl = (f.area.features || []).find(x => (x.properties || {}).kind === 'line');
           if (outl) {
@@ -632,6 +641,7 @@
         L.circleMarker(f.from, {radius: 2.5, color: '#fff', weight: 1, fillColor: col, fillOpacity: 1}).bindTooltip(tip).addTo(ferryLayer);
       });
       if (!map.hasLayer(ferryLayer)) map.addLayer(ferryLayer);
+      syncFerrySea();
       // show range and ferries together; held while the ferry button is on
       if (list.length) {
         const b = L.latLngBounds([]);
@@ -660,6 +670,7 @@
       btnFerry.setAttribute('aria-pressed', ferryOn ? 'true' : 'false');
       if (!ferryOn) {
         ferryLayer.clearLayers(); map.removeLayer(ferryLayer);
+        ferrySea.clearLayers(); syncFerrySea();
         clearInterval(ferryPoll); ferryPoll = null; btnFerry.classList.remove('busy');
         mapTouched = false; rangeFitKm = null; updateRangeCircle();   // back to the normal view
         return;
