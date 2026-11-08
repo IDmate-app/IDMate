@@ -36,7 +36,7 @@ def key(lat, lon, kms):
 def request_body(lat, lon, kms):
     return {"locations": [{"lat": lat, "lon": lon}], "costing": "auto",
             "contours": [{"distance": float(k)} for k in sorted(kms)],
-            "polygons": True, "denoise": 0.5, "generalize": 1500}
+            "polygons": True, "denoise": 0.02, "generalize": 1500}
 
 
 def _fetch(lat, lon, kms):
@@ -125,7 +125,7 @@ def area(lat, lon, kms):
 RENDER_EVERY_S = 10 * 60
 # Bump when the stored geometry changes how it is built: an area from an
 # older version is rendered again at once, even if nothing else changed.
-GEOM_VERSION = 4          # 3: grid outline (1.2.290), 4: 32 directions (1.2.294)
+GEOM_VERSION = 5          # 3: grid outline (1.2.290), 4: 32 directions (1.2.294), 5: islands/ferries kept (1.2.295)
 _fail_at = {}          # device -> time of the last failed render (no retry every minute)
 
 

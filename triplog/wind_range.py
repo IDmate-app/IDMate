@@ -389,10 +389,17 @@ def route_profile(resp):
         x, y = _xy(a, b, c, d)
         cum.append(cum[-1] + math.hypot(x, y))
     speed = [None] * (len(pts) - 1)
+    ferry = [False] * (len(pts) - 1)
     for m in leg.get("maneuvers") or []:
         ln, tm = m.get("length"), m.get("time")
         b0, b1 = m.get("begin_shape_index"), m.get("end_shape_index")
-        if ln and tm and b0 is not None and b1 is not None and tm > 0:
+        if b0 is None or b1 is None:
+            continue
+        # Valhalla maneuver type 28 = "take the ferry": the car rides along
+        on_ferry = m.get("type") == 28 or m.get("travel_type") == "ferry"
+        for k in range(b0, min(b1, len(speed))):
+            ferry[k] = ferry[k] or on_ferry
+        if ln and tm and tm > 0 and not on_ferry:
             v = ln / tm * 3600
             for k in range(b0, min(b1, len(speed))):
                 speed[k] = v
@@ -400,7 +407,7 @@ def route_profile(resp):
     fill = sum(known) / len(known) if known else None
     speed = [v or fill for v in speed]
     elev = leg.get("elevation") or resp.get("trip", {}).get("elevation")
-    return {"pts": pts, "cum": cum, "speed": speed,
+    return {"pts": pts, "cum": cum, "speed": speed, "ferry": ferry,
             "elev": elev if elev and all(e is not None for e in elev) else None, "km": cum[-1]}
 
 
@@ -446,6 +453,11 @@ def range_along_route(remaining_kwh, model, temp_now, prof, points, now, v_fixed
         mid = road + STEP_KM / 2
         if mid <= prof["km"]:
             lat, lon, head, k = _at_km(prof, mid)
+            if prof.get("ferry") and prof["ferry"][k]:
+                road += STEP_KM            # on the ferry: distance without energy
+                t += STEP_KM / 25.0 * 3600
+                h_prev = None              # sea level jump, no climb energy
+                continue
             v_road = prof["speed"][k]
             last_head, last_v = head, v_road
         else:                                   # beyond the route: straight on
