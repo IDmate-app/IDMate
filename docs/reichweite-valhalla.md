@@ -116,32 +116,3 @@ Ergebnis auf den Server.
 Beide Rechner sollten dieselbe Valhalla-Version benutzen (erste Zeile im
 Log, „Valhalla version“). Den Server-Container danach nicht ohne Grund neu
 ziehen.
-
-## Lange Fähren (Karten-Button „Fähren“)
-
-Valhalla kennt die Fähren, hat aber keine Abfrage, die sie auflistet. IDmate
-liest sie deshalb aus derselben `.osm.pbf`, aus der die Kacheln gebaut sind.
-Die Fähren werden nach jedem Neubau einmal herausgezogen:
-
-```bash
-sudo apt install -y osmium-tool
-cd ~/valhalla
-osmium tags-filter europe-latest.osm.pbf w/route=ferry -O -o ferries.osm.pbf
-osmium export ferries.osm.pbf --geometry-types=linestring -O -o ferries.geojson
-ls -lh ferries.geojson
-```
-
-`ferries.geojson` (wenige MB) gehört in den Datenordner von IDmate, also
-neben `triplog.db`, z. B. auf dem Server:
-
-```bash
-docker cp ferries.geojson <idmate-container>:/data/ferries.geojson
-```
-
-Ein Neustart ist nicht nötig; die Datei wird bei der ersten Fährensuche
-gelesen (Log: „ferries: N long car ferries loaded from ferries.geojson“).
-Ein anderer Ort geht mit `FERRY_FILE=/pfad/ferries.geojson`.
-
-Ohne die Datei fragt IDmate öffentliche Overpass-Server (`FERRY_URL`,
-mehrere durch Komma getrennt, leer = aus). Dabei geht nur ein auf ganze Grad
-gerundeter Kartenausschnitt hinaus, nie die Position des Autos.
