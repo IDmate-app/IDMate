@@ -66,8 +66,15 @@ def bbox(lat, lon, radius_km):
     return (math.floor(lat - dlat), math.floor(lon - dlon), math.ceil(lat + dlat), math.ceil(lon + dlon))
 
 
-def _overpass(box):
+def _urls():
+    """FERRY_URL may list several Overpass servers, comma separated: the
+    public ones are often overloaded (502/504), then the next one is asked."""
+    return [u.strip() for u in (config.FERRY_URL or "").split(",") if u.strip()]
+
+
+def _overpass(box, opener=None):
     import json
+    import urllib.error
     import urllib.parse
     import urllib.request
     s, w, n, e = box
@@ -75,10 +82,22 @@ def _overpass(box):
          f'way["route"="ferry"]["motor_vehicle"="yes"]({s},{w},{n},{e});'
          f'way["route"="ferry"]["motorcar"="yes"]({s},{w},{n},{e});'
          ");out tags geom;")
-    req = urllib.request.Request(config.FERRY_URL, data=urllib.parse.urlencode({"data": q}).encode(),
-                                 headers={"User-Agent": "IDmate"})
-    with urllib.request.urlopen(req, timeout=90) as r:
-        return json.loads(r.read().decode("utf-8"))
+    body = urllib.parse.urlencode({"data": q}).encode()
+    opener = opener or urllib.request.urlopen
+    errors = []
+    for url in _urls():
+        req = urllib.request.Request(url, data=body, headers={"User-Agent": "IDmate"})
+        try:
+            with opener(req, timeout=90) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as ex:
+            if ex.code not in (429, 500, 502, 503, 504):
+                raise
+            errors.append(f"{urllib.parse.urlsplit(url).hostname}: HTTP {ex.code}")
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as ex:
+            errors.append(f"{urllib.parse.urlsplit(url).hostname}: {ex}")
+        log.info("ferries: overpass %s", errors[-1])
+    raise OSError("overpass busy (" + "; ".join(errors) + ")")
 
 
 def crossings(osm):

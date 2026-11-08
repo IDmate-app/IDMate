@@ -98,3 +98,40 @@ def test_endpoints_off_and_no_model(app_module, db, monkeypatch):
         monkeypatch.setattr(app_module, "_vehicle_state", lambda dev: {"lat": 53.8, "lon": 10.4, "calc_range": 200})
         assert c.post("/api/ferries/start").get_json()["error"] == "no_model"
         assert "lat" not in c.get("/api/ferries").get_json()
+
+
+def test_overpass_falls_back_to_next_server(monkeypatch):
+    import io
+    import urllib.error
+    import config
+    monkeypatch.setattr(config, "FERRY_URL", "https://a.example/api, https://b.example/api")
+    asked = []
+
+    class Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def opener(req, timeout):
+        asked.append(req.full_url)
+        if "a.example" in req.full_url:
+            raise urllib.error.HTTPError(req.full_url, 502, "Bad Gateway", {}, None)
+        return Resp(b'{"elements": []}')
+    assert ferries._overpass((53, 10, 55, 12), opener=opener) == {"elements": []}
+    assert asked == ["https://a.example/api", "https://b.example/api"]
+
+
+def test_overpass_all_busy_reports_busy(monkeypatch):
+    import urllib.error
+    import config
+    monkeypatch.setattr(config, "FERRY_URL", "https://a.example/api,https://b.example/api")
+
+    def opener(req, timeout):
+        raise urllib.error.HTTPError(req.full_url, 504, "Gateway Timeout", {}, None)
+    try:
+        ferries._overpass((53, 10, 55, 12), opener=opener)
+        assert False
+    except OSError as e:
+        assert "overpass busy" in str(e) and "a.example: HTTP 504" in str(e)
