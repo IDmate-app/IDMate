@@ -230,3 +230,18 @@ def test_ferry_stretch_costs_no_energy():
     a = wr.range_along_route(50.0, MODEL, 10, wr.route_profile(plain), [], 0)
     b = wr.range_along_route(50.0, MODEL, 10, wr.route_profile(ferry), [], 0)
     assert b >= a + 15
+
+
+def test_long_ferry_route_is_not_used():
+    """Travemünde–Helsinki-like: a route with a long sea crossing keeps the
+    straight-line estimate instead of an energy-free 1000 km."""
+    n = 200
+    pts = [wr._ll(53.8, 10.4, 0.0, 600 * i / n) for i in range(n + 1)]
+    long_ferry = {"trip": {"legs": [{"shape": _enc(pts), "maneuvers": [
+        {"length": 30, "time": 30 / 100 * 3600, "begin_shape_index": 0, "end_shape_index": 10},
+        {"type": 28, "length": 500, "time": 30 * 3600, "begin_shape_index": 10, "end_shape_index": 180},
+        {"length": 70, "time": 70 / 100 * 3600, "begin_shape_index": 180, "end_shape_index": n}]}]}}
+    assert wr.route_profile(long_ferry)["ferry_km"] > wr.MAX_FERRY_KM
+    out, used = wr.direction_ranges_routes(50.0, MODEL, 10, 53.8, 10.4, [], 0, [190] * N,
+                                           route_fn=lambda *a: long_ferry)
+    assert used == 0 and out == [190] * N

@@ -335,6 +335,8 @@ def compose(isochrone, dirs, lat0, lon0):
 # and the raster height above stay in place for that bearing.
 
 TOP_SPEED = 130
+MAX_FERRY_KM = 40        # short ferries (Fehmarnbelt ~19 km) count, long ones
+                         # (Travemünde–Trelleborg/Helsinki) make the route unusable
 ELEV_INTERVAL_M = 500
 ROUTE_TIMEOUT_S = 30
 
@@ -407,7 +409,8 @@ def route_profile(resp):
     fill = sum(known) / len(known) if known else None
     speed = [v or fill for v in speed]
     elev = leg.get("elevation") or resp.get("trip", {}).get("elevation")
-    return {"pts": pts, "cum": cum, "speed": speed, "ferry": ferry,
+    ferry_km = sum(cum[k + 1] - cum[k] for k in range(len(ferry)) if ferry[k])
+    return {"pts": pts, "cum": cum, "speed": speed, "ferry": ferry, "ferry_km": ferry_km,
             "elev": elev if elev and all(e is not None for e in elev) else None, "km": cum[-1]}
 
 
@@ -509,8 +512,8 @@ def direction_ranges_routes(remaining_kwh, model, temp_now, lat0, lon0, points, 
             prof = route_profile(route_fn(lat0, lon0, lat1, lon1))
         except Exception:
             prof = None
-        if not prof or prof["km"] < 5:
-            out.append(g)
+        if not prof or prof["km"] < 5 or prof.get("ferry_km", 0) > MAX_FERRY_KM:
+            out.append(g)              # no route, or only over a long sea crossing
             continue
         used += 1
         out.append(range_along_route(remaining_kwh, model, temp_now, prof, points, now, v_fixed=v_fixed))
