@@ -81,3 +81,34 @@ def test_fetch_parses_open_meteo(monkeypatch):
     out = wind._fetch([(53.8, 10.4), (54.2, 10.4)])
     assert "latitude=53.800%2C54.200" in seen["url"] and "forecast_hours=24" in seen["url"]
     assert out[0]["kmh"] == [22.5] and out[1]["dir"] == [250]
+
+
+def test_page_carries_area_and_wind(app_module, db, monkeypatch):
+    """1.2.293: stored area and the wind of this hour come with the page."""
+    import config
+    import re
+    import time
+    import range_area as ra
+    import wind
+    monkeypatch.setattr(config, "VALHALLA_URL", "http://valhalla:8002")
+    monkeypatch.setattr(config, "WIND_SOURCE", "open-meteo")
+    db.execute("INSERT INTO vehicles (id, plate, device) VALUES (1, 'EV1', 'dev1')")
+    db.execute("INSERT INTO users (id, username, password_hash, is_admin, active_vehicle_id) "
+               "VALUES (1, 'admin', 'x', 1, 1)")
+    rec = {"key": [0, 0, [200]], "lat": 53.8, "lon": 10.4, "kms": [200], "ts": 1, "v": ra.GEOM_VERSION,
+           "geojson": {"type": "FeatureCollection", "features": []}}
+    db.execute("INSERT INTO range_area_last (device, data, ts) VALUES ('dev1', ?, 1)", (json.dumps(rec),))
+    h = int(time.time() // 3600 * 3600)
+    for la, lo in wind.grid(53.8, 10.4, 200)[:5]:
+        db.execute("INSERT INTO wind_points (key, lat, lon, fetched, data) VALUES (?, ?, ?, ?, ?)",
+                   (wind._key((la, lo)), la, lo, time.time(),
+                    json.dumps({"t": [h], "kmh": [20], "dir": [270], "gust": [30], "temp": [9]})))
+    db.commit()
+    app_module.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+    with app_module.app.test_client() as c:
+        with c.session_transaction() as s:
+            s["_user_id"] = "1"
+        html = c.get("/").get_data(as_text=True)
+    boot = json.loads(re.search(r'id="mapBoot">(.*?)</script>', html, re.S).group(1))
+    assert boot["area"]["status"] == "ok" and boot["area"]["kms"] == [200]
+    assert len(boot["wind"]["points"]) == 5

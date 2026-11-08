@@ -1488,7 +1488,32 @@ def dashboard():
     fahrzeug = active_vehicle()
     return render_template("index.html", device=active_device(),
                            kartenauto=kartenauto_fuer(fahrzeug),
-                           bms_learn=bool(fahrzeug and fahrzeug.get("bms_learn")))
+                           bms_learn=bool(fahrzeug and fahrzeug.get("bms_learn")),
+                           map_boot=_map_boot(active_device()))
+
+
+def _map_boot(device):
+    """Stored range area and the wind of the current hour, delivered with the
+    page: both are on the map at once, no waiting for the first fetch."""
+    out = {"area": None, "wind": None}
+    if not config.VALHALLA_URL:
+        return out
+    try:
+        import range_area
+        db = get_db()
+        try:
+            rec = range_area.load_last(db, device)
+            if rec:
+                out["area"] = {"status": "ok", **rec}
+                if config.WIND_SOURCE:
+                    import wind
+                    out["wind"] = {"status": "ok",
+                                   "points": wind.current(db, rec["lat"], rec["lon"], max(rec["kms"]))}
+        finally:
+            db.close()
+    except Exception as e:               # the page must load anyway
+        log.warning("map boot data: %s", e)
+    return out
 
 
 @app.route("/api/range-area")

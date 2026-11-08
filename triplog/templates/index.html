@@ -155,6 +155,7 @@
     <!-- Map -->
     <div class="map-col">
       <div id="map"></div>
+      <script type="application/json" id="mapBoot">{{ map_boot | tojson }}</script>
       <div class="wind-legend" id="windLegend" hidden>
         <b>{{ t.dash_wind }}</b>
         <div class="row"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 1 L15.5 10 H12 V19 H8 V10 H4.5 Z" fill="#8b949e" stroke="#fff" stroke-width="0.8"/></svg><span>&lt; 15 km/h <span class="ms">· &lt; 4 m/s</span></span></div>
@@ -334,7 +335,7 @@
     const setMapPref = (k, v) => { try { localStorage.setItem('map_' + k, v ? '1' : '0'); } catch (e) {} };
     let rangeHidden = !mapPref('range', true), windHidden = !mapPref('wind', true);
     function applyRangeVisibility() {
-      if (rangeHidden) [rangeInner, rangeOuter].forEach(c => c && c.setStyle({opacity: 0, fillOpacity: 0}));
+      if (rangeHidden) [rangeInner, rangeOuter].forEach(c => c && c.setStyle({opacity: 0}));
       if (rangeArea) {
         if (!rangeHidden && !map.hasLayer(rangeArea)) map.addLayer(rangeArea);
         else if (rangeHidden && map.hasLayer(rangeArea)) map.removeLayer(rangeArea);
@@ -364,9 +365,9 @@
       const areaHere = !!rangeArea;
       // Circles only while there is no road area for this position/range; the
       // outer one stays (invisible) as the frame for the automatic zoom.
-      rangeInner = set(rangeInner, areaHere ? null : lo, {color: col, weight: 1, opacity: 0.6, fillColor: col, fillOpacity: 0.07});
-      rangeOuter = set(rangeOuter, hi, {color: col, weight: 1.5, opacity: 0.8, dashArray: '6 6', fill: lo == null, fillColor: col, fillOpacity: 0.05});
-      if (rangeOuter) rangeOuter.setStyle(areaHere ? {opacity: 0, fillOpacity: 0} : {opacity: 0.8, fillOpacity: lo == null ? 0.05 : 0});
+      rangeInner = set(rangeInner, areaHere ? null : lo, {color: col, weight: 1, opacity: 0.6, fill: false});
+      rangeOuter = set(rangeOuter, hi, {color: col, weight: 1.5, opacity: 0.8, dashArray: '6 6', fill: false});
+      if (rangeOuter) rangeOuter.setStyle({opacity: areaHere ? 0 : 0.8});
       // Fit once; again only while the user has not touched the map and the
       // range changed by more than 15 % (e.g. the BMS estimate arriving).
       if (rangeOuter && (rangeFitKm == null || (!mapTouched && Math.abs(hi - rangeFitKm) > 0.15 * rangeFitKm))) {
@@ -471,9 +472,6 @@
         // come from the same smoothed loops, so they match exactly.
         const closed = c => c.length > 3 && c[0][0] === c[c.length - 1][0] && c[0][1] === c[c.length - 1][1];
         const lines = outl.geometry.coordinates.map(c => closed(c) ? smoothRing(c, 2) : smoothLine(c, 2));
-        const rings = lines.filter(closed);
-        if (rings.length) layers.push(L.geoJSON({type: 'Feature', geometry: {type: 'MultiPolygon', coordinates: rings.map(r => [r])}},
-          {...base, style: () => ({stroke: false, fillColor: col, fillOpacity: 0.12})}));
         const soft = {...outl, geometry: {...outl.geometry, coordinates: lines}};
         layers.push(L.geoJSON(soft, {...base, style: () => ({color: '#ffffff', weight: 6, opacity: 0.55, lineJoin: 'round', lineCap: 'round'})}));
         layers.push(L.geoJSON(soft, {...base, style: () => ({color: col, weight: 3, opacity: 0.95, lineJoin: 'round', lineCap: 'round'})}));
@@ -499,15 +497,18 @@
         // looked torn on the wavy outline, so both are solid.
         return {color: col, weight: outer && many ? 2.5 : 3, opacity: outer && many ? 0.7 : 0.95,
                 lineJoin: 'round', lineCap: 'round',
-                fillColor: col, fillOpacity: outer && many ? 0.06 : 0.12};
+                fill: false};
       }});
       rangeArea = L.layerGroup([halo, line]).addTo(map);
       rangeAreaTs = k;
     }
-    async function pollRangeArea() {
+    // Data delivered with the page (stored area, wind of this hour).
+    let MAP_BOOT = {};
+    try { MAP_BOOT = JSON.parse(document.getElementById('mapBoot').textContent || '{}') || {}; } catch (e) {}
+    async function pollRangeArea(first) {
       if (!rangeAreaOff) {
         try {
-          const d = await (await fetch('/api/range-area/last')).json();
+          const d = (first && MAP_BOOT.area) ? MAP_BOOT.area : await (await fetch('/api/range-area/last')).json();
           if (d.status === 'off') rangeAreaOff = true;
           if (d.status === 'ok') {
             const nd = d.dirs && d.dirs.length ? d.dirs : null;
@@ -525,7 +526,7 @@
       rangeAreaBoot = true;
       updateRangeCircle();
     }
-    pollRangeArea();
+    pollRangeArea(true);
     setTimeout(() => { if (!rangeAreaBoot) { rangeAreaBoot = true; updateRangeCircle(); } }, 4000);
     setInterval(pollRangeArea, 30000);
 
@@ -542,15 +543,15 @@
           + `<path d="M10 1 L15.5 10 H12 V19 H8 V10 H4.5 Z" fill="${col}" fill-opacity="0.85" stroke="#fff" stroke-width="0.8"/></svg>`});
     }
     function syncWindLayer() {
-      const want = !windHidden && map.getZoom() >= 6 && windLayer.getLayers().length > 0;
+      const want = !windHidden && map.getZoom() >= 5 && windLayer.getLayers().length > 0;
       if (want && !map.hasLayer(windLayer)) map.addLayer(windLayer);
       else if (!want && map.hasLayer(windLayer)) map.removeLayer(windLayer);
       document.getElementById('windLegend').hidden = !want;
     }
-    async function pollWind() {
+    async function pollWind(first) {
       if (windOff) return;
       try {
-        const d = await (await fetch('/api/wind')).json();
+        const d = (first && MAP_BOOT.wind) ? MAP_BOOT.wind : await (await fetch('/api/wind')).json();
         if (d.status === 'off') { windOff = true; return; }
         document.getElementById('mapWind').hidden = false;
         windLayer.clearLayers();
@@ -595,8 +596,9 @@
       windHidden = !windHidden; setMapPref('wind', !windHidden); syncBtns(); syncWindLayer();
     });
     syncBtns();
-    pollWind();
-    setInterval(pollWind, 10 * 60 * 1000);
+    // after the whole script ran (labels T are defined further down)
+    setTimeout(() => pollWind(true), 0);
+    setInterval(pollWind, 60 * 1000);
     let locMarkers = [];
     let chargeLocMarkers = [];
 
