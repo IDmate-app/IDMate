@@ -84,9 +84,21 @@ _file_cache = {"key": None, "chains": None}
 
 
 def file_chains(path=None):
-    """Long car ferries from the local osmium export (GeoJSON, also
-    line-delimited), joined and filtered once, kept until the file changes.
-    None when there is no such file."""
+    """Long car ferries (> MAX_FERRY_KM) from the local file, or None."""
+    allc = _file_all(path)
+    return None if allc is None else [c for c in allc if c["km"] > wr.MAX_FERRY_KM]
+
+
+def short_ferries(path=None):
+    """Short car ferries (≤ MAX_FERRY_KM) from the local file, or None."""
+    allc = _file_all(path)
+    return None if allc is None else [c for c in allc if c["km"] <= wr.MAX_FERRY_KM]
+
+
+def _file_all(path=None):
+    """All car ferries from the local osmium export (GeoJSON, also
+    line-delimited), joined once, kept until the file changes. None when
+    there is no such file."""
     import json
     import os
     path = path if path is not None else config.FERRY_FILE
@@ -120,8 +132,9 @@ def file_chains(path=None):
                  else geom.get("coordinates") if geom.get("type") == "MultiLineString" else [])
         for ln in lines or []:
             els.append({"tags": tags, "geometry": [{"lat": c[1], "lon": c[0]} for c in ln or [] if len(c) >= 2]})
-    chains = crossings({"elements": els})
-    log.info("ferries: %d long car ferries loaded from %s", len(chains), os.path.basename(path))
+    chains = crossings({"elements": els}, min_km=0)
+    log.info("ferries: %d long car ferries loaded from %s",
+             sum(1 for c in chains if c["km"] > wr.MAX_FERRY_KM), os.path.basename(path))
     with _lock:
         _file_cache.update(key=key, chains=chains)
     return chains
@@ -160,9 +173,11 @@ def _overpass(box, opener=None):
     raise OSError("overpass busy (" + "; ".join(errors) + ")")
 
 
-def crossings(osm):
+def crossings(osm, min_km=None):
     """Overpass answer → [{"pts": [(lat, lon)], "km", "name", "h"}]: ways
-    joined at shared ends (a long ferry is often split), only > MAX_FERRY_KM."""
+    joined at shared ends (a long ferry is often split), only > min_km
+    (default MAX_FERRY_KM)."""
+    min_km = wr.MAX_FERRY_KM if min_km is None else min_km
     ways = []
     for el in (osm or {}).get("elements") or []:
         g = [(p["lat"], p["lon"]) for p in el.get("geometry") or [] if p]
@@ -210,7 +225,7 @@ def crossings(osm):
                 for k, v in w["tags"].items():
                     tags.setdefault(k, v)
         km = sum(_km(pts[i], pts[i + 1]) for i in range(len(pts) - 1))
-        if km <= wr.MAX_FERRY_KM:
+        if km <= min_km:
             continue
         h = None
         dur = tags.get("duration") or ""
@@ -259,6 +274,92 @@ def _area_on_land(lat, lon, kms):
         log.info("ferries: area around the port failed: %s", e)
         return None
     return gj if isinstance(gj, dict) and gj.get("features") else None
+
+
+NEAR_KM = 3.0                    # ferry end counts as "in" an area this close to its edge
+
+
+def _inside(pt, ring):
+    x, y = pt
+    c = False
+    n = len(ring)
+    for i in range(n):
+        (ax, ay), (bx, by) = ring[i], ring[i - 1]
+        if (ay > y) != (by > y) and x < ax + (y - ay) * (bx - ax) / (by - ay):
+            c = not c
+    return c
+
+
+def _near(pt, ring, km=NEAR_KM):
+    if _inside(pt, ring):
+        return True
+    x, y = pt
+    for i in range(len(ring)):
+        (ax, ay), (bx, by) = ring[i], ring[i - 1]
+        dx, dy = bx - ax, by - ay
+        t = 0.0 if dx == dy == 0 else max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy)))
+        if math.hypot(ax + t * dx - x, ay + t * dy - y) <= km:
+            return True
+    return False
+
+
+def keep_by_road(isochrone, lat0, lon0, land, short):
+    """Drop the parts of an isochrone that are only reached over a long
+    ferry (> MAX_FERRY_KM) — Valhalla's isochrone takes every ferry.
+
+    land: the same isochrone without any ferry (connected by road). A part
+    stays when it holds land area of its contour, or when a short car ferry
+    (short: [{"pts"}], ≤ MAX_FERRY_KM) links it to a part that stays."""
+    if not isochrone or not land:
+        return isochrone
+    xy = lambda la, lo: wr._xy(lat0, lon0, la, lo)
+    land_pts = {}
+    for f in land.get("features") or []:
+        c = (f.get("properties") or {}).get("contour")
+        if c is not None:
+            land_pts.setdefault(float(c), []).extend(xy(r[0][1], r[0][0]) for r in wr._outer_rings(f) if r)
+    links = [(xy(*c["pts"][0]), xy(*c["pts"][-1])) for c in short or []]
+    out = {**isochrone, "features": []}
+    dropped = 0
+    for f in isochrone.get("features") or []:
+        c = (f.get("properties") or {}).get("contour")
+        rings = wr._outer_rings(f)
+        if c is None or not rings:
+            out["features"].append(f)
+            continue
+        loc = [[xy(la, lo) for lo, la in r] for r in rings]
+        seeds = land_pts.get(float(c), []) + [(0.0, 0.0)]
+        keep = [any(_inside(p, r) for p in seeds) for r in loc]
+        grown = True
+        while grown:                      # islands reached over short ferries, also chained
+            grown = False
+            for i, r in enumerate(loc):
+                if keep[i]:
+                    continue
+                for a, b in links:
+                    for p, q in ((a, b), (b, a)):
+                        if _near(p, r) and any(keep[j] and _near(q, loc[j]) for j in range(len(loc))):
+                            keep[i] = grown = True
+                            break
+                    if keep[i]:
+                        break
+        dropped += keep.count(False)
+        kept = [rings[i] for i in range(len(rings)) if keep[i]]
+        if kept:
+            out["features"].append({**f, "geometry": {"type": "MultiPolygon", "coordinates": [[r] for r in kept]}})
+    if dropped:
+        log.info("range area: %d part(s) only reached over long ferries left out", dropped)
+    return out
+
+
+def drop_long_ferry_parts(isochrone, lat, lon, kms):
+    """keep_by_road with the land isochrone from Valhalla and the short
+    ferries from the local file; unchanged without the file."""
+    short = short_ferries()
+    if short is None or not isochrone:
+        return isochrone
+    land = _area_on_land(lat, lon, kms)
+    return keep_by_road(isochrone, lat, lon, land, short)
 
 
 def _run(device, lat, lon, cruise, points, route_fn=None, area_fn=None, osm_fn=None, land_fn=None):

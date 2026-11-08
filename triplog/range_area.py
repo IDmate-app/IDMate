@@ -127,7 +127,8 @@ DIR_TOL_KM = 15          # a direction must move more than this (or 8 %) to coun
 DIR_TOL_SHARE = 0.08
 # Bump when the stored geometry changes how it is built: an area from an
 # older version is rendered again at once, even if nothing else changed.
-GEOM_VERSION = 5          # 3: grid outline (1.2.290), 4: 32 directions (1.2.294), 5: islands/ferries kept (1.2.295)
+GEOM_VERSION = 6          # 3: grid outline (1.2.290), 4: 32 directions (1.2.294), 5: islands/ferries kept (1.2.295),
+                          # 6: nothing behind ferries > 40 km (1.2.309)
 _fail_at = {}          # device -> time of the last failed render (no retry every minute)
 
 
@@ -193,6 +194,12 @@ def render_if_due(db, device, lat, lon, kms, dirs=None, now=None, refine=None):
                 kms, dirs, lv = [lv[0]], None, None
             req = lv or [round(x) for x in kms]
     gj, err = compute(lat, lon, req)
+    if gj is not None:
+        try:                              # the agreed 40 km: no land behind long ferries
+            import ferries
+            gj = ferries.drop_long_ferry_parts(gj, lat, lon, req)
+        except Exception as e:
+            log.warning("range area: long ferry filter failed: %s", e)
     if gj is not None and dirs:
         gj = wind_range.compose(gj, dirs, lat, lon)
     elif gj is not None and len(req) == 1:
