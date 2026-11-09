@@ -144,3 +144,12 @@ def test_yearly_estimate_sheet_is_visible_while_pdf_renders(client, db, app_modu
     # the customise panel offers the print switches (stored per vehicle)
     for key in ("hide_dest", "hide_estimate", "hide_pct", "hide_bar"):
         assert f"optBox('{key}'" in html
+
+
+def test_print_title_is_the_pdf_file_name(client, db, app_module):
+    """Title = PDF file name: "Ladekostenabrechnung 2024 06-Juni EV1"."""
+    _seed(db)
+    with client.session_transaction() as s:
+        s["vehicle"] = "EV1"
+    html = client.get("/charges/print?year=2024&month=06").get_data(as_text=True)
+    assert "<title>Ladekostenabrechnung 2024 06-Juni EV1</title>" in html

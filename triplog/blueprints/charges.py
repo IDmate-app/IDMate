@@ -1066,6 +1066,7 @@ def charges_print():
                            year=year_str,
                            years=[r['y'] for r in years_rows],
                            month_name=month_name,
+                           month_num=f"{month_int:02d}",
                            date_from=date_from,
                            date_to=date_to,
                            pauschale_kwh=pauschale_kwh,

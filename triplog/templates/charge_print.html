@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="icon" type="image/svg+xml" href="/static/print-icon.svg">
-  <title>IDmate — {{ t.print_title }} {% if month_name and year %}{{ month_name }} {{ year }}{% endif %}</title>
+  {# also the PDF file name: "Ladekostenabrechnung 2026 09-September <Kennzeichen>" #}
+  <title>{{ t.print_title }}{% if month_name and year %} {{ year }} {{ month_num }}-{{ month_name }}{% endif %}{% set _plate = vehicle.plate if vehicle else filter_vehicle %}{% if _plate %} {{ _plate }}{% endif %}</title>
   <style>
     @media (prefers-reduced-motion: reduce){*{animation-duration:0.01ms !important;transition-duration:0.01ms !important;scroll-behavior:auto !important}}
     @view-transition{navigation:auto}
