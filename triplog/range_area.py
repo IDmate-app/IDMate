@@ -181,6 +181,7 @@ def render_if_due(db, device, lat, lon, kms, dirs=None, now=None, refine=None):
     # Due: now the expensive part — ranges along real routes (speed limits,
     # elevation); the key above stays on the cheap estimate, so this runs
     # only when a new area is rendered anyway.
+    t0 = time.time()
     if refine and dirs:
         try:
             better = refine()
@@ -207,6 +208,8 @@ def render_if_due(db, device, lat, lon, kms, dirs=None, now=None, refine=None):
         gj = wind_range.compose(gj, None, lat, lon) or gj
     if gj is None:
         _fail_at[device] = now
+        log.warning("range area: render failed for %s (%s) — next try in %d min",
+                    device, err or "no area", RENDER_EVERY_S // 60)
         return "failed"
     _fail_at.pop(device, None)
     rec = {"key": kk, "lat": lat, "lon": lon, "v": GEOM_VERSION,
@@ -216,5 +219,6 @@ def render_if_due(db, device, lat, lon, kms, dirs=None, now=None, refine=None):
     db.execute("INSERT OR REPLACE INTO range_area_last (device, data, ts) VALUES (?, ?, ?)",
                (device, json.dumps(rec, separators=(",", ":")), now))
     db.commit()
-    log.info("range area: rendered for %s (%s km)", device, "/".join(str(x) for x in rec["kms"]))
+    log.info("range area: rendered for %s (%s km) in %.0f s", device,
+             "/".join(str(x) for x in rec["kms"]), time.time() - t0)
     return "rendered"
