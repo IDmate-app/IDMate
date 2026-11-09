@@ -318,7 +318,6 @@ def keep_by_road(isochrone, lat0, lon0, land, short):
         c = (f.get("properties") or {}).get("contour")
         if c is not None:
             land_pts.setdefault(float(c), []).extend(xy(r[0][1], r[0][0]) for r in wr._outer_rings(f) if r)
-    links = [(xy(*c["pts"][0]), xy(*c["pts"][-1])) for c in short or []]
     out = {**isochrone, "features": []}
     dropped = 0
     for f in isochrone.get("features") or []:
@@ -328,21 +327,37 @@ def keep_by_road(isochrone, lat0, lon0, land, short):
             out["features"].append(f)
             continue
         loc = [[xy(la, lo) for lo, la in r] for r in rings]
+        # bounding box of every part, widened by NEAR_KM: cheap first test
+        bbs = [(min(p[0] for p in r) - NEAR_KM, min(p[1] for p in r) - NEAR_KM,
+                max(p[0] for p in r) + NEAR_KM, max(p[1] for p in r) + NEAR_KM) for r in loc]
+        inbb = lambda p, i: bbs[i][0] <= p[0] <= bbs[i][2] and bbs[i][1] <= p[1] <= bbs[i][3]
         seeds = land_pts.get(float(c), []) + [(0.0, 0.0)]
-        keep = [any(_inside(p, r) for p in seeds) for r in loc]
+        keep = [any(inbb(p, i) and _inside(p, r) for p in seeds) for i, r in enumerate(loc)]
+        if all(keep):
+            out["features"].append(f)
+            continue
+        # short ferries: which parts each end touches (only ferries in the area)
+        X0, Y0 = min(b[0] for b in bbs), min(b[1] for b in bbs)
+        X1, Y1 = max(b[2] for b in bbs), max(b[3] for b in bbs)
+        edges = []
+        for ch in short or []:
+            a = xy(*ch["pts"][0])
+            b = xy(*ch["pts"][-1])
+            if not (X0 <= a[0] <= X1 and Y0 <= a[1] <= Y1 and X0 <= b[0] <= X1 and Y0 <= b[1] <= Y1):
+                continue
+            ra = [i for i in range(len(loc)) if inbb(a, i) and _near(a, loc[i])]
+            rb = [i for i in range(len(loc)) if inbb(b, i) and _near(b, loc[i])] if ra else []
+            if ra and rb:
+                edges.append((ra, rb))
         grown = True
         while grown:                      # islands reached over short ferries, also chained
             grown = False
-            for i, r in enumerate(loc):
-                if keep[i]:
-                    continue
-                for a, b in links:
-                    for p, q in ((a, b), (b, a)):
-                        if _near(p, r) and any(keep[j] and _near(q, loc[j]) for j in range(len(loc))):
-                            keep[i] = grown = True
-                            break
-                    if keep[i]:
-                        break
+            for ra, rb in edges:
+                for x, y in ((ra, rb), (rb, ra)):
+                    if any(keep[i] for i in x):
+                        for j in y:
+                            if not keep[j]:
+                                keep[j] = grown = True
         dropped += keep.count(False)
         kept = [rings[i] for i in range(len(rings)) if keep[i]]
         if kept:
