@@ -18,16 +18,28 @@ site never joins its block, and an on-site block made only of stops with a
 charge and shorter than CHARGE_STOP_MAX_MIN is dropped (the return trip from
 work with a stop at a charger is still the return trip).
 
+Nights away (hotel on a trip over several days) are not time on site: a
+stop that spans NIGHT_HOUR o'clock and lasts at least NIGHT_MIN_H hours, next
+to a day on site (a stop of DAY_MIN_MIN+ without the night, within
+SITE_RADIUS_M, right before or right after it), is a *night*. It closes the
+on-site block before it and is listed on its own; the block starts again
+when the car arrives at the site next morning. A night shift (out from home
+in the evening, on site over night, home in the morning) has no such day
+next to it and stays time on site.
+
 Pure logic: the caller passes trips, charges and home points.
 """
 
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 
 HOME_RADIUS_M = 1000
 SITE_RADIUS_M = 10000
 CHARGE_STOP_MAX_MIN = 60
 CHARGE_SITE_M = 1000
+NIGHT_HOUR = 3
+NIGHT_MIN_H = 3
+DAY_MIN_MIN = 60
 HOME_NAMES = {"zuhause", "home", "daheim", "zu hause"}
 # Visit reason of a trip that only goes back from a site (its destination
 # names the place left, not the place reached).
@@ -139,6 +151,16 @@ def build_outings(trips, charges, home_points, home_names=()):
     return result
 
 
+def _night(arrive, leave):
+    """The car stood there over night (NIGHT_HOUR o'clock, NIGHT_MIN_H+ hours)."""
+    if not arrive or not leave or leave - arrive < timedelta(hours=NIGHT_MIN_H):
+        return False
+    t = arrive.replace(hour=NIGHT_HOUR, minute=0, second=0, microsecond=0)
+    if t < arrive:
+        t += timedelta(days=1)
+    return t <= leave
+
+
 def _outing(o, home, charges):
     trips = o["trips"]
     start, end = _ts(trips[0]["start_time"]), _ts(trips[-1]["end_time"])
@@ -160,8 +182,27 @@ def _outing(o, home, charges):
     overlap = any(s["arrive"] and s["leave"] and s["leave"] < s["arrive"] for s in stops)
     stops = [s for s in stops if not (s["arrive"] and s["leave"] and s["leave"] < s["arrive"])]
 
-    groups = []
-    for s in stops:
+    over = [_night(s["arrive"], s["leave"]) for s in stops]
+
+    def day_near(i, j):
+        """stops[j] is a day on site close to stops[i]."""
+        if not (0 <= j < len(stops)) or over[j]:
+            return False
+        if (_minutes(stops[j]["arrive"], stops[j]["leave"]) or 0) < DAY_MIN_MIN:
+            return False
+        a, b = stops[i]["pos"], stops[j]["pos"]
+        if a and b:
+            return _dist_m(a, b) <= SITE_RADIUS_M
+        hop = stops[max(i, j)]["hop_km"]          # the trip between the two
+        return hop is not None and hop * 1000 <= SITE_RADIUS_M
+
+    groups, nights = [], []
+    for i, s in enumerate(stops):
+        if over[i] and (day_near(i, i - 1) or day_near(i, i + 1)):
+            nights.append({"start": s["arrive"], "end": s["leave"], "minutes": _minutes(s["arrive"], s["leave"]),
+                           "addresses": _addresses(s["addrs"])})
+            groups.append(None)         # closes the block before the night
+            continue
         g = groups[-1] if groups else None
         drove_away = (s["hop_km"] or 0) * 1000 > SITE_RADIUS_M
         d = _dist_m(g["anchor"], s["pos"]) if g and s["pos"] and g["anchor"] else None
@@ -176,6 +217,8 @@ def _outing(o, home, charges):
 
     sites = []
     for g in groups:
+        if g is None:
+            continue
         st = g["stops"]
         s0, s1 = st[0]["arrive"], st[-1]["leave"]
         mins = _minutes(s0, s1)
@@ -206,6 +249,10 @@ def _outing(o, home, charges):
         "flagged": any(t.get("is_manual") or t.get("manual_fields") for t in trips),
         "km": round(sum(t.get("distance_km") or 0 for t in trips), 1),
         "sites": sites,
+        "nights": nights,
+        # sites and nights in time order, for the table
+        "rows": sorted([dict(x, kind="site") for x in sites] + [dict(x, kind="night") for x in nights],
+                       key=lambda x: x["start"] or datetime.min),
     }
 
 

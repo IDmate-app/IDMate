@@ -35,6 +35,8 @@
   .visits tr.out td{border-top:2px solid var(--border);border-bottom:none;padding-top:0.6rem}
   .visits tr.out td:first-child{border-left:4px solid var(--pc,var(--border))}
   .visits tr.site td:first-child{border-left:4px solid var(--pc,var(--border))}
+  .visits tr.night td{opacity:0.6}
+  .visits tr.night td:first-child{opacity:1;border-left-style:dotted}
   .visits td.day{white-space:nowrap;font-weight:600;color:var(--text-1);width:8.5rem}
   .visits td.time{white-space:nowrap;font-variant-numeric:tabular-nums;width:17rem}
   .visits td.time .what{color:var(--text-2)}
@@ -100,7 +102,14 @@
           {%- if o.overlap %}<span class="warn">{{ t.visits_overlap }}</span>{% endif %}</td>
         <td class="place">{% for a in o.addresses %}<span class="addr">{{ a }}</span>{% endfor %}</td>
       </tr>
-      {% for s in o.sites %}
+      {% for s in (o.rows if o.rows is defined else o.sites) %}
+      {% if s.kind == 'night' %}
+      <tr class="site night">
+        <td></td>
+        <td class="time">{{ span(s.start, s.end, md) }} <span class="what">{{ t.visits_night }}</span> <span class="len">({{ dur(s.minutes) }})</span></td>
+        <td class="place">{% for a in s.addresses %}<span class="addr">{{ a }}</span>{% endfor %}</td>
+      </tr>
+      {% else %}
       {% set sc = colors.get(s.purpose, '') %}
       <tr class="site" style="{% if sc %}--pc:{{ sc }}{% endif %}">
         <td></td>
@@ -108,6 +117,7 @@
         <td class="place">{% if s.destinations %}<span class="dest">{{ s.destinations|join(' · ') }}</span>{% endif %}
           {%- if o.sites|length > 1 %}{% for a in s.addresses %}<span class="addr">{{ a }}</span>{% endfor %}{% endif %}</td>
       </tr>
+      {% endif %}
       {% endfor %}
     {% endfor %}
     </tbody>
