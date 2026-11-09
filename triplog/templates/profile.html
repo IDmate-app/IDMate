@@ -182,7 +182,9 @@
     var T = {{ {'created': t.profile_passkey_created, 'lastUsed': t.profile_passkey_last_used, 'never': t.profile_passkey_never,
                 'remove': t.profile_passkey_remove, 'removeConfirm': t.profile_passkey_remove_confirm,
                 'none': t.profile_passkey_none, 'added': t.profile_passkey_added,
-                'unsupported': t.profile_passkey_unsupported, 'otherHost': t.profile_passkey_other_host}|tojson }};
+                'unsupported': t.profile_passkey_unsupported, 'otherHost': t.profile_passkey_other_host,
+                'blocked': t.profile_passkey_blocked, 'exists': t.passkey_exists,
+                'reauthWrong': t.profile_passkey_reauth_wrong}|tojson }};
     var list = document.getElementById('pkList'), msg = document.getElementById('pkMsg');
     var addBtn = document.getElementById('pkAddBtn'), reauth = document.getElementById('pkReauth');
     function fmt(ts) { return ts ? new Date(ts.replace(' ', 'T') + 'Z').toLocaleString('{{ current_lang|lower }}', { dateStyle: 'medium', timeStyle: 'short' }) : T.never; }
@@ -204,31 +206,62 @@
         list.appendChild(row);
       });
     }
-    async function add(extra) {
-      msg.textContent = '';
+    // Options fetched beforehand (valid 5 min on the server): the browser
+    // dialog then opens right inside the click, as Safari requires.
+    var prepared = null, preparedAt = 0;
+    async function prepare(extra) {
+      prepared = null;
+      try { prepared = await P.begin(extra); preparedAt = Date.now(); return 'ok'; }
+      catch (e) { if (e.data && e.data.reauth) return 'reauth'; throw e; }
+    }
+    function fresh() { return prepared && Date.now() - preparedAt < 240000; }
+    function fail(e) {
+      if (window.console) console.warn('passkey:', e && e.name, e && e.message, e);
+      var text = P.isCancel(e) ? T.blocked : (e && e.name === 'InvalidStateError') ? T.exists : (e && e.message) || String(e);
+      msg.textContent = text; msg.style.color = 'var(--danger)';
+      toast(text, 'error');
+    }
+    async function create() {
+      var label = document.getElementById('pkLabel').value.trim();
+      addBtn.disabled = true;
       try {
-        var label = document.getElementById('pkLabel').value.trim();
-        await P.register(label, extra);
+        await P.create(prepared, label);
+        prepared = null;
         document.getElementById('pkLabel').value = '';
         reauth.classList.remove('open');
         document.getElementById('pkReauthInput').value = '';
         toast(T.added, 'success');
         load();
+        prepare().catch(function () {});
       } catch (e) {
-        if (e.data && e.data.reauth) { reauth.classList.add('open'); document.getElementById('pkReauthInput').focus(); return; }
-        if (P.isCancel(e)) return;
-        msg.textContent = e.message || String(e);
-      }
+        if (!P.isCancel(e)) prepared = null;     // a cancelled dialog: same options, click again
+        fail(e);
+      } finally { addBtn.disabled = false; }
+    }
+    function start() {
+      msg.textContent = ''; msg.style.color = '';
+      if (fresh()) return create();              // no await before the dialog
+      prepare().then(function (r) {
+        if (r === 'reauth') { reauth.classList.add('open'); document.getElementById('pkReauthInput').focus(); return; }
+        return create();
+      }).catch(fail);
     }
     if (!P || !P.supported()) {
       document.getElementById('pkAddRow').style.display = 'none';
       msg.textContent = T.unsupported;
     } else {
-      addBtn.addEventListener('click', function () { add(); });
+      addBtn.addEventListener('click', start);
       document.getElementById('pkReauthBtn').addEventListener('click', function () {
         var v = document.getElementById('pkReauthInput').value;
-        if (v) add({ password: v, code: v });
+        if (!v) return;
+        msg.textContent = ''; msg.style.color = '';
+        prepare({ password: v, code: v }).then(function (r) {
+          if (r === 'reauth') { msg.textContent = T.reauthWrong; msg.style.color = 'var(--danger)'; return; }
+          reauth.classList.remove('open');
+          return create();
+        }).catch(fail);
       });
+      prepare().catch(function () {});           // ready before the first click
     }
     load();
   });
