@@ -28,6 +28,8 @@
   "profile_passkey_added": "Passkey eingerichtet.",
   "profile_passkey_unsupported": "Dieser Browser unterstützt keine Passkeys.",
   "profile_passkey_other_host": "gilt für {0}",
+  "profile_passkey_blocked": "Abgebrochen oder vom Browser blockiert. Bitte nochmal auf „Passkey hinzufügen“ klicken.",
+  "profile_passkey_reauth_wrong": "Passwort oder 2FA-Code stimmt nicht.",
   "login_error": "Benutzername oder Passwort falsch",
   "totp_label": "TOTP-Code oder Recovery-Code eingeben",
   "totp_confirm": "Bestätigen",

@@ -36,11 +36,15 @@
                   && await PublicKeyCredential.isConditionalMediationAvailable());
       } catch (e) { return false; }
     },
-    // Add a passkey for the signed-in user. extra: {password|code} when the
-    // server asks for a fresh sign-in (error.data.reauth).
-    async register(label, extra) {
-      const b = await api('/api/passkeys/register/begin', extra);
-      const pk = b.publicKey;
+    // Add a passkey for the signed-in user, in two steps: begin() fetches
+    // the options (extra: {password|code} when the server asks for a fresh
+    // sign-in, error.data.reauth); create() opens the browser dialog. Safari
+    // only allows that dialog right inside a click, so the page fetches the
+    // options beforehand and calls create() directly in the click handler.
+    async begin(extra) {
+      return (await api('/api/passkeys/register/begin', extra)).publicKey;
+    },
+    async create(pk, label) {
       const cred = await navigator.credentials.create({ publicKey: {
         ...pk,
         challenge: b64uToBuf(pk.challenge),
@@ -58,6 +62,9 @@
           transports: r.getTransports ? r.getTransports() : [],
         },
       } });
+    },
+    async register(label, extra) {
+      return this.create(await this.begin(extra), label);
     },
     // Sign in. conditional: offer the passkeys in the user name autofill
     // (runs until a passkey is picked or `signal` aborts it).
