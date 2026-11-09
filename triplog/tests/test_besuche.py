@@ -149,3 +149,67 @@ def test_visits_purpose_filter(app_module, db):
         assert 'href="/trips/visits?all=1"' in only                       # reset chip
         assert "Mi 21.10.2026" not in c.get("/trips/visits").get_data(as_text=True)   # kept in session
         assert "Mi 21.10.2026" in c.get("/trips/visits?all=1").get_data(as_text=True)
+
+
+HOTEL = (52.5300, 12.9600)       # 3 km from the site
+
+
+def test_hotel_nights_on_a_trip_over_days_are_not_on_site():
+    # Tue 14:51 off, hotel in the evening; Wed and Thu on site from the hotel
+    # (3 km), back to the hotel; Fri home. The nights are no time on site.
+    trips = [
+        trip("2026-11-03T14:51:00", "2026-11-03T18:30:00", HOME, SITE, dest="Baustelle"),
+        trip("2026-11-03T21:20:00", "2026-11-03T21:32:00", SITE, HOTEL, dest="Baustelle"),
+        dict(trip("2026-11-04T07:10:00", "2026-11-04T07:20:00", HOTEL, SITE, dest="Baustelle"), distance_km=3),
+        dict(trip("2026-11-04T17:00:00", "2026-11-04T17:10:00", SITE, HOTEL, dest="Baustelle"), distance_km=3),
+        dict(trip("2026-11-05T07:05:00", "2026-11-05T07:15:00", HOTEL, SITE, dest="Baustelle"), distance_km=3),
+        trip("2026-11-06T12:25:00", "2026-11-06T16:11:00", SITE, HOME, dest="Baustelle", reason="Rückfahrt"),
+    ]
+    for t in trips[1:]:
+        t.setdefault("distance_km", 3)
+    trips[1]["distance_km"] = 3
+    [o] = build(trips)
+    assert o["complete"] and o["start"].strftime("%d. %H:%M") == "03. 14:51" and o["end"].strftime("%d. %H:%M") == "06. 16:11"
+    hm = lambda x: (x["start"].strftime("%d. %H:%M"), x["end"].strftime("%d. %H:%M"))
+    assert [hm(s) for s in o["sites"]] == [("03. 18:30", "03. 21:20"),     # evening on site, then hotel
+                                           ("04. 07:20", "04. 17:00"),
+                                           ("05. 07:15", "06. 12:25")]     # car stayed on site, no day next to it
+    assert [hm(n) for n in o["nights"]] == [("03. 21:32", "04. 07:10"), ("04. 17:10", "05. 07:05")]
+    assert [r["kind"] for r in o["rows"]] == ["site", "night", "site", "night", "site"]
+
+
+def test_short_stop_at_night_is_no_overnight():
+    assert not besuche._night(besuche._ts("2026-11-04T02:30:00"), besuche._ts("2026-11-04T03:20:00"))
+    assert besuche._night(besuche._ts("2026-11-03T22:00:00"), besuche._ts("2026-11-04T06:00:00"))
+    assert not besuche._night(besuche._ts("2026-11-04T07:00:00"), besuche._ts("2026-11-04T18:00:00"))
+
+
+def test_night_shift_from_home_stays_on_site():
+    # out at 21:00, on site over night, home in the morning: work, not a hotel
+    trips = [trip("2026-11-03T21:00:00", "2026-11-03T21:40:00", HOME, SITE, dest="Baustelle"),
+             trip("2026-11-04T06:10:00", "2026-11-04T06:50:00", SITE, HOME, dest="Baustelle", reason="Rückfahrt")]
+    [o] = build(trips)
+    assert o["nights"] == [] and o["sites"][0]["minutes"] == 510
+
+
+def test_visits_page_shows_the_night(app_module, db):
+    db.execute("INSERT INTO users (id, username, password_hash, is_admin, active_vehicle_id) VALUES (1, 'ingo', 'x', 1, 1)")
+    db.execute("INSERT INTO vehicles (id, plate, device) VALUES (1, 'EV1', 'dev1')")
+    db.execute("INSERT INTO locations (name, lat, lon) VALUES ('Zuhause', ?, ?)", HOME)
+    for t in (trip("2026-11-03T14:51:00", "2026-11-03T18:30:00", HOME, SITE, dest="Baustelle"),
+              trip("2026-11-03T21:20:00", "2026-11-03T21:32:00", SITE, HOTEL),
+              trip("2026-11-04T07:10:00", "2026-11-04T07:20:00", HOTEL, SITE, dest="Baustelle"),
+              trip("2026-11-04T15:00:00", "2026-11-04T18:00:00", SITE, HOME)):
+        db.execute("""INSERT INTO trips (device, start_time, end_time, start_lat, start_lon, end_lat, end_lon,
+                      purpose, destination, distance_km) VALUES ('dev1', ?, ?, ?, ?, ?, ?, ?, ?, 3)""",
+                   (t["start_time"], t["end_time"], t["start_lat"], t["start_lon"], t["end_lat"], t["end_lon"],
+                    t["purpose"], t["destination"]))
+    db.commit()
+    app_module.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+    with app_module.app.test_client() as c:
+        with c.session_transaction() as s:
+            s["_user_id"] = "1"
+        html = c.get("/trips/visits?from=2026-11-03&to=2026-11-04").get_data(as_text=True)
+    assert 'class="site night"' in html and "Übernachtung" in html
+    # on site 18:30–21:20 and 07:20–15:00; the night 21:32–07:10 on its own
+    assert "(2:50 h)" in html and "(7:40 h)" in html and "(9:38 h)" in html
