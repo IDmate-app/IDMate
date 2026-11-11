@@ -35,6 +35,9 @@ MIN_BEARINGS = 8         # fewer with a result: no rim, the old way
 EXTRA_BUDGET_S = 90      # a finer pass only while twice the time so far fits into this
 CLOSE = 0.04             # a route that arrives within this share of the energy of empty needs no second one
 STEP_OUT = 1.6           # never more than this × further out in one step
+CARRY_MAX_KM = 40        # how far the rest is carried on from a landing at most
+CARRY_DETOUR = 1.4       # road km per km over the land raster (island roads wind)
+CARRY_MIN_KM = 2
 TABLE = 720              # rim lookup: half-degree steps
 
 
@@ -94,8 +97,18 @@ def arrival(remaining_kwh, model, temp_now, lat0, lon0, lat1, lon1, points, now,
     if left is None:
         return None
     la, lo, _, _ = wr._at_km(prof, end)
+    # where short ferries (and car trains) land, with the energy at that
+    # moment: from there the car drives on, whatever becomes of this route
+    landings = []
+    for c in prof.get("crossings") or []:
+        if c["km_to"] - c["km_from"] > wr.MAX_FERRY_KM or c["km_to"] > end:
+            break
+        e = _left_at(trace, c["km_from"])
+        if e is not None and e > 0:
+            pla, plo, _, _ = wr._at_km(prof, c["km_to"])
+            landings.append((pla, plo, e, c["km_from"]))
     return {"lat": la, "lon": lo, "road": end, "left": left, "ferry": ferry, "ferry_km": short,
-            "ferry_name": name, "empty_km": km if left < 0 else None}
+            "ferry_name": name, "empty_km": km if left < 0 else None, "landings": landings}
 
 
 def _arrive(remaining_kwh, model, temp_now, lat0, lon0, th, r_km, points, now, v_fixed, route_fn):
@@ -216,11 +229,23 @@ def probe(remaining_kwh, model, temp_now, lat0, lon0, points, now, guess, v_fixe
     if len(rim) < MIN_BEARINGS:
         return None
     rim.sort()
-    # the places themselves, in local km: (x, y, kWh left on arrival) — plus the car
-    places = [(0.0, 0.0, float(remaining_kwh))]
+    # Where a short ferry or a car train landed with energy left, in local
+    # km: (x, y, km the rest still carries from there, as the crow flies).
+    # Behind such a crossing the land has its own geometry (an island): the
+    # rim of the bearing mostly lies in the water before it. The rest is
+    # counted at the consumption of the way there. (Measured against single
+    # routes: doing the same from every reached place makes the area too
+    # large — 1.2.320.)
+    best = {}
     for a in seen:
-        t = math.radians(a["th"])
-        places.append((a["r"] * math.sin(t), a["r"] * math.cos(t), a["left"]))
+        for la, lo, e, road in a.get("landings") or []:
+            used = remaining_kwh - e
+            if e > 0 and used > 0 and road > 0:
+                key = (round(la, 2), round(lo, 2))
+                reach = min(CARRY_MAX_KM, e / (used / road) / CARRY_DETOUR)
+                if reach > best.get(key, (0, 0, 0.0))[2]:
+                    best[key] = (*wr._xy(lat0, lon0, la, lo), reach)
+    places = list(best.values())
     return {"rim": rim, "places": places, "dirs": dirs, "used": len(rim), "routes": routes,
             "dmax": max(p[2] for p in rim), "safe": min(roads) if roads else None, "seconds": clock() - t0}
 
@@ -264,7 +289,53 @@ def rim_table(rim):
     return [sum(raw[(k + d) % TABLE] for d in range(-w, w + 1)) / (2 * w + 1) for k in range(TABLE)]
 
 
-def compose(isochrone, rim, lat0, lon0, safe=None):
+def _carry_on(land, x0, y0, cell, places):
+    """Cells reached from landings with energy left: from each over land
+    cells only (never across water), as far as its rest carries.
+    land: the mask grid; returns a grid of the same layout."""
+    import heapq
+    ny, nx = len(land), len(land[0])
+    best = {}
+    heap = []
+    for x, y, reach in places:
+        if reach < CARRY_MIN_KM:
+            continue
+        i, j = int((x - x0) / cell), int((y - y0) / cell)
+        # the place itself may sit just off the land raster (quay, shore): nearest land cell
+        spot = None
+        for d in range(0, 3):
+            for jj in range(j - d, j + d + 1):
+                for ii in range(i - d, i + d + 1):
+                    if 0 <= jj < ny and 0 <= ii < nx and land[jj][ii]:
+                        spot = (ii, jj)
+                        break
+                if spot:
+                    break
+            if spot:
+                break
+        if spot and best.get(spot, -1.0) < reach:
+            best[spot] = reach
+            heapq.heappush(heap, (-reach, spot[0], spot[1]))
+    out = [bytearray(nx) for _ in range(ny)]
+    diag = cell * 1.4142
+    while heap:
+        neg, i, j = heapq.heappop(heap)
+        left = -neg
+        if best.get((i, j), -1.0) > left:
+            continue
+        out[j][i] = 1
+        for di, dj, step in ((1, 0, cell), (-1, 0, cell), (0, 1, cell), (0, -1, cell),
+                             (1, 1, diag), (1, -1, diag), (-1, 1, diag), (-1, -1, diag)):
+            a, b = i + di, j + dj
+            if 0 <= a < nx and 0 <= b < ny and land[b][a]:
+                r = left - step
+                if r >= 0 and best.get((a, b), -1.0) < r:
+                    best[(a, b)] = r
+                    heapq.heappush(heap, (-r, a, b))
+    return out
+
+
+def compose(isochrone, rim, lat0, lon0, safe=None, places=None):
     """The largest contour of a Valhalla isochrone (land reachable by road)
     cut to the rim → GeoJSON like wind_range.compose: one fill feature
     (MultiPolygon) and one outline feature (closed loops).
@@ -273,7 +344,13 @@ def compose(isochrone, rim, lat0, lon0, safe=None):
     it stays, also beyond the rim. One edge per bearing cannot tell that a
     peninsula or an island behind a bay is still in reach by its own road
     (the edge of that bearing may lie in the water before it); the road
-    distance can."""
+    distance can.
+
+    places: [(x km, y km, km the energy left still carries)] — where short
+    ferries or car trains landed with energy to spare. From each the area
+    grows on over land as far as that rest carries: Westerland reached by
+    train with 3 kWh left means the island around it, not only the bit
+    that happens to lie inside the rim."""
     feats = [f for f in (isochrone or {}).get("features") or []
              if (f.get("properties") or {}).get("contour") is not None]
     table = rim_table(rim or [])
@@ -292,14 +369,16 @@ def compose(isochrone, rim, lat0, lon0, safe=None):
         srings = [r for r in srings if len(r) >= 3]
         if srings:
             near = wr._rasterize(srings, frame=(x0, y0, cell, len(grid[0]), len(grid)))[0]
+    on = _carry_on(grid, x0, y0, cell, places) if places else None
     k = TABLE / 360.0
     for j, row in enumerate(grid):
         if not any(row):
             continue
         y = y0 + (j + 0.5) * cell
         keep = near[j] if near else None
+        more = on[j] if on else None
         for i in range(len(row)):
-            if row[i] and not (keep and keep[i]):
+            if row[i] and not (keep and keep[i]) and not (more and more[i]):
                 x = x0 + (i + 0.5) * cell
                 th = math.degrees(math.atan2(x, y)) % 360.0
                 if x * x + y * y > table[int(th * k) % TABLE] ** 2:
