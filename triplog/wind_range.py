@@ -170,15 +170,20 @@ MAX_CELLS = 450
 MIN_LOOP_KM2 = 30.0
 
 
-def _rasterize(polys):
-    """Union of polygons (local km) on a grid of cells → (grid rows, x0, y0, cell)."""
-    xs = [p[0] for poly in polys for p in poly]
-    ys = [p[1] for poly in polys for p in poly]
-    x0, y0 = min(xs), min(ys)
-    cell = max(CELL_KM_MIN, max(max(xs) - x0, max(ys) - y0) / MAX_CELLS)
-    x0, y0 = x0 - 2 * cell, y0 - 2 * cell
-    nx = int((max(xs) - x0) / cell) + 3
-    ny = int((max(ys) - y0) / cell) + 3
+def _rasterize(polys, frame=None):
+    """Union of polygons (local km) on a grid of cells → (grid rows, x0, y0, cell).
+    frame: (x0, y0, cell, nx, ny) of an existing grid — the polygons are then
+    drawn onto a grid of exactly that layout."""
+    if frame:
+        x0, y0, cell, nx, ny = frame
+    else:
+        xs = [p[0] for poly in polys for p in poly]
+        ys = [p[1] for poly in polys for p in poly]
+        x0, y0 = min(xs), min(ys)
+        cell = max(CELL_KM_MIN, max(max(xs) - x0, max(ys) - y0) / MAX_CELLS)
+        x0, y0 = x0 - 2 * cell, y0 - 2 * cell
+        nx = int((max(xs) - x0) / cell) + 3
+        ny = int((max(ys) - y0) / cell) + 3
     grid = [bytearray(nx) for _ in range(ny)]
     for poly in polys:
         rows = {}

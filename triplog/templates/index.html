@@ -322,9 +322,18 @@
     // Map
     const map = L.map('map', {zoomControl: false, attributionControl: false}).setView([52.52, 13.40], 14);
     IDmateMap.baseLayer('{{ map_tile_url }}', {maxZoom: 19}).addTo(map);
-    // Re-render map when stats column height changes
     if (window.ResizeObserver) {
-      new ResizeObserver(() => map.invalidateSize()).observe(document.querySelector('.stats-col'));
+      // The map changes size while the boxes next to it load, and when it
+      // goes to full screen: tell Leaflet at once and fit the view again
+      // right then (not 10 s later with the next tick) — unless the user
+      // has taken the map in hand.
+      let fitT = null;
+      const mapRO = new ResizeObserver(() => {
+        map.invalidateSize();
+        clearTimeout(fitT);
+        fitT = setTimeout(() => { if (!mapTouched && rangeFitKm != null) { rangeFitKm = null; updateRangeCircle(); } }, 150);
+      });
+      [map.getContainer(), document.querySelector('.stats-col')].forEach(el => el && mapRO.observe(el));
     }
 
     let marker = null;
@@ -451,7 +460,8 @@
       if (!areaHere) shade.setArea([circleRing(rangePos, hi)]);
       // Fit once; again only while the user has not touched the map and the
       // range changed by more than 15 % (e.g. the BMS estimate arriving).
-      if (rangeOuter && (rangeFitKm == null || (!mapTouched && Math.abs(hi - rangeFitKm) > 0.15 * rangeFitKm))) {
+      // (With a road area the view follows the area, not the number.)
+      if (rangeOuter && (rangeFitKm == null || (!mapTouched && !(areaHere && areaBounds) && Math.abs(hi - rangeFitKm) > 0.15 * rangeFitKm))) {
         // The map may not be laid out yet (size 0 → fitBounds picks max
         // zoom): only count the fit once it had a real size.
         map.invalidateSize();
@@ -555,7 +565,8 @@
         // Closed loops (grid outline) are smoothed as rings; fill and line
         // come from the same smoothed loops, so they match exactly.
         const closed = c => c.length > 3 && c[0][0] === c[c.length - 1][0] && c[0][1] === c[c.length - 1][1];
-        const lines = outl.geometry.coordinates.map(c => closed(c) ? smoothRing(c, 2) : smoothLine(c, 2));
+        // one pass of corner cutting: takes the grid steps off, keeps the shape
+        const lines = outl.geometry.coordinates.map(c => closed(c) ? smoothRing(c, 1) : smoothLine(c, 1));
         shade.setArea(shadeRings(lines.filter(closed)));
         const rs = shadeRings(lines.filter(closed));
         areaBounds = rs.length ? L.latLngBounds(rs.flat()) : null;

@@ -30,7 +30,8 @@ log = logging.getLogger("triplog.range_field")
 
 MAX_ROUTES = 3           # per bearing
 MIN_BEARINGS = 8         # fewer with a result: no rim, the old way
-EXTRA_BUDGET_S = 90      # the bearings in between only when everything fits into this
+EXTRA_BUDGET_S = 90      # a finer pass only while twice the time so far fits into this
+CLOSE = 0.04             # a route that arrives within this share of the energy of empty needs no second one
 STEP_OUT = 1.6           # never more than this × further out in one step
 TABLE = 720              # rim lookup: half-degree steps
 
@@ -92,8 +93,10 @@ def _arrive(remaining_kwh, model, temp_now, lat0, lon0, th, r_km, points, now, v
 
 
 def _edge(remaining_kwh, model, temp_now, lat0, lon0, th, r0, points, now, v_fixed, route_fn):
-    """The edge of the range on one bearing → (rim point or None, routes asked).
-    Rim point: (bearing°, km as the crow flies, road km)."""
+    """The edge of the range on one bearing → (rim point or None, routes
+    asked, energy). Rim point: (bearing°, km as the crow flies, road km);
+    energy: True when the battery sets this edge, False at the quay of a
+    long ferry (the road km there say nothing about the range)."""
     lo = hi = None                       # furthest place reached / nearest place not reached
     r, asked = max(r0, 5.0), 0
     for _ in range(MAX_ROUTES):
@@ -106,7 +109,7 @@ def _edge(remaining_kwh, model, temp_now, lat0, lon0, th, r0, points, now, v_fix
             continue
         if a["ferry"]:
             if a["left"] >= 0:            # the terminal is reached: the range ends at the quay
-                return (a["th"], a["r"] + 3.0, a["road"]), asked
+                return (a["th"], a["r"] + 3.0, a["road"]), asked, False
             hi = a if hi is None or a["r"] < hi["r"] else hi
         elif a["left"] >= 0:
             ended_short = a["r"] < a["asked"] - 15
@@ -117,6 +120,8 @@ def _edge(remaining_kwh, model, temp_now, lat0, lon0, th, r0, points, now, v_fix
             hi = a if hi is None or a["r"] < hi["r"] else hi
         if lo and hi and hi["r"] - lo["r"] <= 25:
             break
+        if not (lo and hi) and abs(a["left"]) <= CLOSE * remaining_kwh and not a["ferry"]:
+            break                         # arrives (almost) exactly empty: that is the edge
         if lo and hi:
             # between the two: where the energy left crosses zero
             r = lo["r"] + (hi["r"] - lo["r"]) * lo["left"] / (lo["left"] - hi["left"])
@@ -126,55 +131,64 @@ def _edge(remaining_kwh, model, temp_now, lat0, lon0, th, r0, points, now, v_fix
             r = a["r"] * min(STEP_OUT, max(0.4, scale * (1.04 if a["left"] >= 0 else 0.96)))
     if lo and hi and hi["r"] > lo["r"]:
         f = lo["left"] / (lo["left"] - hi["left"]) if lo["left"] != hi["left"] else 0.5
-        return (th, lo["r"] + (hi["r"] - lo["r"]) * f, lo["road"] + (hi["road"] - lo["road"]) * f), asked
+        return (th, lo["r"] + (hi["r"] - lo["r"]) * f, lo["road"] + (hi["road"] - lo["road"]) * f), asked, True
     one = lo or hi
     if not one:
-        return None, asked
+        return None, asked, False
     used = remaining_kwh - one["left"]
     scale = min(STEP_OUT, max(0.3, remaining_kwh / used)) if used > 0 else 1.0
     # only one side known: the same consumption carried on (the contour cuts
     # the sea where the land ended before the energy did)
-    return (th, one["r"] * scale, one["road"] * scale), asked
+    return (th, one["r"] * scale, one["road"] * scale), asked, True
 
 
 def probe(remaining_kwh, model, temp_now, lat0, lon0, points, now, guess, v_fixed=None,
           route_fn=None, budget_s=EXTRA_BUDGET_S, clock=time.time):
-    """The edge of the range on the N_DIRS bearings and, when the routes are
-    fast enough, on the bearings in between. guess: road km per bearing (the
-    straight-line walk).
+    """The edge of the range on the N_DIRS bearings and, while the routes are
+    fast enough, on the bearings in between (twice, up to 4 × N_DIRS).
+    guess: road km per bearing (the straight-line walk).
     Returns {"rim": [(bearing°, km as the crow flies, road km)] sorted by
     bearing, "dirs": road km per bearing (guess where nothing was found),
-    "dmax": largest road km on the rim, "used": bearings with a result,
-    "routes": routes asked, "seconds"} — or None with too few results."""
+    "dmax": largest road km on the rim, "safe": smallest road km at which
+    the battery ran out on any bearing (None when unknown), "used": bearings
+    with a result, "routes": routes asked, "seconds"} — or None with too few
+    results."""
     route_fn = route_fn or wr._route
     bs = wr.bearings()
     half = 180.0 / wr.N_DIRS
-    rim, dirs, routes = [], [], 0
-    first = [None] * len(bs)
+    rim, dirs, routes, roads = [], [], 0, []
     t0 = clock()
     for i, (th, g) in enumerate(zip(bs, guess)):
-        p, n = _edge(remaining_kwh, model, temp_now, lat0, lon0, th, max(g, 10) / wr.DETOUR, points, now,
-                     v_fixed, route_fn)
+        p, n, by_energy = _edge(remaining_kwh, model, temp_now, lat0, lon0, th, max(g, 10) / wr.DETOUR, points, now,
+                                v_fixed, route_fn)
         routes += n
-        first[i] = p
         dirs.append(int(round(p[2])) if p else g)
         if p:
             rim.append(p)
-    took = clock() - t0
-    if len(rim) >= MIN_BEARINGS and took * 2 <= budget_s:
-        for i, th in enumerate(bs):          # the bearings halfway between
-            a, b = first[i], first[(i + 1) % len(bs)]
-            near = [p[1] for p in (a, b) if p]
-            r0 = sum(near) / len(near) if near else max(guess[i], 10) / wr.DETOUR
-            p, n = _edge(remaining_kwh, model, temp_now, lat0, lon0, th + half, r0, points, now, v_fixed, route_fn)
-            routes += n
-            if p:
-                rim.append(p)
+            if by_energy:
+                roads.append(p[2])
+    # Finer while the routes are fast: the bearings halfway between, then
+    # the quarters (64 and 128 bearings). Each pass starts where the rim so
+    # far says the edge is, so most bearings need one or two routes.
+    for offsets in ((half,), (half / 2, half * 1.5)):
+        if len(rim) < MIN_BEARINGS or (clock() - t0) * 2 > budget_s:
+            break
+        table = rim_table(rim)
+        for th in bs:
+            for off in offsets:
+                b = (th + off) % 360.0
+                p, n, by_energy = _edge(remaining_kwh, model, temp_now, lat0, lon0, b,
+                                        table[int(b * TABLE / 360.0) % TABLE], points, now, v_fixed, route_fn)
+                routes += n
+                if p:
+                    rim.append(p)
+                    if by_energy:
+                        roads.append(p[2])
     if len(rim) < MIN_BEARINGS:
         return None
     rim.sort()
     return {"rim": rim, "dirs": dirs, "used": len(rim), "routes": routes,
-            "dmax": max(p[2] for p in rim), "seconds": clock() - t0}
+            "dmax": max(p[2] for p in rim), "safe": min(roads) if roads else None, "seconds": clock() - t0}
 
 
 def mask_km(field):
@@ -183,9 +197,21 @@ def mask_km(field):
     return int(math.ceil((field["dmax"] + wr.STEP_KM) / 5.0) * 5)
 
 
+def safe_km(field):
+    """Road distance every place within which counts as reached, whatever
+    its bearing: the shortest road distance at which the battery ran out
+    (fastest roads, head wind), rounded down to 5 km. None when it is not
+    clearly inside the mask contour."""
+    s = field.get("safe")
+    if not s:
+        return None
+    s = int(s // 5 * 5)
+    return s if 10 <= s <= mask_km(field) - 10 else None
+
+
 def rim_table(rim):
     """Reach as the crow flies for every half degree: linear between the
-    rim points around the circle, lightly smoothed."""
+    rim points around the circle, the corners barely rounded."""
     pts = sorted((th % 360.0, r) for th, r, _ in rim)
     if not pts:
         return None
@@ -200,14 +226,20 @@ def rim_table(rim):
         span = (b[0] - a[0]) % 360.0 or 360.0
         f = ((th - a[0]) % 360.0) / span if n > 1 else 0.0
         raw.append(a[1] + (b[1] - a[1]) * f)
-    w = TABLE // 180                       # ±2°: round the corners at the rim points
+    w = TABLE // 360                       # ±1°: only take the sharpest tip off the rim points
     return [sum(raw[(k + d) % TABLE] for d in range(-w, w + 1)) / (2 * w + 1) for k in range(TABLE)]
 
 
-def compose(isochrone, rim, lat0, lon0):
+def compose(isochrone, rim, lat0, lon0, safe=None):
     """The largest contour of a Valhalla isochrone (land reachable by road)
     cut to the rim → GeoJSON like wind_range.compose: one fill feature
-    (MultiPolygon) and one outline feature (closed loops)."""
+    (MultiPolygon) and one outline feature (closed loops).
+
+    safe: km of a smaller contour in the same isochrone — everything inside
+    it stays, also beyond the rim. One edge per bearing cannot tell that a
+    peninsula or an island behind a bay is still in reach by its own road
+    (the edge of that bearing may lie in the water before it); the road
+    distance can."""
     feats = [f for f in (isochrone or {}).get("features") or []
              if (f.get("properties") or {}).get("contour") is not None]
     table = rim_table(rim or [])
@@ -219,13 +251,21 @@ def compose(isochrone, rim, lat0, lon0):
     if not rings:
         return None
     grid, x0, y0, cell = wr._rasterize(rings)
+    near = None
+    if safe:
+        inner = [f for f in feats if f is not top and abs(float(f["properties"]["contour"]) - safe) < 0.5]
+        srings = [[wr._xy(lat0, lon0, la, lo) for lo, la in ring[:-1]] for f in inner for ring in wr._outer_rings(f)]
+        srings = [r for r in srings if len(r) >= 3]
+        if srings:
+            near = wr._rasterize(srings, frame=(x0, y0, cell, len(grid[0]), len(grid)))[0]
     k = TABLE / 360.0
     for j, row in enumerate(grid):
         if not any(row):
             continue
         y = y0 + (j + 0.5) * cell
+        keep = near[j] if near else None
         for i in range(len(row)):
-            if row[i]:
+            if row[i] and not (keep and keep[i]):
                 x = x0 + (i + 0.5) * cell
                 th = math.degrees(math.atan2(x, y)) % 360.0
                 if x * x + y * y > table[int(th * k) % TABLE] ** 2:

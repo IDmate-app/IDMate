@@ -40,9 +40,10 @@ def _range(kwh, speed, detour=1.0):
 def test_edge_is_where_a_route_arrives_with_nothing_left():
     f = rf.probe(40.0, MODEL, 15, LAT, LON, [], 0, [190] * N, route_fn=_road())
     want = _range(40.0, 130.0)
-    assert f["used"] == 2 * N                              # the bearings in between as well
+    assert f["used"] == 4 * N                              # the bearings in between as well, twice
     assert all(abs(r - want) < 6 for _, r, _ in f["rim"])  # every bearing: within a few km
-    assert f["routes"] <= 3 * 2 * N and abs(f["dmax"] - want) < 6
+    assert f["routes"] <= 3 * N + 2 * 3 * N                # the finer passes start at the edge: 1–2 routes each
+    assert abs(f["dmax"] - want) < 6 and abs(f["safe"] - want) < 6
     assert rf.mask_km(f) % 5 == 0 and rf.mask_km(f) > f["dmax"]
     assert all(abs(d - want) < 6 for d in f["dirs"])
 
@@ -67,7 +68,7 @@ def test_where_the_land_ends_the_rim_goes_on_and_the_contour_cuts():
     assert all(r > 60 for _, r, _ in f["rim"])             # not pulled in to the coast …
     gj = rf.compose({"features": [_circle(LAT, LON, 60)]}, f["rim"], LAT, LON)
     assert max(_extent(gj, LAT, LON)) < 65                 # … the land itself is the limit
-    assert f["routes"] <= 2 * 2 * N                        # and no third route into the sea
+    assert f["routes"] <= 2 * 4 * N                        # and no third route into the sea
 
 
 def test_second_half_of_the_bearings_only_when_fast():
@@ -77,8 +78,11 @@ def test_second_half_of_the_bearings_only_when_fast():
         return t[0]
     slow = rf.probe(40.0, MODEL, 15, LAT, LON, [], 0, [190] * N, route_fn=_road(), budget_s=1, clock=clock)
     assert slow["used"] == N
+    t[0] = 0.0
+    mid = rf.probe(40.0, MODEL, 15, LAT, LON, [], 0, [190] * N, route_fn=_road(), budget_s=6, clock=clock)
+    assert mid["used"] == 2 * N                            # 2 s after the first pass, 4 s after the second
     fast = rf.probe(40.0, MODEL, 15, LAT, LON, [], 0, [190] * N, route_fn=_road(), budget_s=60, clock=clock)
-    assert fast["used"] == 2 * N
+    assert fast["used"] == 4 * N
 
 
 def test_long_ferry_ends_the_range_at_the_terminal():
@@ -97,7 +101,7 @@ def test_long_ferry_ends_the_range_at_the_terminal():
     f = rf.probe(40.0, MODEL, 15, LAT, LON, [], 0, [190] * N, route_fn=ferry)
     # the far shore (130 km) is never part of the range, although the energy
     # would do: the range ends at the quay, at most a little out into the sea
-    assert f["used"] == 2 * N and all(28 < r < 60 for _, r, _ in f["rim"])
+    assert f["used"] == 4 * N and all(28 < r < 60 for _, r, _ in f["rim"])
     assert all(28 < r < 38 for th, r, _ in f["rim"] if round(th / (360 / N), 3).is_integer())
 
 
@@ -130,6 +134,23 @@ def test_compose_cuts_the_contour_to_the_rim():
     assert rf.compose(mask, [], LAT, LON) is None and rf.compose({"features": []}, _rim(lambda th: 1.0), LAT, LON) is None
 
 
+def test_inside_the_shortest_range_by_road_everything_stays():
+    """A peninsula behind a bay: on its bearing the rim lies in the water
+    before it, but by road it is nearer than the shortest range of any
+    bearing — it stays (1.2.317)."""
+    mask = _circle(LAT, LON, 240)
+    near = _circle(LAT, LON, 150)                          # all within 150 road km
+    rim = _rim(lambda th: 100.0 if th < 180 else 200.0)    # east: the edge already at 100 km
+    cut = rf.compose({"features": [mask, near]}, rim, LAT, LON)
+    kept = rf.compose({"features": [mask, near]}, rim, LAT, LON, safe=150)
+    assert 95 < _extent(cut, LAT, LON)[0] < 110            # rim alone: the east ends at 100 km
+    assert 145 < _extent(kept, LAT, LON)[0] < 155          # with the road distance: out to 150 km
+    assert abs(_extent(kept, LAT, LON)[1] - _extent(cut, LAT, LON)[1]) < 3      # the west as before
+    assert rf.safe_km({"safe": 152.0, "dmax": 228.0}) == 150
+    assert rf.safe_km({"safe": None, "dmax": 228.0}) is None
+    assert rf.safe_km({"safe": 236.0, "dmax": 228.0}) is None      # no room inside the mask: not needed
+
+
 def test_rim_table_is_smooth_around_the_circle():
     t = rf.rim_table([(350.0, 100.0, 125.0), (10.0, 200.0, 250.0), (180.0, 100.0, 125.0)])
     assert len(t) == rf.TABLE
@@ -147,17 +168,17 @@ def test_render_uses_the_field(app_module, db, monkeypatch):
         return {"type": "FeatureCollection", "features": [_circle(lat, lon, k) for k in kms]}
     monkeypatch.setattr(ra, "_fetch", fetch)
     field = {"dirs": [150] * (N // 2) + [230] * (N // 2), "rim": _rim(lambda th: 180.0 if th < 180 else 120.0),
-             "dmax": 228.0, "used": 64, "routes": 130, "seconds": 1.0}
+             "dmax": 228.0, "safe": 152.0, "used": 64, "routes": 130, "seconds": 1.0}
     calls = []
     def field_fn():
         calls.append(1)
         return field
     assert ra.render_if_due(db, "devF", LAT, LON, [180], now=1000, field_fn=field_fn) == "rendered"
     rec = ra.load_last(db, "devF")
-    assert asked == [[240]]                                # one contour: the mask, a little beyond dmax
+    assert asked == [[150, 240]]                           # the mask a little beyond dmax, and the shortest range
     assert rec["dirs"] == field["dirs"] and rec["kms"] == [180]
     east, west, _, _ = _extent(rec["geojson"], LAT, LON)
-    assert 170 < east < 185 and 115 < west < 125
+    assert 170 < east < 185 and 145 < west < 155           # west: rim at 120, but all within 150 road km stays
     # nothing changed: no routes, no render
     assert ra.render_if_due(db, "devF", LAT, LON, [180], now=5000, field_fn=field_fn) == "unchanged"
     assert len(calls) == 1
