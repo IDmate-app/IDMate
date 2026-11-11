@@ -99,7 +99,7 @@ def test_render_with_dirs_composes(app_module, db, monkeypatch):
     assert ra.render_if_due(db, "dev1", 53.8, 10.4, [180], dirs=dirs, now=1000) == "rendered"
     rec = ra.load_last(db, "dev1")
     assert rec["dirs"] == dirs and asked[0] == wr.levels(dirs)
-    assert rec["geojson"]["features"][0]["properties"]["kind"] == "fill"
+    assert [f["properties"]["kind"] for f in rec["geojson"]["features"]] == ["line"]   # stored without the duplicate fill
     # same wind picture: nothing to do
     assert ra.render_if_due(db, "dev1", 53.8, 10.4, [180], dirs=dirs, now=5000) == "unchanged"
     # calm (all equal): back to a single contour without composing

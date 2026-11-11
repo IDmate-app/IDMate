@@ -19,6 +19,8 @@ import config
 log = logging.getLogger("triplog.range_area")
 
 CACHE_S = 6 * 3600
+GENERALIZE_M = 600       # Valhalla simplifies its contour by this many metres (1500 before 1.2.324:
+                         # coast and edge came out coarser than the outline raster)
 FAIL_S = 10 * 60
 TIMEOUT_S = 120
 
@@ -36,7 +38,7 @@ def key(lat, lon, kms):
 def request_body(lat, lon, kms):
     return {"locations": [{"lat": lat, "lon": lon}], "costing": "auto",
             "contours": [{"distance": float(k)} for k in sorted(kms)],
-            "polygons": True, "denoise": 0.02, "generalize": 1500}
+            "polygons": True, "denoise": 0.02, "generalize": GENERALIZE_M}
 
 
 def _fetch(lat, lon, kms):
@@ -138,10 +140,11 @@ DIR_TOL_KM = 15          # a direction must move more than this (or 8 %) to coun
 DIR_TOL_SHARE = 0.08
 # Bump when the stored geometry changes how it is built: an area from an
 # older version is rendered again at once, even if nothing else changed.
-GEOM_VERSION = 11          # 3: grid outline (1.2.290), 4: 32 directions (1.2.294), 5: islands/ferries kept (1.2.295),
+GEOM_VERSION = 12          # 3: grid outline (1.2.290), 4: 32 directions (1.2.294), 5: islands/ferries kept (1.2.295),
                           # 6: nothing behind ferries > 40 km (1.2.309), 7: energy field (1.2.315),
                           # 8: routes that end at the edge (1.2.316), 9: 128 bearings, near by road stays (1.2.317),
-                          # 10: shortest range from measured edges only (1.2.318), 11: carried on from reached places (1.2.320)
+                          # 10: shortest range from measured edges only (1.2.318), 11: carried on from reached places (1.2.320),
+                          # 12: finer raster and contour (1.2.324)
 _fail_at = {}          # device -> time of the last failed render (no retry every minute)
 
 
@@ -264,6 +267,11 @@ def render_if_due(db, device, lat, lon, kms, dirs=None, now=None, refine=None, f
                     device, err or "no area", RENDER_EVERY_S // 60)
         return "failed"
     _fail_at.pop(device, None)
+    # The dashboard draws the outline only; the fill repeats the same rings.
+    # Left out of what is stored and sent with every page (half the size).
+    feats = gj.get("features") or []
+    if any((f.get("properties") or {}).get("kind") == "line" for f in feats):
+        gj = {**gj, "features": [f for f in feats if (f.get("properties") or {}).get("kind") != "fill"]}
     rec = {"key": kk, "lat": lat, "lon": lon, "v": GEOM_VERSION,
            "kms": [round(x) for x in kms], "ts": now, "geojson": gj}
     if dirs:
