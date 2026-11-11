@@ -138,10 +138,10 @@ DIR_TOL_KM = 15          # a direction must move more than this (or 8 %) to coun
 DIR_TOL_SHARE = 0.08
 # Bump when the stored geometry changes how it is built: an area from an
 # older version is rendered again at once, even if nothing else changed.
-GEOM_VERSION = 10          # 3: grid outline (1.2.290), 4: 32 directions (1.2.294), 5: islands/ferries kept (1.2.295),
+GEOM_VERSION = 11          # 3: grid outline (1.2.290), 4: 32 directions (1.2.294), 5: islands/ferries kept (1.2.295),
                           # 6: nothing behind ferries > 40 km (1.2.309), 7: energy field (1.2.315),
                           # 8: routes that end at the edge (1.2.316), 9: 128 bearings, near by road stays (1.2.317),
-                          # 10: shortest range from measured edges only (1.2.318)
+                          # 10: shortest range from measured edges only (1.2.318), 11: carried on from reached places (1.2.320)
 _fail_at = {}          # device -> time of the last failed render (no retry every minute)
 
 
@@ -242,7 +242,7 @@ def render_if_due(db, device, lat, lon, kms, dirs=None, now=None, refine=None, f
         mask, err = compute(lat, lon, want)
         if mask is not None:
             mask = _no_long_ferries(mask, lat, lon, want)
-            gj = range_field.compose(mask, field["rim"], lat, lon, safe=safe)
+            gj = range_field.compose(mask, field["rim"], lat, lon, safe=safe, places=field.get("places"))
         if gj is None:
             log.info("range area: no area from the routes, falling back to contours")
     if gj is None:

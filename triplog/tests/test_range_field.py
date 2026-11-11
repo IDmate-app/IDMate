@@ -350,3 +350,67 @@ def test_point_check_answers_for_one_place(app_module, db, monkeypatch):
         assert c.get("/api/range-check?lat=x&lon=1").status_code == 400
         cruise["model"] = None
         assert c.get(f"/api/range-check?lat={port[0]}&lon={port[1]}").get_json()["error"] == "no_model"
+
+
+def _train(quay_km=100.0, crossing_km=30.0, speed=130.0):
+    """route_fn: road to the quay, a car train of crossing_km, then road on
+    the island — all on the straight line to the target."""
+    def fn(lat0, lon0, lat1, lon1, use_ferry=None):
+        th, r = rf._polar(lat0, lon0, lat1, lon1)
+        n = 200
+        pts = [(lat0 + (lat1 - lat0) * i / n, lon0 + (lon1 - lon0) * i / n) for i in range(n + 1)]
+        if r <= quay_km:
+            return {"trip": {"legs": [{"shape": _enc(pts), "maneuvers": [
+                {"length": r, "time": r / speed * 3600, "begin_shape_index": 0, "end_shape_index": n}]}]}}
+        k0, k1 = round(n * quay_km / r), round(n * min(r, quay_km + crossing_km) / r)
+        man = [{"length": quay_km, "time": quay_km / speed * 3600, "begin_shape_index": 0, "end_shape_index": k0},
+               {"type": 28, "length": crossing_km, "time": 2400, "begin_shape_index": k0, "end_shape_index": k1}]
+        if k1 < n:
+            rest = r - quay_km - crossing_km
+            man.append({"length": rest, "time": rest / 80.0 * 3600, "begin_shape_index": k1, "end_shape_index": n})
+        return {"trip": {"legs": [{"shape": _enc(pts), "maneuvers": man}]}}
+    return fn
+
+
+def test_landing_of_a_car_train_is_remembered_with_its_energy():
+    """Sylt (1.2.320): the train costs no energy, so the car gets off with
+    what it had at the quay — also on a route that then runs out."""
+    reach = _range(40.0, 130.0)                            # road km at 130
+    quay = reach - 20                                      # 20 km worth of energy left at the quay
+    far = rf._target(LAT, LON, 0.0, quay + 30 + 60)        # 60 km beyond the landing: not reached
+    a = rf.arrival(40.0, MODEL, 15, LAT, LON, far[0], far[1], [], 0, route_fn=_train(quay))
+    assert a["left"] < 0 and not a["ferry"] and abs(a["ferry_km"] - 30) < 2
+    [(la, lo, e, road)] = a["landings"]
+    th, r = rf._polar(LAT, LON, la, lo)
+    assert abs(r - (quay + 30)) < 2                        # where the train arrives
+    assert 2.0 < e < 7.0 and abs(road - quay) < 2          # the energy of the quay, not of the far end
+    # nothing left at the quay: no landing
+    b = rf.arrival(40.0, MODEL, 15, LAT, LON, far[0], far[1], [], 0, route_fn=_train(reach + 15))
+    assert b["landings"] == []
+    # probe: landings come back as places with how far their rest carries
+    f = rf.probe(40.0, MODEL, 15, LAT, LON, [], 0, [190] * N, route_fn=_train(quay))
+    assert f["places"] and all(rf.CARRY_MIN_KM < reach_km <= rf.CARRY_MAX_KM for _, _, reach_km in f["places"])
+
+
+def test_area_grows_on_from_a_landing_over_land_only():
+    """An island 30–60 km east of the edge of the rim: the train lands at
+    its west end with 20 km to spare. The island is in as far as that
+    carries — not the land across the water next to it."""
+    def box(x0, x1, y0, y1):
+        c = [(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)]
+        return [[round(lo, 5), round(la, 5)] for la, lo in (wr._ll(LAT, LON, x, y) for x, y in c)]
+    mainland, island, other = box(-80, 100, -60, 60), box(130, 190, -10, 10), box(130, 190, 20, 40)
+    mask = {"features": [{"type": "Feature", "properties": {"contour": 300},
+                          "geometry": {"type": "MultiPolygon", "coordinates": [[mainland], [island], [other]]}}]}
+    rim = _rim(lambda th: 110.0)
+    plain = rf.compose(mask, rim, LAT, LON)
+    assert _extent(plain, LAT, LON)[0] < 112               # rim alone: the islands are out
+    grown = rf.compose(mask, rim, LAT, LON, places=[(131.0, 0.0, 30.0)])
+    fill = [f for f in grown["features"] if f["properties"]["kind"] == "fill"][0]
+    rings = [[wr._xy(LAT, LON, la, lo) for lo, la in poly[0]] for poly in fill["geometry"]["coordinates"]]
+    import ferries
+    inside = lambda x, y: any(ferries._inside((x, y), r) for r in rings)
+    assert inside(135, 0) and inside(155, 0)               # the island, 25 km from the landing
+    assert not inside(175, 0)                              # … but not beyond what the rest carries
+    assert not inside(150, 30)                             # the other island: water in between
+    assert inside(50, 0) and not inside(118, 0)            # the mainland as before
