@@ -16,11 +16,13 @@ app.py), by which point app's module namespace is fully populated.
 
 import base64
 import io
+import re
 import time
 
 from flask import (Blueprint, abort, jsonify, redirect, render_template,
                    request, session, url_for)
 from flask_login import current_user, login_required, login_user, logout_user
+from flask_wtf.csrf import CSRFError
 
 from app import (
     _LOGIN_COOLDOWN, _TOTP_AVAILABLE, _consume_recovery_code,
@@ -34,6 +36,48 @@ from app import (
 
 auth_bp = Blueprint("auth", __name__)
 
+PENDING_SECONDS = 600   # password accepted: the code has to follow within 10 min
+
+
+def _t():
+    return _translations.get(get_language(), _translations["DE"])
+
+
+def _clean_code(code):
+    """A code as typed or pasted: authenticator apps show "123 456"."""
+    return re.sub(r"[\s-]", "", code or "")
+
+
+def _pending_uid():
+    """The user whose password was just accepted and whose code is still
+    due, or None."""
+    uid = session.get("pending_user_id")
+    if uid and time.time() - session.get("pending_at", 0) <= PENDING_SECONDS:
+        return uid
+    return None
+
+
+def _drop_pending():
+    for k in ("pending_user_id", "pending_user_next", "pending_at"):
+        session.pop(k, None)
+
+
+@auth_bp.app_errorhandler(CSRFError)
+def csrf_failed(e):
+    """The form token is older than an hour (page left open, app back from
+    the background) or from an earlier session. The sign-in pages come back
+    with a fresh form instead of a bare "Bad Request", JSON callers get a
+    text they can show. Nobody is signed in by a stale form."""
+    msg = _t()["page_stale"]
+    if request.endpoint in ("auth.login", "auth.login_totp"):
+        if request.endpoint == "auth.login_totp" and _pending_uid():
+            return render_template("login.html", error=msg, step="code", username=_pending_username()), 400
+        return render_template("login.html", error=msg, step="password",
+                               username=request.form.get("username", "")), 400
+    if request.is_json or request.path.startswith("/api/"):
+        return jsonify({"error": msg, "stale": True}), 400
+    return e.get_response()
+
 
 @auth_bp.route("/login", methods=["GET", "POST"])
 def login():
@@ -41,6 +85,15 @@ def login():
         return redirect(url_for("dashboard"))
 
     error = None
+    if request.method == "GET":
+        # The installed app restarts when the user switches to the
+        # authenticator app and comes back: with the password already
+        # accepted it returns to the code step. "?new=1" (the back link of
+        # the code step) starts over.
+        if request.args.get("new"):
+            _drop_pending()
+        elif _pending_uid():
+            return redirect(url_for("auth.login_totp"))
     if request.method == "POST":
         ip = request.remote_addr
         username = request.form.get("username", "").strip()
@@ -88,6 +141,7 @@ def login():
             if row["totp_enabled"]:
                 session["pending_user_id"] = row["id"]
                 session["pending_user_next"] = next_page
+                session["pending_at"] = time.time()
                 return redirect(url_for("auth.login_totp"))
             user = _user_from_row(row)
             login_user(user, remember=True)
@@ -113,23 +167,26 @@ def logout():
 
 @auth_bp.route("/login/totp", methods=["GET", "POST"])
 def login_totp():
-    if "pending_user_id" not in session:
+    uid = _pending_uid()
+    if not uid:
+        took_too_long = "pending_user_id" in session
+        _drop_pending()
+        if took_too_long:
+            return render_template("login.html", step="password", error=_t()["login_step_expired"])
         return redirect(url_for("auth.login"))
     error = None
     if request.method == "POST":
-        uid = session.get("pending_user_id")
         totp_key = "totp:%s" % uid
         # Brute-force protection for the second factor (unlike /login, previously
         # entirely unprotected — valid_window=1 accepts 3 time windows). Too many
         # attempts -> discard pending session, force password login.
         if _is_rate_limited_user(totp_key):
-            session.pop("pending_user_id", None)
-            session.pop("pending_user_next", None)
+            _drop_pending()
             _login_attempts_user.pop(_user_key(totp_key), None)
             lang = get_language()
             return render_template("login.html", step="password",
                                    error=_translations.get(lang, _translations["DE"])["login_too_many_attempts_relogin"])
-        code = request.form.get("code", "").strip()
+        code = _clean_code(request.form.get("code"))
         db = get_db()
         row = db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
         verified = False
@@ -146,8 +203,8 @@ def login_totp():
             user = _user_from_row(row)
             login_user(user, remember=True)
             session["auth_at"] = int(time.time())  # fresh sign-in (adding a passkey)
-            next_page = _safe_next(session.pop("pending_user_next", "/"))
-            session.pop("pending_user_id", None)
+            next_page = _safe_next(session.get("pending_user_next", "/"))
+            _drop_pending()
             return redirect(next_page)
         _record_attempt_user(totp_key)
         lang = get_language()
@@ -161,7 +218,7 @@ def login_totp():
 
 def _pending_username():
     """The user name of the login in progress (shown read-only in the code step)."""
-    uid = session.get("pending_user_id")
+    uid = _pending_uid()
     if not uid:
         return ""
     db = get_db()
@@ -230,7 +287,7 @@ def setup_2fa():
         action = request.form.get("action", "")
         if action == "skip":
             return redirect(url_for("dashboard"))
-        code = request.form.get("code", "").strip()
+        code = _clean_code(request.form.get("code"))
         # Prefer hidden-field secret (works on iOS Safari where session cookies may be lost)
         secret = request.form.get("secret", "").strip() or session.get("pending_totp_secret")
         if secret and pyotp.TOTP(secret).verify(code, valid_window=1):
@@ -295,7 +352,7 @@ def disable_2fa():
     # second factor. An admin disabling it for others is exempt.
     if uid == current_user.id:
         pw = data.get("password") or ""
-        code = (data.get("code") or "").strip()
+        code = _clean_code(data.get("code"))
         db = get_db()
         row = db.execute("SELECT * FROM users WHERE id = ?", (current_user.id,)).fetchone()
         ok = bool(pw) and row is not None and check_password_hash(row["password_hash"], pw)
