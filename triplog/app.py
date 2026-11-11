@@ -1281,9 +1281,10 @@ def _plmn_name(plmn):
 # ── Position of the dashboard: no GPS jumps ──────────────────
 # The trip detector drops GPS jumps (detector._filter_gps_jumps), so a trip
 # ends at its last plausible point. The dashboard took the very last value
-# as it is — and a stick's last row of a trip can carry a position far off
-# (seen: the parking row 18 km away at a place saved earlier). Then the car
-# stood there on the map, and the range area was drawn around it.
+# as it is — and the last row of a trip can carry a position far off (seen
+# with data from Home Assistant: the parking row still had the old parking
+# place, 18 km away). Then the car stood there on the map, and the range
+# area was drawn around it.
 POS_JUMP_KM = 3.0          # a parked car does not move this far …
 POS_JUMP_WINDOW_S = 900    # … within this time without the odometer moving
 POS_TRACK_MIN = 30         # minutes of track looked at before the newest position
@@ -1371,6 +1372,13 @@ def hold_plausible_position(device, state, track_fn):
                 hold = plausible_position(track_fn(t))
             except Exception as e:
                 log.warning("live state: position check failed for %s: %s", device, e)
+            # The correction arriving late (Home Assistant sends the real
+            # parking position minutes after the stale one): the track then
+            # starts with the wrong rows, and the right one looks like the
+            # jump. Never hold on to a place already found wrong.
+            if hold and memo and memo["hold"] and detector.haversine_m(
+                    memo["bad"][0], memo["bad"][1], hold[0], hold[1]) / 1000.0 <= POS_JUMP_KM:
+                hold = None
             if hold:
                 log.warning("live state: newest position of %s is a GPS jump (%.0f km off the track, "
                             "odometer standing) — showing the last plausible position", device, hold[2])
