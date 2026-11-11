@@ -1227,6 +1227,18 @@ def sse_publish(device: str, data: dict):
     ft = {field: now_iso for field in mapped if field not in ("field_times", "time")}
     mapped["field_times"] = ft
     mapped["time"] = now_iso
+    # A position far off the last one while the odometer stands (the parking
+    # row of a stick): not into the live state — the poller's check decides.
+    with _state_lock:
+        cached0 = dict(_state_cache.get(device, {}))
+    if mapped.get("lat") is not None and mapped.get("lon") is not None \
+            and cached0.get("lat") is not None and cached0.get("lon") is not None:
+        od0, od1 = cached0.get("odometer"), mapped.get("odometer", cached0.get("odometer"))
+        far = detector.haversine_m(cached0["lat"], cached0["lon"], mapped["lat"], mapped["lon"]) / 1000.0
+        if far > POS_JUMP_KM and od0 is not None and od1 is not None and abs(od1 - od0) < 1.0:
+            for k in ("lat", "lon", "heading"):
+                mapped.pop(k, None)
+                ft.pop(k, None)
     # Also update in-memory state cache so fullRefresh stays consistent
     with _state_lock:
         cached = _state_cache.get(device, {})
@@ -1264,6 +1276,110 @@ _ALL_FIELDS = {
 def _plmn_name(plmn):
     name, _ = plmn_info(plmn)
     return name
+
+
+# ── Position of the dashboard: no GPS jumps ──────────────────
+# The trip detector drops GPS jumps (detector._filter_gps_jumps), so a trip
+# ends at its last plausible point. The dashboard took the very last value
+# as it is — and a stick's last row of a trip can carry a position far off
+# (seen: the parking row 18 km away at a place saved earlier). Then the car
+# stood there on the map, and the range area was drawn around it.
+POS_JUMP_KM = 3.0          # a parked car does not move this far …
+POS_JUMP_WINDOW_S = 900    # … within this time without the odometer moving
+POS_TRACK_MIN = 30         # minutes of track looked at before the newest position
+_pos_memo = {}             # device -> {"t": time of the newest position, "hold": (lat, lon) to show or None,
+                           #            "bad": the position as sent, "od": odometer then}
+
+
+def _is_gps_jump(prev, cur):
+    """prev/cur: {"la", "lo", "_time" (datetime), "od" (km or None)}. A jump:
+    faster than config.GPS_MAX_KMH (like the trip detector), or more than
+    POS_JUMP_KM within POS_JUMP_WINDOW_S while the odometer stands still
+    (a ferry or a car train takes longer, and then the car drives on)."""
+    dist_km = detector.haversine_m(prev["la"], prev["lo"], cur["la"], cur["lo"]) / 1000.0
+    dt = (cur["_time"] - prev["_time"]).total_seconds()
+    if dt > 0 and dist_km / (dt / 3600.0) > config.GPS_MAX_KMH:
+        return True
+    if dist_km > POS_JUMP_KM and 0 <= dt <= POS_JUMP_WINDOW_S \
+            and prev.get("od") is not None and cur.get("od") is not None \
+            and abs(cur["od"] - prev["od"]) < 1.0:
+        return True
+    return False
+
+
+def plausible_position(track):
+    """track: positions ascending in time. Returns (lat, lon, km the newest
+    position is off) of the last position that is no jump — walking the
+    track like the trip detector — or None when the newest one is fine."""
+    pts = [p for p in track if p.get("la") is not None and p.get("lo") is not None and p.get("_time") is not None]
+    if len(pts) < 3:
+        return None
+    kept = [pts[0]]
+    for p in pts[1:]:
+        if not _is_gps_jump(kept[-1], p):
+            kept.append(p)
+    if kept[-1] is pts[-1] or len(kept) < 2:
+        return None                    # fine, or nothing to hold on to
+    off = detector.haversine_m(kept[-1]["la"], kept[-1]["lo"], pts[-1]["la"], pts[-1]["lo"]) / 1000.0
+    return kept[-1]["la"], kept[-1]["lo"], off
+
+
+def _position_track(client, device, t_iso):
+    """The POS_TRACK_MIN minutes of positions up to the newest one."""
+    end = datetime.strptime(t_iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    start = end - timedelta(minutes=POS_TRACK_MIN)
+    q = f'''
+    from(bucket: "{config.INFLUX_BUCKET}")
+      |> range(start: {start.strftime("%Y-%m-%dT%H:%M:%SZ")}, stop: {(end + timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")})
+      |> filter(fn: (r) => r._measurement == "v" and r.d == "{device}")
+      |> filter(fn: (r) => r._field == "la" or r._field == "lo" or r._field == "od")
+      |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+      |> sort(columns: ["_time"])
+    '''
+    rows, od = [], None
+    for table in client.query_api().query(q, org=config.INFLUX_ORG):
+        for rec in table.records:
+            if rec.values.get("od") is not None:
+                od = rec.values["od"]
+            t = rec.get_time()
+            if t is not None and t.tzinfo is None:
+                t = t.replace(tzinfo=timezone.utc)
+            rows.append({"_time": t, "la": rec.values.get("la"), "lo": rec.values.get("lo"), "od": od})
+    rows.sort(key=lambda r: r["_time"])
+    return rows
+
+
+def hold_plausible_position(device, state, track_fn):
+    """Replace a newest position that is a GPS jump by the last plausible
+    one. Asked once per new position (memo), track_fn(t_iso) → track. A
+    later row at the same wrong place with the odometer still standing (a
+    heartbeat of the parked stick) stays replaced."""
+    t = (state.get("field_times") or {}).get("lat")
+    if not t or state.get("lat") is None or state.get("lon") is None:
+        return state
+    od = state.get("odometer")
+    memo = _pos_memo.get(device)
+    if not memo or memo["t"] != t:
+        same_wrong_place = bool(
+            memo and memo["hold"] and memo["od"] is not None and od is not None and abs(od - memo["od"]) < 1.0
+            and detector.haversine_m(memo["bad"][0], memo["bad"][1], state["lat"], state["lon"]) / 1000.0 <= POS_JUMP_KM)
+        if same_wrong_place:
+            memo = _pos_memo[device] = dict(memo, t=t)
+        else:
+            hold = None
+            try:
+                hold = plausible_position(track_fn(t))
+            except Exception as e:
+                log.warning("live state: position check failed for %s: %s", device, e)
+            if hold:
+                log.warning("live state: newest position of %s is a GPS jump (%.0f km off the track, "
+                            "odometer standing) — showing the last plausible position", device, hold[2])
+            memo = _pos_memo[device] = {"t": t, "hold": hold[:2] if hold else None,
+                                        "bad": (state["lat"], state["lon"]), "od": od}
+    if memo["hold"]:
+        state["lat"], state["lon"] = memo["hold"]
+        state["position_held"] = True
+    return state
 
 
 def _fetch_influx_state(device: str) -> dict:
@@ -1358,7 +1474,7 @@ def _fetch_influx_state(device: str) -> dict:
             if latest_time.tzinfo is None:
                 latest_time = latest_time.replace(tzinfo=timezone.utc)
             state["time"] = latest_time.strftime('%Y-%m-%dT%H:%M:%SZ')
-        return state
+        return hold_plausible_position(device, state, lambda t: _position_track(client, device, t))
     except Exception as e:
         log.warning("InfluxDB state-poll failed for %s: %s", device, e)
         return {}

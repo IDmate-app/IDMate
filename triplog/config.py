@@ -1,6 +1,6 @@
 import os
 
-VERSION = "1.2.321"
+VERSION = "1.2.322"
 # Projektseite, steht in den Fusszeilen der Ausdrucke
 REPO_URL = "github.com/IDmate-app/IDMate"
 # Stick firmware (IDTelemetry): the dashboard says when a newer release exists.
