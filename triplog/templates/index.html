@@ -62,7 +62,8 @@
     box-shadow:0 2px 8px rgba(0,0,0,.25);font-size:0.68rem;line-height:1.5;color:var(--text-2);pointer-events:none}
   .wind-legend b{color:var(--text-1);font-weight:600;display:block;margin-bottom:2px}
   .wind-legend .row{display:flex;align-items:center;gap:6px;white-space:nowrap}
-  .wind-legend svg{width:12px;height:12px;flex:0 0 12px}
+  .wind-legend svg{width:14px;height:14px;flex:0 0 14px}
+  .wind-ico svg{filter:drop-shadow(0 0 1.2px rgba(0,0,0,.55))}
   .wind-legend .ms{color:var(--text-3)}
   .map-col.map-max .wind-legend{left:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px))}
   /* Full screen inside the app (works on iPhone too, no Fullscreen API needed) */
@@ -181,10 +182,10 @@
       <script type="application/json" id="mapBoot">{{ map_boot | tojson }}</script>
       <div class="wind-legend" id="windLegend" hidden>
         <b>{{ t.dash_wind }}</b>
-        <div class="row"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 1 L15.5 10 H12 V19 H8 V10 H4.5 Z" fill="#8b949e" stroke="#fff" stroke-width="0.8"/></svg><span>&lt; 15 km/h <span class="ms">· &lt; 4 m/s</span></span></div>
-        <div class="row"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 1 L15.5 10 H12 V19 H8 V10 H4.5 Z" fill="#58a6ff" stroke="#fff" stroke-width="0.8"/></svg><span>15–30 km/h <span class="ms">· 4–8 m/s</span></span></div>
-        <div class="row"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 1 L15.5 10 H12 V19 H8 V10 H4.5 Z" fill="#d29922" stroke="#fff" stroke-width="0.8"/></svg><span>30–45 km/h <span class="ms">· 8–12 m/s</span></span></div>
-        <div class="row"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 1 L15.5 10 H12 V19 H8 V10 H4.5 Z" fill="#f85149" stroke="#fff" stroke-width="0.8"/></svg><span>&gt; 45 km/h <span class="ms">· &gt; 12 m/s</span></span></div>
+        <div class="row"><svg viewBox="-1 -1 22 22" aria-hidden="true"><path d="M10 1 L15.5 10 H12 V19 H8 V10 H4.5 Z" fill="#57606a" stroke="#fff" stroke-width="2.2" stroke-linejoin="round" paint-order="stroke"/></svg><span>&lt; 15 km/h <span class="ms">· &lt; 4 m/s</span></span></div>
+        <div class="row"><svg viewBox="-1 -1 22 22" aria-hidden="true"><path d="M10 1 L15.5 10 H12 V19 H8 V10 H4.5 Z" fill="#0969da" stroke="#fff" stroke-width="2.2" stroke-linejoin="round" paint-order="stroke"/></svg><span>15–30 km/h <span class="ms">· 4–8 m/s</span></span></div>
+        <div class="row"><svg viewBox="-1 -1 22 22" aria-hidden="true"><path d="M10 1 L15.5 10 H12 V19 H8 V10 H4.5 Z" fill="#bc4c00" stroke="#fff" stroke-width="2.2" stroke-linejoin="round" paint-order="stroke"/></svg><span>30–45 km/h <span class="ms">· 8–12 m/s</span></span></div>
+        <div class="row"><svg viewBox="-1 -1 22 22" aria-hidden="true"><path d="M10 1 L15.5 10 H12 V19 H8 V10 H4.5 Z" fill="#cf222e" stroke="#fff" stroke-width="2.2" stroke-linejoin="round" paint-order="stroke"/></svg><span>&gt; 45 km/h <span class="ms">· &gt; 12 m/s</span></span></div>
       </div>
       <div class="map-ctl" role="toolbar" aria-label="{{ t.dash_map_tools }}">
         <button type="button" id="mapFull" title="{{ t.dash_map_full }}" aria-label="{{ t.dash_map_full }}" aria-pressed="false">
@@ -366,6 +367,10 @@
     // Road area rendered in the background (/api/range-area/last).
     let rangeArea = null, rangeAreaTs = null, rangeAreaOff = false, rangeAreaBoot = false;
     let areaBounds = null;           // bounds of the road area, for the automatic view
+    // Lines on the map: the tiles are light in both themes, so a fixed dark
+    // blue with a white edge instead of the theme's light accent (contrast
+    // to sea and land about 4–5 : 1 instead of under 2 : 1).
+    const MAP_BLUE = '#0d5fd6';
     // Map buttons: range and wind can be switched off (remembered per browser).
     const mapPref = (k, d) => { try { const v = localStorage.getItem('map_' + k); return v == null ? d : v === '1'; } catch (e) { return d; } };
     const setMapPref = (k, v) => { try { localStorage.setItem('map_' + k, v ? '1' : '0'); } catch (e) {} };
@@ -456,7 +461,7 @@
         if (!rangeArea) shade.setArea([]);
         return;
       }
-      const col = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#58a6ff';
+      const col = MAP_BLUE;
       const set = (c, km, opt) => {
         if (km == null) { if (c) map.removeLayer(c); return null; }
         if (!c) return L.circle(rangePos, Object.assign({radius: km * 1000, interactive: false}, opt)).addTo(map);
@@ -571,20 +576,21 @@
     // (wind_range.py) — a fill of all pieces and one outline without the cuts.
     function showWindArea(gj, k, col) {
       const outl = gj.features.find(f => (f.properties || {}).kind === 'line');
-      const base = {interactive: false, smoothFactor: 0.3};
+      const base = {interactive: false, smoothFactor: 0.2};
       const layers = [];
       if (outl) {
         // Closed loops (grid outline) are smoothed as rings; fill and line
         // come from the same smoothed loops, so they match exactly.
         const closed = c => c.length > 3 && c[0][0] === c[c.length - 1][0] && c[0][1] === c[c.length - 1][1];
-        // one pass of corner cutting: takes the grid steps off, keeps the shape
-        const lines = outl.geometry.coordinates.map(c => closed(c) ? smoothRing(c, 1) : smoothLine(c, 1));
+        // two passes of corner cutting on the half-km raster: the grid
+        // steps go, the shape stays
+        const lines = outl.geometry.coordinates.map(c => closed(c) ? smoothRing(c, 2) : smoothLine(c, 2));
         shade.setArea(shadeRings(lines.filter(closed)));
         const rs = shadeRings(lines.filter(closed));
         areaBounds = rs.length ? L.latLngBounds(rs.flat()) : null;
         const soft = {...outl, geometry: {...outl.geometry, coordinates: lines}};
-        layers.push(L.geoJSON(soft, {...base, style: () => ({color: '#ffffff', weight: 6, opacity: 0.55, lineJoin: 'round', lineCap: 'round'})}));
-        layers.push(L.geoJSON(soft, {...base, style: () => ({color: col, weight: 3, opacity: 0.95, lineJoin: 'round', lineCap: 'round'})}));
+        layers.push(L.geoJSON(soft, {...base, style: () => ({color: '#ffffff', weight: 6.5, opacity: 0.9, lineJoin: 'round', lineCap: 'round'})}));
+        layers.push(L.geoJSON(soft, {...base, style: () => ({color: MAP_BLUE, weight: 3, opacity: 1, lineJoin: 'round', lineCap: 'round'})}));
       }
       rangeArea = L.layerGroup(layers).addTo(map);
       rangeAreaTs = k;
@@ -635,8 +641,7 @@
             }
           }
           if (d.status === 'ok' && d.geojson && d.ts !== rangeAreaTs) {
-            const col = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#58a6ff';
-            showRangeArea(d.geojson, d.ts, col);
+            showRangeArea(d.geojson, d.ts, MAP_BLUE);
             if (!mapTouched) rangeFitKm = null;        // new area: fit the view to it again
           }
         } catch (e) {}
@@ -652,13 +657,16 @@
     // Arrow points where the wind blows to; size and colour by strength.
     const windLayer = L.layerGroup();
     let windOff = false;
+    const WIND_COLS = ['#57606a', '#0969da', '#bc4c00', '#cf222e'];
     function windIcon(p) {
       const k = p.kmh;
-      const col = k < 15 ? '#8b949e' : k < 30 ? '#58a6ff' : k < 45 ? '#d29922' : '#f85149';
-      const sz = k < 15 ? 14 : k < 30 ? 18 : 22;
+      // Dark, saturated colours with a white edge: readable on the light
+      // map, on the sea and on the dimmed part out of reach alike.
+      const col = k < 15 ? WIND_COLS[0] : k < 30 ? WIND_COLS[1] : k < 45 ? WIND_COLS[2] : WIND_COLS[3];
+      const sz = k < 15 ? 17 : k < 30 ? 21 : 25;
       return L.divIcon({className: 'wind-ico', iconSize: [sz, sz], iconAnchor: [sz / 2, sz / 2],
-        html: `<svg width="${sz}" height="${sz}" viewBox="0 0 20 20" style="transform:rotate(${(p.dir + 180) % 360}deg)">`
-          + `<path d="M10 1 L15.5 10 H12 V19 H8 V10 H4.5 Z" fill="${col}" fill-opacity="0.85" stroke="#fff" stroke-width="0.8"/></svg>`});
+        html: `<svg width="${sz}" height="${sz}" viewBox="-1 -1 22 22" style="transform:rotate(${(p.dir + 180) % 360}deg)">`
+          + `<path d="M10 1 L15.5 10 H12 V19 H8 V10 H4.5 Z" fill="${col}" stroke="#fff" stroke-width="2.2" stroke-linejoin="round" paint-order="stroke"/></svg>`});
     }
     function syncWindLayer() {
       const want = !windHidden && map.getZoom() >= 5 && windLayer.getLayers().length > 0;
@@ -735,7 +743,7 @@
       // The map tiles are light in both themes: a fixed dark purple with a
       // white halo (like the range line) stands out on sea, land and roads.
       const col = '#7a3fd6';
-      const halo = {color: '#ffffff', opacity: 0.6, interactive: false, lineJoin: 'round', lineCap: 'round'};
+      const halo = {color: '#ffffff', opacity: 0.9, interactive: false, lineJoin: 'round', lineCap: 'round'};
       const ferryRings = [];
       const outline = rings => {
         rings.forEach(r => ferryRings.push(r));

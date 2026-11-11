@@ -165,8 +165,8 @@ def _outer_rings(feature):
     return []
 
 
-CELL_KM_MIN = 1.0
-MAX_CELLS = 450
+CELL_KM_MIN = 0.5        # outline raster: half a km where the area is small enough …
+MAX_CELLS = 800          # … and never more cells than this across (400 km → 0.5 km, 800 km → 1 km)
 MIN_LOOP_KM2 = 30.0
 
 
