@@ -79,3 +79,22 @@ def test_live_telegram_with_a_jump_does_not_move_the_car(app_module):
     assert app_module._state_cache["devL"]["lat"] == 53.86
     with app_module._state_lock:
         app_module._state_cache.pop("devL", None)
+
+
+def test_late_correction_is_not_taken_for_the_jump(app_module):
+    """Home Assistant: the parking row carries the old parking place; the
+    real one follows later. By then the track only holds the wrong rows —
+    the right position must not be replaced by them."""
+    app_module._pos_memo.clear()
+    bad = {"lat": HOME[0], "lon": HOME[1], "odometer": 102, "field_times": {"lat": _iso(300)}}
+    out = app_module.hold_plausible_position(
+        "devH", dict(bad), lambda t: _drive_then({"_time": _t(300), "la": HOME[0], "lo": HOME[1], "od": 102}))
+    assert out["position_held"]
+    # 50 min later two more stale rows, then the correction within minutes of them
+    late = [{"_time": _t(3300), "la": HOME[0], "lo": HOME[1], "od": 102},
+            {"_time": _t(3600), "la": HOME[0], "lo": HOME[1], "od": 102},
+            {"_time": _t(3900), "la": WORK[0], "lo": WORK[1], "od": 102}]
+    good = {"lat": WORK[0], "lon": WORK[1], "odometer": 102, "field_times": {"lat": _iso(3900)}}
+    out = app_module.hold_plausible_position("devH", dict(good), lambda t: late)
+    assert out["lat"] == WORK[0] and "position_held" not in out
+    app_module._pos_memo.clear()
