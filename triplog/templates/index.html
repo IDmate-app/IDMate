@@ -333,6 +333,14 @@
 
 
     // Map
+    // Leaflet rounds every point of a line to whole pixels. An outline with
+    // several points per pixel then runs in little steps instead of a curve,
+    // and a white edge under it shows them twice: keep the fractions.
+    L.Polyline.prototype._projectLatlngs = function (latlngs, result, bounds) {
+      if (!(latlngs[0] instanceof L.LatLng)) return latlngs.forEach(l => this._projectLatlngs(l, result, bounds));
+      const origin = this._map.getPixelOrigin();
+      result.push(latlngs.map(ll => { const p = this._map.project(ll)._subtract(origin); bounds.extend(p); return p; }));
+    };
     const map = L.map('map', {zoomControl: false, attributionControl: false}).setView([52.52, 13.40], 14);
     IDmateMap.baseLayer('{{ map_tile_url }}', {maxZoom: 19}).addTo(map);
     if (window.ResizeObserver) {
