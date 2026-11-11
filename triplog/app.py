@@ -1510,6 +1510,7 @@ def _map_boot(device):
         return out
     try:
         import range_area
+        range_area.touch(device)        # page opened: bring the area up to date now
         db = get_db()
         try:
             rec = range_area.load_last(db, device)
@@ -1550,9 +1551,11 @@ def range_area_last():
     import range_area
     if not config.VALHALLA_URL:
         return jsonify({"status": "off"})
+    device = active_device()
+    range_area.touch(device)            # someone is looking: render sooner
     db = get_db()
     try:
-        rec = range_area.load_last(db, active_device())
+        rec = range_area.load_last(db, device)
     finally:
         db.close()
     if not rec:
@@ -1643,9 +1646,46 @@ def _range_inputs(db, v):
     return (lat, lon, kms)
 
 
+def _range_area_vehicle(db, v):
+    """One vehicle: cheap estimate per direction (has anything changed?),
+    and — only when a render is due — the energy field along real routes."""
+    import range_area
+    import wind_range
+    inp = _range_inputs(db, v)
+    if not inp:
+        return None
+    lat, lon, kms = inp
+    cruise = getattr(_range_inputs, "cruise", None)
+    dirs, pts_w, field_fn = None, [], None
+    if config.WIND_SOURCE:
+        import wind
+        wind.ensure(db, lat, lon, max(kms))
+        pts_w = wind.points_near(db, lat, lon, max(kms) * 1.6)
+    if cruise and cruise.get("model"):
+        guess = wind_range.direction_ranges(cruise["left"], cruise["model"], cruise.get("temp"),
+                                            cruise["v_eval"], lat, lon, pts_w, time.time())
+        if config.WIND_SOURCE:
+            dirs = guess
+        if guess:
+            v_fix = cruise["v_eval"] if cruise.get("mode") == "drive" else None
+
+            def field_fn():
+                import range_field
+                f = range_field.rays(cruise["left"], cruise["model"], cruise.get("temp"), lat, lon, pts_w,
+                                     time.time(), guess, v_fixed=v_fix)
+                if f:
+                    log.info("range area: %d of %d routes, %d samples, %.0f s",
+                             f["used"], f["rays"], len(f["samples"]), f["seconds"])
+                else:
+                    log.info("range area: too few routes for the energy field")
+                return f
+    return range_area.render_if_due(db, v["device"], lat, lon, kms, dirs=dirs, field_fn=field_fn)
+
+
 def _range_area_loop():
     """Background thread: renders the road area per vehicle and stores it, at
-    most every RENDER_EVERY_S when position or range changed."""
+    most every RENDER_EVERY_S when position or range changed (sooner while a
+    dashboard is open, see range_area.touch)."""
     import range_area
     time.sleep(30)                      # let the state cache fill first
     while True:
@@ -1657,41 +1697,15 @@ def _range_area_loop():
                         "SELECT * FROM vehicles WHERE device IS NOT NULL AND device != ''").fetchall()
                     for v in vehicles:
                         try:
-                            inp = _range_inputs(db, v)
-                            if inp:
-                                lat, lon, kms = inp
-                                dirs = None
-                                cruise = getattr(_range_inputs, "cruise", None)
-                                if config.WIND_SOURCE:
-                                    import wind
-                                    import wind_range
-                                    wind.ensure(db, lat, lon, max(kms))
-                                    # range per direction with the wind forecast
-                                    if cruise and cruise.get("model"):
-                                        dirs = wind_range.direction_ranges(
-                                            cruise["left"], cruise["model"], cruise.get("temp"),
-                                            cruise["v_eval"], lat, lon,
-                                            wind.points_near(db, lat, lon, max(kms) * 1.3), time.time())
-                                refine = None
-                                if dirs and cruise:
-                                    # along real routes: speed limits, elevation
-                                    v_fix = cruise["v_eval"] if cruise.get("mode") == "drive" else None
-                                    pts_w = wind.points_near(db, lat, lon, max(kms) * 1.3)
-                                    def refine(c=cruise, g=dirs, p=pts_w, la=lat, lo=lon, vf=v_fix):
-                                        out, used = wind_range.direction_ranges_routes(
-                                            c["left"], c["model"], c.get("temp"), la, lo, p,
-                                            time.time(), g, v_fixed=vf)
-                                        log.info("range area: %d/%d directions along routes", used, wind_range.N_DIRS)
-                                        return out
-                                range_area.render_if_due(db, v["device"], lat, lon, kms, dirs=dirs,
-                                                         refine=refine)
+                            _range_area_vehicle(db, v)
                         except Exception as e:      # one vehicle must not block the other
                             log.warning("range area for %s: %s", v["device"], e)
                 finally:
                     db.close()
         except Exception as e:
             log.warning("range area loop: %s", e, exc_info=True)
-        time.sleep(60)
+        range_area.wake.wait(60)            # a dashboard opening wakes it at once
+        range_area.wake.clear()
 
 
 @app.route("/api/stick-update/refresh", methods=["POST"])

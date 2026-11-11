@@ -6,6 +6,9 @@
    air speed replaces the driving speed in the drag term of the own
    consumption model (bms_learn.speed_model), the forecast temperature goes
    into the cold term. Where the energy runs out is the range of that bearing.
+   Since 1.2.315 this is only the cheap estimate (has anything changed?) and
+   the fallback; the area itself comes from range_field (energy left along
+   real routes, interpolated to a field).
 2. compose(): Valhalla returns up to 4 road contours (distances); every
    bearing wedge takes the contour closest to its own range. The pieces are
    clipped to their wedges (Sutherland-Hodgman, local flat projection); the
@@ -370,7 +373,9 @@ def _route(lat0, lon0, lat1, lon1, use_ferry=None):
         auto["use_ferry"] = use_ferry          # 0 = avoid ferries where a road exists
     body = {"locations": [{"lat": lat0, "lon": lon0}, {"lat": lat1, "lon": lon1}],
             "costing": "auto", "costing_options": {"auto": auto},
-            "elevation_interval": ELEV_INTERVAL_M, "narrative": False,
+            # narrative stays on: without it Valhalla leaves out the maneuvers,
+            # and with them the speed of each section and the ferries
+            "elevation_interval": ELEV_INTERVAL_M,
             "directions_options": {"units": "kilometers"}}
     req = urllib.request.Request(config.VALHALLA_URL + "/route", data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json"})
@@ -402,7 +407,7 @@ def route_profile(resp):
         if b0 is None or b1 is None:
             continue
         # Valhalla maneuver type 28 = "take the ferry": the car rides along
-        on_ferry = m.get("type") == 28 or m.get("travel_type") == "ferry"
+        on_ferry = m.get("type") == 28 or m.get("travel_type") == "ferry" or bool(m.get("ferry"))
         for k in range(b0, min(b1, len(speed))):
             ferry[k] = ferry[k] or on_ferry
         if on_ferry and b1 > b0:
@@ -436,11 +441,15 @@ def _at_km(prof, km):
 
 
 def range_along_route(remaining_kwh, model, temp_now, prof, points, now, v_fixed=None,
-                      speed_factor=None, mass_kg=None, until_km=None):
+                      speed_factor=None, mass_kg=None, until_km=None, trace=None, trace_km=None):
     """Road km until the energy runs out along one route profile; beyond the
     route's end it carries on with the last section's speed and heading.
     until_km: stop there and return the energy left (kWh, ≤ 0 = not reached)
-    instead — e.g. at a ferry terminal."""
+    instead — e.g. at a ferry terminal.
+    trace: a list that receives (lat, lon, kWh left, road km) for the middle
+    of every step — the energy left along the way, also past the point where
+    it runs out (negative), up to trace_km road km. The return value is
+    unchanged."""
     import config
     import wind
     mass = mass_kg or config.VEHICLE_MASS_KG
@@ -464,7 +473,10 @@ def range_along_route(remaining_kwh, model, temp_now, prof, points, now, v_fixed
     left, road, t = remaining_kwh, 0.0, now
     h_prev = height(0.0, lat0, lon0)
     last_head, last_v = None, None
-    while left > 0 and road < 1500 and (until_km is None or road < until_km):
+    empty_at = None                    # road km where the energy ran out
+    while road < 1500 and (until_km is None or road < until_km):
+        if empty_at is not None and (trace is None or road >= (trace_km or 0)):
+            break
         mid = road + STEP_KM / 2
         if mid <= prof["km"]:
             lat, lon, head, k = _at_km(prof, mid)
@@ -500,12 +512,14 @@ def range_along_route(remaining_kwh, model, temp_now, prof, points, now, v_fixed
             need = max(0.0, need + (pot / DRIVE_EFF if pot > 0 else pot * REGEN_EFF))
         if h is not None:
             h_prev = h
-        if need >= left:
-            road += STEP_KM * left / need if need > 0 else STEP_KM
-            left = 0
-        else:
-            road += STEP_KM
-            left -= need
+        if empty_at is None and need >= left:
+            empty_at = road + (STEP_KM * left / need if need > 0 else STEP_KM)
+        road += STEP_KM
+        left -= need
+        if trace is not None:
+            trace.append((lat, lon, left + need / 2, road - STEP_KM / 2))   # at the middle of the step
+    if empty_at is not None:
+        road, left = empty_at, 0
     if until_km is not None:
         return left
     return round(road)

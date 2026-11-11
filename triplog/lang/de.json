@@ -1612,7 +1612,7 @@
   "bms_cruise_notemp": "– ohne Temperaturdaten, eher ein Jahresmittel",
   "bms_drive": "Reichweite bei Ø {0} km/h",
   "bms_drive_hint": "aktuelles Tempo der letzten {1} km, {0} kWh/100 km bei {2} °C (für die Ladeplanung)",
-  "bms_wind_dirs": "mit Wind je nach Richtung",
+  "bms_wind_dirs": "je nach Strecke und Wind",
   "bms_buffer": "Anzeige 0 % bei CAN {0} %",
   "bms_window": "VW-Ø folgt etwa den letzten {0} km",
   "bms_e": "E = {0} kWh pro 100 % Anzeige",

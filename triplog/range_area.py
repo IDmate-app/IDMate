@@ -123,12 +123,37 @@ def area(lat, lon, kms):
 # RENDER_EVERY_S, so Valhalla is not asked on every page view.
 
 RENDER_EVERY_S = 10 * 60
+# While a dashboard is open (it asks for the stored area every 30 s) a
+# changed area is rendered sooner, and the first look after a while wakes
+# the background loop at once: the map is right when one looks at it.
+RENDER_WATCHED_S = 3 * 60
+WATCH_S = 5 * 60
+_watch = {}              # device -> last time a dashboard asked
+_took = {}               # device -> seconds the last render took
+wake = threading.Event()
+
+
+def touch(device, now=None):
+    """A dashboard is looking at this vehicle's area."""
+    now = now if now is not None else time.time()
+    idle = now - _watch.get(device, 0) > 60
+    _watch[device] = now
+    if idle:
+        wake.set()
+
+
+def render_every(device, now):
+    """Seconds between two renders of a changed area: sooner while watched,
+    but never closer together than four times what a render takes."""
+    every = RENDER_WATCHED_S if now - _watch.get(device, 0) < WATCH_S else RENDER_EVERY_S
+    return max(every, 4 * _took.get(device, 0))
+MAX_KM = 800              # Valhalla's limit for a distance contour (max_distance_contour)
 DIR_TOL_KM = 15          # a direction must move more than this (or 8 %) to count
 DIR_TOL_SHARE = 0.08
 # Bump when the stored geometry changes how it is built: an area from an
 # older version is rendered again at once, even if nothing else changed.
-GEOM_VERSION = 6          # 3: grid outline (1.2.290), 4: 32 directions (1.2.294), 5: islands/ferries kept (1.2.295),
-                          # 6: nothing behind ferries > 40 km (1.2.309)
+GEOM_VERSION = 7          # 3: grid outline (1.2.290), 4: 32 directions (1.2.294), 5: islands/ferries kept (1.2.295),
+                          # 6: nothing behind ferries > 40 km (1.2.309), 7: energy field (1.2.315)
 _fail_at = {}          # device -> time of the last failed render (no retry every minute)
 
 
@@ -144,10 +169,24 @@ def load_last(db, device):
         return None
 
 
-def render_if_due(db, device, lat, lon, kms, dirs=None, now=None, refine=None):
+def _no_long_ferries(gj, lat, lon, kms):
+    """The agreed 40 km: no land behind long ferries (ferries.py)."""
+    try:
+        import ferries
+        return ferries.drop_long_ferry_parts(gj, lat, lon, kms)
+    except Exception as e:
+        log.warning("range area: long ferry filter failed: %s", e)
+        return gj
+
+
+def render_if_due(db, device, lat, lon, kms, dirs=None, now=None, refine=None, field_fn=None):
     """Render and store when nothing is stored yet, or the inputs changed and
     the stored area is at least RENDER_EVERY_S old. dirs: road km per
-    bearing (wind_range) — the area is then composed from several contours.
+    bearing (wind_range, the cheap estimate) — decides whether anything
+    changed. field_fn: called only when a render is due, returns the energy
+    field from real routes (range_field.rays) or None; the area is then the
+    field inside one contour. Without a field: several contours picked per
+    bearing (refine: the old routes per direction).
     Returns "rendered", "unchanged", "wait" or "failed"."""
     import wind_range
     now = now if now is not None else time.time()
@@ -174,7 +213,7 @@ def render_if_due(db, device, lat, lon, kms, dirs=None, now=None, refine=None):
         # A different kind of range (one value instead of a span, with or
         # without wind) is a new display, not a small change: no waiting.
         same_kind = (len(last.get("kms") or []) == len(kms)) and bool(last.get("dirs")) == bool(dirs)
-        if now - (last.get("ts") or 0) < RENDER_EVERY_S and same_kind:
+        if now - (last.get("ts") or 0) < render_every(device, now) and same_kind:
             return "wait"
     if now - _fail_at.get(device, 0) < RENDER_EVERY_S:
         return "wait"
@@ -182,7 +221,16 @@ def render_if_due(db, device, lat, lon, kms, dirs=None, now=None, refine=None):
     # elevation); the key above stays on the cheap estimate, so this runs
     # only when a new area is rendered anyway.
     t0 = time.time()
-    if refine and dirs:
+    field = None
+    if field_fn:
+        try:
+            field = field_fn()
+        except Exception as e:
+            log.warning("range area: energy field failed: %s", e)
+            field = None
+    if field:
+        dirs = field.get("dirs") or dirs
+    elif refine and dirs:
         try:
             better = refine()
         except Exception as e:
@@ -194,18 +242,26 @@ def render_if_due(db, device, lat, lon, kms, dirs=None, now=None, refine=None):
             if len(lv) == 1:
                 kms, dirs, lv = [lv[0]], None, None
             req = lv or [round(x) for x in kms]
-    gj, err = compute(lat, lon, req)
-    if gj is not None:
-        try:                              # the agreed 40 km: no land behind long ferries
-            import ferries
-            gj = ferries.drop_long_ferry_parts(gj, lat, lon, req)
-        except Exception as e:
-            log.warning("range area: long ferry filter failed: %s", e)
-    if gj is not None and dirs:
-        gj = wind_range.compose(gj, dirs, lat, lon)
-    elif gj is not None and len(req) == 1:
-        # one contour: same clean outline (no holes, slivers, little loops)
-        gj = wind_range.compose(gj, None, lat, lon) or gj
+    gj = None
+    if field:
+        import range_field
+        # one contour as the mask (coast, islands, land without roads); the
+        # energy field decides how far it goes inside
+        mask, err = compute(lat, lon, [min(range_field.mask_km(field), MAX_KM)])
+        if mask is not None:
+            mask = _no_long_ferries(mask, lat, lon, [min(range_field.mask_km(field), MAX_KM)])
+            gj = range_field.compose(mask, field["samples"], lat, lon)
+        if gj is None:
+            log.info("range area: no area from the energy field, falling back to contours")
+    if gj is None:
+        gj, err = compute(lat, lon, req)
+        if gj is not None:
+            gj = _no_long_ferries(gj, lat, lon, req)
+        if gj is not None and dirs:
+            gj = wind_range.compose(gj, dirs, lat, lon)
+        elif gj is not None and len(req) == 1:
+            # one contour: same clean outline (no holes, slivers, little loops)
+            gj = wind_range.compose(gj, None, lat, lon) or gj
     if gj is None:
         _fail_at[device] = now
         log.warning("range area: render failed for %s (%s) — next try in %d min",
@@ -219,6 +275,7 @@ def render_if_due(db, device, lat, lon, kms, dirs=None, now=None, refine=None):
     db.execute("INSERT OR REPLACE INTO range_area_last (device, data, ts) VALUES (?, ?, ?)",
                (device, json.dumps(rec, separators=(",", ":")), now))
     db.commit()
+    _took[device] = time.time() - t0
     log.info("range area: rendered for %s (%s km) in %.0f s", device,
-             "/".join(str(x) for x in rec["kms"]), time.time() - t0)
+             "/".join(str(x) for x in rec["kms"]), _took[device])
     return "rendered"

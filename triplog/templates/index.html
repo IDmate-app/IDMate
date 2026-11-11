@@ -344,16 +344,81 @@
       map.getContainer().addEventListener(ev, () => { mapTouched = true; lastUserMove = Date.now(); }, {passive: true}));
     // Road area rendered in the background (/api/range-area/last).
     let rangeArea = null, rangeAreaTs = null, rangeAreaOff = false, rangeAreaBoot = false;
+    let areaBounds = null;           // bounds of the road area, for the automatic view
     // Map buttons: range and wind can be switched off (remembered per browser).
     const mapPref = (k, d) => { try { const v = localStorage.getItem('map_' + k); return v == null ? d : v === '1'; } catch (e) { return d; } };
     const setMapPref = (k, v) => { try { localStorage.setItem('map_' + k, v ? '1' : '0'); } catch (e) {} };
     let rangeHidden = !mapPref('range', true), windHidden = !mapPref('wind', true);
+    // ── Out of reach: slightly dimmed ──
+    // One canvas between the tiles and the lines: filled with a light tint,
+    // then every reachable area is cut out of it. Overlapping areas (range
+    // and ferries) need no geometry that way.
+    const shade = (() => {
+      const pane = map.createPane('shade');
+      pane.style.zIndex = 350; pane.style.pointerEvents = 'none';
+      const cv = L.DomUtil.create('canvas', 'leaflet-zoom-animated', pane);
+      const PAD = 0.2, TINT = 'rgba(0,0,0,0.08)';
+      let area = [], ferry = [], on = true, center = null, zoom = null, raf = 0;
+      function draw() {
+        raf = 0;
+        const size = map.getSize();
+        if (!size.x || !size.y) return;
+        const tl = map.containerPointToLayerPoint(size.multiplyBy(-PAD)).round();
+        const w = Math.round(size.x * (1 + 2 * PAD)), h = Math.round(size.y * (1 + 2 * PAD));
+        L.DomUtil.setPosition(cv, tl);
+        if (cv.width !== w) cv.width = w;
+        if (cv.height !== h) cv.height = h;
+        cv.style.width = w + 'px'; cv.style.height = h + 'px';
+        center = map.getCenter(); zoom = map.getZoom();
+        const ctx = cv.getContext('2d');
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.clearRect(0, 0, w, h);
+        const rings = on ? area.concat(ferry) : [];
+        if (!rings.length) return;
+        ctx.fillStyle = TINT; ctx.fillRect(0, 0, w, h);
+        ctx.globalCompositeOperation = 'destination-out'; ctx.fillStyle = '#000';
+        rings.forEach(r => {
+          ctx.beginPath();
+          r.forEach((p, i) => {
+            const q = map.latLngToLayerPoint(p);
+            if (i) ctx.lineTo(q.x - tl.x, q.y - tl.y); else ctx.moveTo(q.x - tl.x, q.y - tl.y);
+          });
+          ctx.closePath(); ctx.fill();
+        });
+      }
+      const later = () => { if (!raf && !map._animatingZoom) raf = requestAnimationFrame(draw); };
+      map.on('moveend zoomend resize viewreset', draw);
+      map.on('move', later);
+      map.on('zoomanim', e => {              // follow the zoom animation like Leaflet's own canvas
+        if (center == null) return;
+        const scale = map.getZoomScale(e.zoom, zoom);
+        const off = map.getSize().multiplyBy(0.5 + PAD).multiplyBy(-scale)
+          .add(map.project(center, e.zoom)).subtract(map._getNewPixelOrigin(e.center, e.zoom));
+        L.DomUtil.setTransform(cv, off, scale);
+      });
+      return {
+        setArea(r) { area = r || []; later(); },
+        setFerry(r) { ferry = r || []; later(); },
+        setOn(v) { if (on !== v) { on = v; later(); } },
+      };
+    })();
+    // rings [[lon, lat], …] (GeoJSON) → [[lat, lon], …]
+    const shadeRings = rings => (rings || []).filter(c => c && c.length > 3).map(c => c.map(p => [p[1], p[0]]));
+    function circleRing(pos, km) {
+      const c = L.latLng(pos), out = [];
+      for (let i = 0; i < 90; i++) {
+        const a = i * Math.PI / 45;
+        out.push([c.lat + km / 110.57 * Math.cos(a), c.lng + km / (111.32 * Math.cos(c.lat * Math.PI / 180)) * Math.sin(a)]);
+      }
+      return out;
+    }
     function applyRangeVisibility() {
       if (rangeHidden) [rangeInner, rangeOuter].forEach(c => c && c.setStyle({opacity: 0}));
       if (rangeArea) {
         if (!rangeHidden && !map.hasLayer(rangeArea)) map.addLayer(rangeArea);
         else if (rangeHidden && map.hasLayer(rangeArea)) map.removeLayer(rangeArea);
       }
+      shade.setOn(!rangeHidden);
     }
     function updateRangeCircle(pos, fallbackKm) {
       if (pos) rangePos = pos;
@@ -367,6 +432,7 @@
       if (hi == null) {
         [rangeInner, rangeOuter].forEach(c => c && map.removeLayer(c));
         rangeInner = rangeOuter = null;
+        if (!rangeArea) shade.setArea([]);
         return;
       }
       const col = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#58a6ff';
@@ -382,6 +448,7 @@
       rangeInner = set(rangeInner, areaHere ? null : lo, {color: col, weight: 1, opacity: 0.6, fill: false});
       rangeOuter = set(rangeOuter, hi, {color: col, weight: 1.5, opacity: 0.8, dashArray: '6 6', fill: false});
       if (rangeOuter) rangeOuter.setStyle({opacity: areaHere ? 0 : 0.8});
+      if (!areaHere) shade.setArea([circleRing(rangePos, hi)]);
       // Fit once; again only while the user has not touched the map and the
       // range changed by more than 15 % (e.g. the BMS estimate arriving).
       if (rangeOuter && (rangeFitKm == null || (!mapTouched && Math.abs(hi - rangeFitKm) > 0.15 * rangeFitKm))) {
@@ -392,7 +459,9 @@
         if (sz.x > 50 && sz.y > 50) {
           const snap = map.options.zoomSnap;
           map.options.zoomSnap = 0.25;     // fill the map, not just half of it
-          map.fitBounds(rangeOuter.getBounds(), {padding: [12, 12], animate: false});
+          // the road area when there is one (it reaches further than the
+          // circle where the roads are slow), else the circle
+          map.fitBounds(areaHere && areaBounds ? areaBounds : rangeOuter.getBounds(), {padding: [12, 12], animate: false});
           map.options.zoomSnap = snap;
           rangeFitKm = hi;
         } else {
@@ -487,6 +556,9 @@
         // come from the same smoothed loops, so they match exactly.
         const closed = c => c.length > 3 && c[0][0] === c[c.length - 1][0] && c[0][1] === c[c.length - 1][1];
         const lines = outl.geometry.coordinates.map(c => closed(c) ? smoothRing(c, 2) : smoothLine(c, 2));
+        shade.setArea(shadeRings(lines.filter(closed)));
+        const rs = shadeRings(lines.filter(closed));
+        areaBounds = rs.length ? L.latLngBounds(rs.flat()) : null;
         const soft = {...outl, geometry: {...outl.geometry, coordinates: lines}};
         layers.push(L.geoJSON(soft, {...base, style: () => ({color: '#ffffff', weight: 6, opacity: 0.55, lineJoin: 'round', lineCap: 'round'})}));
         layers.push(L.geoJSON(soft, {...base, style: () => ({color: col, weight: 3, opacity: 0.95, lineJoin: 'round', lineCap: 'round'})}));
@@ -515,6 +587,13 @@
                 fill: false};
       }});
       rangeArea = L.layerGroup([halo, line]).addTo(map);
+      const outer = [];
+      soft.features.filter(isOuter).forEach(f => {
+        const g = f.geometry || {};
+        (g.type === 'MultiPolygon' ? g.coordinates : g.type === 'Polygon' ? [g.coordinates] : []).forEach(poly => outer.push(poly[0]));
+      });
+      shade.setArea(shadeRings(outer));
+      areaBounds = outer.length ? L.latLngBounds(shadeRings(outer).flat()) : null;
       rangeAreaTs = k;
     }
     // Data delivered with the page (stored area, wind of this hour).
@@ -535,6 +614,7 @@
           if (d.status === 'ok' && d.geojson && d.ts !== rangeAreaTs) {
             const col = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#58a6ff';
             showRangeArea(d.geojson, d.ts, col);
+            if (!mapTouched) rangeFitKm = null;        // new area: fit the view to it again
           }
         } catch (e) {}
       }
@@ -542,6 +622,7 @@
       updateRangeCircle();
     }
     pollRangeArea(true);
+    setTimeout(pollRangeArea, 12000);   // opening the page wakes the background render
     setTimeout(() => { if (!rangeAreaBoot) { rangeAreaBoot = true; updateRangeCircle(); } }, 4000);
     setInterval(pollRangeArea, 30000);
 
@@ -633,7 +714,9 @@
       // white halo (like the range line) stands out on sea, land and roads.
       const col = '#7a3fd6';
       const halo = {color: '#ffffff', opacity: 0.6, interactive: false, lineJoin: 'round', lineCap: 'round'};
+      const ferryRings = [];
       const outline = rings => {
+        rings.forEach(r => ferryRings.push(r));
         const g = {type: 'Feature', geometry: {type: 'MultiLineString', coordinates: rings}};
         L.geoJSON(g, {interactive: false, style: () => ({...halo, weight: 5.4})}).addTo(ferryLayer);   // 90 % of the range line (6/3)
         L.geoJSON(g, {interactive: false, style: () => ({color: col, weight: 2.7, opacity: 0.95, lineJoin: 'round', lineCap: 'round'})}).addTo(ferryLayer);
@@ -671,6 +754,7 @@
         const outl = (union.features || []).find(x => (x.properties || {}).kind === 'line');
         if (outl) outline(outl.geometry.coordinates.map(c => smoothRing(c, 2)));
       }
+      shade.setFerry(shadeRings(ferryRings));        // reachable too: not dimmed
       ferryHover.addTo(ferryLayer);
       ports.forEach(m => m.addTo(ferryLayer));      // the points on top
       if (!map.hasLayer(ferryLayer)) map.addLayer(ferryLayer);
@@ -704,6 +788,7 @@
       if (!ferryOn) {
         ferryLayer.clearLayers(); map.removeLayer(ferryLayer);
         ferrySea.clearLayers(); syncFerrySea();
+        shade.setFerry([]);
         clearInterval(ferryPoll); ferryPoll = null; btnFerry.classList.remove('busy');
         mapTouched = false; rangeFitKm = null; updateRangeCircle();   // back to the normal view
         return;
@@ -1132,6 +1217,24 @@
         updateTrail(trail);
       } catch (e) {}
     }
+
+    // Back in the app (phone woke the page up, tab shown again): timers were
+    // asleep, so fetch position, range area and wind right now instead of
+    // showing the old picture until the next tick.
+    let _lastWake = 0;
+    function wakeRefresh() {
+      if (Date.now() - _lastWake < 3000) return;
+      _lastWake = Date.now();
+      fullRefresh();
+      pollRangeArea();
+      pollWind();
+      // the look at the map wakes the background render: fetch its result soon
+      setTimeout(pollRangeArea, 12000);
+      if (typeof bmsLoad === 'function') bmsLoad();
+    }
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) wakeRefresh(); });
+    window.addEventListener('pageshow', e => { if (e.persisted) wakeRefresh(); });
+    window.addEventListener('focus', wakeRefresh);
 
     function resetFallbackTimer() {
       if (_fallbackTimer) clearInterval(_fallbackTimer);
