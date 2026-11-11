@@ -1561,6 +1561,51 @@ def range_area_last():
     return jsonify({"status": "ok", **rec})
 
 
+@app.route("/api/range-check")
+def range_check():
+    """Long press on the map: one route from the car to that place and how
+    much energy is left on arrival — the exact answer for one point, where
+    the drawn area only connects the edges of 128 bearings. Never renders
+    the area; one Valhalla route per call."""
+    import range_field
+    if not config.VALHALLA_URL:
+        return jsonify({"status": "off"})
+    try:
+        lat1, lon1 = float(request.args["lat"]), float(request.args["lon"])
+    except (KeyError, ValueError):
+        return jsonify({"status": "error", "error": "bad_point"}), 400
+    if not (-90 <= lat1 <= 90 and -180 <= lon1 <= 180):
+        return jsonify({"status": "error", "error": "bad_point"}), 400
+    db = get_db()
+    try:
+        v = db.execute("SELECT * FROM vehicles WHERE device = ?", (active_device(),)).fetchone()
+        inp = _range_inputs(db, v) if v and v["device"] else None
+        cruise = getattr(_range_inputs, "cruise", None) if inp else None
+        if not inp or not cruise or not cruise.get("model"):
+            return jsonify({"status": "error", "error": "no_model"})
+        lat0, lon0, kms = inp
+        pts_w = []
+        if config.WIND_SOURCE:
+            import wind
+            pts_w = wind.points_near(db, lat0, lon0, max(kms) * 1.6)
+    finally:
+        db.close()
+    v_fix = cruise["v_eval"] if cruise.get("mode") == "drive" else None
+    a = range_field.arrival(cruise["left"], cruise["model"], cruise.get("temp"), lat0, lon0, lat1, lon1,
+                            pts_w, time.time(), v_fixed=v_fix)
+    if a is None:
+        return jsonify({"status": "noroute"})
+    import ferries
+    out = {"status": "ok", "reached": a["left"] >= 0 and not a["ferry"], "long_ferry": a["ferry"],
+           "ferry_name": a["ferry_name"], "road_km": round(a["road"]), "ferry_km": round(a["ferry_km"]),
+           "left_kwh": round(a["left"], 1),
+           "left_share": round(100 * a["left"] / cruise["left"]) if cruise["left"] > 0 else None,
+           "empty_km": round(a["empty_km"]) if a["empty_km"] is not None else None,
+           # how far the nearest road is from the place asked for
+           "off_km": round(ferries._km((lat1, lon1), (a["lat"], a["lon"])), 1)}
+    return jsonify(out)
+
+
 @app.route("/api/wind")
 def wind_now():
     """Wind of the current hour on the raster around the active vehicle's
