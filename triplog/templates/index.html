@@ -1267,6 +1267,8 @@
       if (incoming.time) _currentState.time = incoming.time;
     }
 
+    // the vehicle this page was built for
+    const PAGE_VEHICLE = {{ (active_vehicle.id if active_vehicle else none) | tojson }};
     async function fullRefresh() {
       try {
         const [stateRes, trailRes] = await Promise.all([
@@ -1275,6 +1277,13 @@
         ]);
         const state = await stateRes.json();
         const trail = await trailRes.json();
+        // Another tab or the phone picked a different vehicle (the pick is
+        // stored per user): this page would now show that car's data under
+        // this car's name. Load the page again instead.
+        if (PAGE_VEHICLE != null && state.vehicle_id != null && state.vehicle_id !== PAGE_VEHICLE) {
+          location.reload();
+          return;
+        }
         mergeState(state);
         updateState(_currentState);
         updateTrail(trail);

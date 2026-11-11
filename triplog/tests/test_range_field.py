@@ -414,3 +414,48 @@ def test_area_grows_on_from_a_landing_over_land_only():
     assert not inside(175, 0)                              # … but not beyond what the rest carries
     assert not inside(150, 30)                             # the other island: water in between
     assert inside(50, 0) and not inside(118, 0)            # the mainland as before
+
+
+def test_driving_renders_every_ten_minutes_not_every_pass(app_module, db, monkeypatch):
+    """1.2.321: with a flat wind estimate (dirs None) but an area from the
+    routes (stored with dirs) every pass of the loop while driving counted
+    as "a new kind of range" and rendered at once — every 90 s in the log."""
+    import range_area as ra
+    ra._fail_at.clear(); ra._took.clear()
+    monkeypatch.setattr(ra, "_down_until", 0.0)
+    monkeypatch.setattr(ra, "_fetch", lambda lat, lon, kms: {
+        "type": "FeatureCollection", "features": [_circle(lat, lon, k) for k in kms]})
+    field = {"dirs": [150] * N, "rim": _rim(lambda th: 150.0), "dmax": 190.0, "safe": None,
+             "used": 64, "routes": 130, "seconds": 1.0, "places": []}
+    calls = []
+    def field_fn():
+        calls.append(1)
+        return field
+    assert ra.render_if_due(db, "devD", LAT, LON, [180], now=1000, field_fn=field_fn) == "rendered"
+    ra._took.clear()
+    assert ra.load_last(db, "devD")["dirs"]                # the area carries dirs, the estimate does not
+    for i in range(1, 9):                                  # 8 passes, a minute and a few km apart
+        assert ra.render_if_due(db, "devD", LAT + 0.03 * i, LON, [180], now=1000 + 65 * i, field_fn=field_fn) == "wait"
+    assert len(calls) == 1                                 # no routes asked in between either
+    assert ra.render_if_due(db, "devD", LAT + 0.3, LON, [180], now=1000 + 601, field_fn=field_fn) == "rendered"
+    ra._took.clear()
+
+
+def test_vehicle_state_says_which_vehicle_it_is(app_module, db, monkeypatch):
+    """The active vehicle is stored per user: picked in another tab, an
+    open dashboard would show that car under this car's name (1.2.321)."""
+    monkeypatch.setattr(app_module, "_vehicle_state", lambda dev: {"device_seen": dev})
+    db.execute("INSERT INTO vehicles (id, plate, device) VALUES (1, 'EV1', 'devA')")
+    db.execute("INSERT INTO vehicles (id, plate, device) VALUES (2, 'EV2', 'devB')")
+    db.execute("INSERT INTO users (id, username, password_hash, is_admin, active_vehicle_id) VALUES (1, 'a', 'x', 1, 1)")
+    db.commit()
+    app_module.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+    with app_module.app.test_client() as c:
+        with c.session_transaction() as s:
+            s["_user_id"] = "1"
+        assert c.get("/api/vehicle-state").get_json() == {"device_seen": "devA", "vehicle_id": 1}
+        db.execute("UPDATE users SET active_vehicle_id = 2")       # picked elsewhere
+        db.commit()
+        assert c.get("/api/vehicle-state").get_json() == {"device_seen": "devB", "vehicle_id": 2}
+        html = c.get("/").get_data(as_text=True)
+        assert "state.vehicle_id !== PAGE_VEHICLE" in html and "const PAGE_VEHICLE = 2;" in html

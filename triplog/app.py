@@ -1762,8 +1762,15 @@ def stick_update_refresh():
 
 @app.route("/api/vehicle-state")
 def vehicle_state():
-    """Current vehicle state — from cache (updated every 10s in background)."""
-    return jsonify(_vehicle_state(active_device()))
+    """Current vehicle state — from cache (updated every 10s in background).
+    vehicle_id: which vehicle this is. The active vehicle is stored per user,
+    so a pick in another tab or on the phone changes it for every open
+    dashboard: the page compares and reloads instead of showing one car
+    under the other's name."""
+    v = active_vehicle()
+    state = _vehicle_state(v["device"] if v and v.get("device") else config.INFLUX_DEVICE)
+    state["vehicle_id"] = v["id"] if v else None
+    return jsonify(state)
 
 
 def _vehicle_state(device):

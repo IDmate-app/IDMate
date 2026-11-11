@@ -198,9 +198,13 @@ def render_if_due(db, device, lat, lon, kms, dirs=None, now=None, refine=None, f
         if dirs and len(lk) == 4 and len(kk) == 4 and lk[:3] == kk[:3] and len(lk[3]) == len(kk[3]) \
                 and all(abs(a - b) <= max(DIR_TOL_KM, DIR_TOL_SHARE * b) for a, b in zip(kk[3], lk[3])):
             return "unchanged"
-        # A different kind of range (one value instead of a span, with or
-        # without wind) is a new display, not a small change: no waiting.
-        same_kind = (len(last.get("kms") or []) == len(kms)) and bool(last.get("dirs")) == bool(dirs)
+        # A different kind of range (one value instead of a span) is a new
+        # display, not a small change: no waiting. (Whether the wind estimate
+        # is flat no longer makes a kind: the stored "dirs" come from the
+        # routes since 1.2.315 and are always there — comparing them with
+        # the flat estimate made every pass while driving "a new kind", a
+        # render every 90 s instead of every 10 min.)
+        same_kind = len(last.get("kms") or []) == len(kms)
         if now - (last.get("ts") or 0) < render_every(device, now) and same_kind:
             return "wait"
     if now - _fail_at.get(device, 0) < RENDER_EVERY_S:
