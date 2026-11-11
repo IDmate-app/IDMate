@@ -239,6 +239,19 @@ def crossings(osm, min_km=None):
     return chains
 
 
+ROAD_NEAR_KM = 200               # ports this close by road: nobody takes a long ferry between them
+
+
+def _coast_hop(a, b, land_fn):
+    """Both ports lie on the same coast, a short drive apart (Travemünde–
+    Rostock): the ferry is no way to get further, whatever the charge."""
+    try:
+        prof = wr.route_profile(land_fn(a[0], a[1], b[0], b[1]))
+    except Exception:
+        return False
+    return bool(prof) and (prof.get("ferry_km") or 0) <= wr.MAX_FERRY_KM and prof["km"] <= ROAD_NEAR_KM
+
+
 def _by_road(lat, lon, b, cruise, points, land_fn):
     """Is the port of arrival reachable by car anyway (no long ferry)? Then
     the ferry is a detour along the coast (Travemünde–Rostock) and only
@@ -431,6 +444,7 @@ def _run(device, lat, lon, cruise, points, route_fn=None, area_fn=None, osm_fn=N
         energy_at = {}                                    # terminal → kWh left (one route each)
         ferries = []
         skipped = 0
+        hop = {}                                          # (terminal, port) → ports a short drive apart
         for c in cands:
             if len(ferries) >= MAX_FERRIES:
                 break
@@ -450,6 +464,12 @@ def _run(device, lat, lon, cruise, points, route_fn=None, area_fn=None, osm_fn=N
             left, via = energy_at[tk]
             if left is None or left <= 0:
                 continue                                  # terminal out of reach
+            pk = (tk, round(b[0], 3), round(b[1], 3))
+            if pk not in hop:
+                hop[pk] = _coast_hop(a, b, land_fn)
+            if hop[pk]:
+                skipped += 1
+                continue                                  # a short drive along the coast
             if _by_road(lat, lon, b, cruise, points, land_fn):
                 skipped += 1
                 continue                                  # port reachable by road anyway
@@ -468,7 +488,7 @@ def _run(device, lat, lon, cruise, points, route_fn=None, area_fn=None, osm_fn=N
             ferries.append(item)
         res = {"status": "ok", "ts": time.time(), "lat": lat, "lon": lon, "ferries": ferries,
                "union": union_areas([f["area"] for f in ferries])}
-        log.info("ferries: %d long crossings found, %d reachable, %d skipped (port reachable by road)",
+        log.info("ferries: %d long crossings found, %d reachable, %d skipped (port reachable by road or a short drive away)",
                  len(cands), len(ferries), skipped)
     except Exception as e:
         log.warning("ferries: search failed: %s", e, exc_info=True)

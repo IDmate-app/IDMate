@@ -264,3 +264,24 @@ def test_overlapping_port_areas_become_one_outline():
     line = [f for f in u["features"] if f["properties"]["kind"] == "line"][0]
     assert len(line["geometry"]["coordinates"]) == 2                 # the two overlapping ones as one
     assert ferries.union_areas([None]) is None
+
+
+def test_ferry_between_two_ports_a_short_drive_apart_is_never_shown():
+    """Travemünde–Rostock with little charge (1.2.317): the terminal is in
+    reach, Rostock by road is not — the ferry showed up again. Two ports a
+    short drive apart are no way to get further, whatever the charge."""
+    near = {"elements": [_way(_line(TERMINAL, (54.6, 11.9)) + _line((54.6, 11.9), (54.18, 12.09))[1:],
+                              name="Travemünde - Rostock")]}
+    low = dict(CRUISE, left=14.0)
+    # the road from the car to the port is too far for this charge …
+    assert not ferries._by_road(53.81, 10.37, (54.18, 12.09), low, [], _road)
+    # … but terminal and port are about 100 km apart by road: skipped
+    assert ferries._coast_hop(TERMINAL, (54.18, 12.09), _road)
+    ferries._run("devN", 53.81, 10.37, low, [], route_fn=_road, area_fn=lambda *a: None, osm_fn=lambda box: near)
+    assert ferries.status("devN")["ferries"] == []
+    # a real crossing (Travemünde–Trelleborg, 260 km by this road) is not a hop
+    assert not ferries._coast_hop(TERMINAL, PORT, _road)
+    # and no road between the ports at all (an island): the ferry stays
+    ferries._run("devO", 53.81, 10.37, low, [], route_fn=_road, area_fn=lambda *a: None,
+                 osm_fn=lambda box: near, land_fn=lambda *a: {})
+    assert len(ferries.status("devO")["ferries"]) == 1
