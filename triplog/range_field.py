@@ -29,6 +29,8 @@ import wind_range as wr
 log = logging.getLogger("triplog.range_field")
 
 MAX_ROUTES = 3           # per bearing
+MAX_ROUTES_WIDE = 6      # … up to this many while reached and not reached lie far apart
+GAP_KM = 25              # close enough: the edge is taken between the two
 MIN_BEARINGS = 8         # fewer with a result: no rim, the old way
 EXTRA_BUDGET_S = 90      # a finer pass only while twice the time so far fits into this
 CLOSE = 0.04             # a route that arrives within this share of the energy of empty needs no second one
@@ -92,14 +94,17 @@ def _arrive(remaining_kwh, model, temp_now, lat0, lon0, th, r_km, points, now, v
     return {"r": r1, "th": th1, "road": end, "left": left, "ferry": ferry, "asked": r_km}
 
 
-def _edge(remaining_kwh, model, temp_now, lat0, lon0, th, r0, points, now, v_fixed, route_fn):
+def _edge(remaining_kwh, model, temp_now, lat0, lon0, th, r0, points, now, v_fixed, route_fn, seen=None):
     """The edge of the range on one bearing → (rim point or None, routes
     asked, energy). Rim point: (bearing°, km as the crow flies, road km);
-    energy: True when the battery sets this edge, False at the quay of a
-    long ferry (the road km there say nothing about the range)."""
+    energy: True when the road km are a measured range (a place reached and
+    one not reached pin the edge), False at the quay of a long ferry or
+    where the land ends before the energy does."""
     lo = hi = None                       # furthest place reached / nearest place not reached
     r, asked = max(r0, 5.0), 0
-    for _ in range(MAX_ROUTES):
+    for n in range(MAX_ROUTES_WIDE):
+        if n >= MAX_ROUTES and not (lo and hi and hi["r"] - lo["r"] > GAP_KM):
+            break                         # more than MAX_ROUTES only to close a wide gap
         asked += 1
         a = _arrive(remaining_kwh, model, temp_now, lat0, lon0, th, r, points, now, v_fixed, route_fn)
         if a is None:
@@ -107,6 +112,8 @@ def _edge(remaining_kwh, model, temp_now, lat0, lon0, th, r0, points, now, v_fix
                 break
             r *= 0.6                      # no road out there (sea): try closer in
             continue
+        if seen is not None:
+            seen.append(a)                # every place a route ended at, reached or not
         if a["ferry"]:
             if a["left"] >= 0:            # the terminal is reached: the range ends at the quay
                 return (a["th"], a["r"] + 3.0, a["road"]), asked, False
@@ -118,13 +125,17 @@ def _edge(remaining_kwh, model, temp_now, lat0, lon0, th, r0, points, now, v_fix
                 break                     # the route ends well before the target: the land ends here
         else:
             hi = a if hi is None or a["r"] < hi["r"] else hi
-        if lo and hi and hi["r"] - lo["r"] <= 25:
+        if lo and hi and hi["r"] - lo["r"] <= GAP_KM:
             break
         if not (lo and hi) and abs(a["left"]) <= CLOSE * remaining_kwh and not a["ferry"]:
             break                         # arrives (almost) exactly empty: that is the edge
         if lo and hi:
-            # between the two: where the energy left crosses zero
-            r = lo["r"] + (hi["r"] - lo["r"]) * lo["left"] / (lo["left"] - hi["left"])
+            # Between the two: where the energy left crosses zero. But a place
+            # behind a detour (across a bay) is short by far more than its
+            # distance says, and that estimate then sits right at the reached
+            # place again: keep to the middle part of the gap.
+            f = lo["left"] / (lo["left"] - hi["left"])
+            r = lo["r"] + (hi["r"] - lo["r"]) * min(0.7, max(0.3, f))
         else:
             used = remaining_kwh - a["left"]          # energy this route needs
             scale = remaining_kwh / used if used > 0 else STEP_OUT
@@ -138,8 +149,10 @@ def _edge(remaining_kwh, model, temp_now, lat0, lon0, th, r0, points, now, v_fix
     used = remaining_kwh - one["left"]
     scale = min(STEP_OUT, max(0.3, remaining_kwh / used)) if used > 0 else 1.0
     # only one side known: the same consumption carried on (the contour cuts
-    # the sea where the land ended before the energy did)
-    return (th, one["r"] * scale, one["road"] * scale), asked, True
+    # the sea where the land ended before the energy did). Its road km are a
+    # measured range only when the route arrived about empty — at a coast
+    # with most of the energy left they are a capped guess.
+    return (th, one["r"] * scale, one["road"] * scale), asked, abs(one["left"]) <= CLOSE * remaining_kwh
 
 
 def probe(remaining_kwh, model, temp_now, lat0, lon0, points, now, guess, v_fixed=None,
@@ -156,11 +169,11 @@ def probe(remaining_kwh, model, temp_now, lat0, lon0, points, now, guess, v_fixe
     route_fn = route_fn or wr._route
     bs = wr.bearings()
     half = 180.0 / wr.N_DIRS
-    rim, dirs, routes, roads = [], [], 0, []
+    rim, dirs, routes, roads, seen = [], [], 0, [], []
     t0 = clock()
     for i, (th, g) in enumerate(zip(bs, guess)):
         p, n, by_energy = _edge(remaining_kwh, model, temp_now, lat0, lon0, th, max(g, 10) / wr.DETOUR, points, now,
-                                v_fixed, route_fn)
+                                v_fixed, route_fn, seen)
         routes += n
         dirs.append(int(round(p[2])) if p else g)
         if p:
@@ -178,7 +191,7 @@ def probe(remaining_kwh, model, temp_now, lat0, lon0, points, now, guess, v_fixe
             for off in offsets:
                 b = (th + off) % 360.0
                 p, n, by_energy = _edge(remaining_kwh, model, temp_now, lat0, lon0, b,
-                                        table[int(b * TABLE / 360.0) % TABLE], points, now, v_fixed, route_fn)
+                                        table[int(b * TABLE / 360.0) % TABLE], points, now, v_fixed, route_fn, seen)
                 routes += n
                 if p:
                     rim.append(p)
@@ -187,7 +200,12 @@ def probe(remaining_kwh, model, temp_now, lat0, lon0, points, now, guess, v_fixe
     if len(rim) < MIN_BEARINGS:
         return None
     rim.sort()
-    return {"rim": rim, "dirs": dirs, "used": len(rim), "routes": routes,
+    # the places themselves, in local km: (x, y, kWh left on arrival) — plus the car
+    places = [(0.0, 0.0, float(remaining_kwh))]
+    for a in seen:
+        t = math.radians(a["th"])
+        places.append((a["r"] * math.sin(t), a["r"] * math.cos(t), a["left"]))
+    return {"rim": rim, "places": places, "dirs": dirs, "used": len(rim), "routes": routes,
             "dmax": max(p[2] for p in rim), "safe": min(roads) if roads else None, "seconds": clock() - t0}
 
 

@@ -123,38 +123,25 @@ def area(lat, lon, kms):
 # RENDER_EVERY_S, so Valhalla is not asked on every page view.
 
 RENDER_EVERY_S = 10 * 60
-# While a dashboard is open (it asks for the stored area every 30 s) a
-# changed area is rendered sooner, and the first look after a while wakes
-# the background loop at once: the map is right when one looks at it.
-RENDER_WATCHED_S = 3 * 60
-WATCH_S = 5 * 60
-_watch = {}              # device -> last time a dashboard asked
 _took = {}               # device -> seconds the last render took
-wake = threading.Event()
 
 
-def touch(device, now=None):
-    """A dashboard is looking at this vehicle's area."""
-    now = now if now is not None else time.time()
-    idle = now - _watch.get(device, 0) > 60
-    _watch[device] = now
-    if idle:
-        wake.set()
+def render_every(device, now=None):
+    """Seconds between two renders of a changed area: RENDER_EVERY_S, and
+    never closer together than four times what a render takes. Looking at
+    the dashboard never triggers a render."""
+    return max(RENDER_EVERY_S, 4 * _took.get(device, 0))
 
 
-def render_every(device, now):
-    """Seconds between two renders of a changed area: sooner while watched,
-    but never closer together than four times what a render takes."""
-    every = RENDER_WATCHED_S if now - _watch.get(device, 0) < WATCH_S else RENDER_EVERY_S
-    return max(every, 4 * _took.get(device, 0))
 MAX_KM = 800              # Valhalla's limit for a distance contour (max_distance_contour)
 DIR_TOL_KM = 15          # a direction must move more than this (or 8 %) to count
 DIR_TOL_SHARE = 0.08
 # Bump when the stored geometry changes how it is built: an area from an
 # older version is rendered again at once, even if nothing else changed.
-GEOM_VERSION = 9          # 3: grid outline (1.2.290), 4: 32 directions (1.2.294), 5: islands/ferries kept (1.2.295),
+GEOM_VERSION = 10          # 3: grid outline (1.2.290), 4: 32 directions (1.2.294), 5: islands/ferries kept (1.2.295),
                           # 6: nothing behind ferries > 40 km (1.2.309), 7: energy field (1.2.315),
-                          # 8: routes that end at the edge (1.2.316), 9: 128 bearings, near by road stays (1.2.317)
+                          # 8: routes that end at the edge (1.2.316), 9: 128 bearings, near by road stays (1.2.317),
+                          # 10: shortest range from measured edges only (1.2.318)
 _fail_at = {}          # device -> time of the last failed render (no retry every minute)
 
 

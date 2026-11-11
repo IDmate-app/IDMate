@@ -633,7 +633,6 @@
       updateRangeCircle();
     }
     pollRangeArea(true);
-    setTimeout(pollRangeArea, 12000);   // opening the page wakes the background render
     setTimeout(() => { if (!rangeAreaBoot) { rangeAreaBoot = true; updateRangeCircle(); } }, 4000);
     setInterval(pollRangeArea, 30000);
 
@@ -1239,8 +1238,6 @@
       fullRefresh();
       pollRangeArea();
       pollWind();
-      // the look at the map wakes the background render: fetch its result soon
-      setTimeout(pollRangeArea, 12000);
       if (typeof bmsLoad === 'function') bmsLoad();
     }
     document.addEventListener('visibilitychange', () => { if (!document.hidden) wakeRefresh(); });

@@ -1510,7 +1510,6 @@ def _map_boot(device):
         return out
     try:
         import range_area
-        range_area.touch(device)        # page opened: bring the area up to date now
         db = get_db()
         try:
             rec = range_area.load_last(db, device)
@@ -1552,7 +1551,6 @@ def range_area_last():
     if not config.VALHALLA_URL:
         return jsonify({"status": "off"})
     device = active_device()
-    range_area.touch(device)            # someone is looking: render sooner
     db = get_db()
     try:
         rec = range_area.load_last(db, device)
@@ -1684,8 +1682,8 @@ def _range_area_vehicle(db, v):
 
 def _range_area_loop():
     """Background thread: renders the road area per vehicle and stores it, at
-    most every RENDER_EVERY_S when position or range changed (sooner while a
-    dashboard is open, see range_area.touch)."""
+    most every RENDER_EVERY_S when position or range changed. Opening the
+    dashboard only reads what is stored, it never starts a render."""
     import range_area
     time.sleep(30)                      # let the state cache fill first
     while True:
@@ -1704,8 +1702,7 @@ def _range_area_loop():
                     db.close()
         except Exception as e:
             log.warning("range area loop: %s", e, exc_info=True)
-        range_area.wake.wait(60)            # a dashboard opening wakes it at once
-        range_area.wake.clear()
+        time.sleep(60)
 
 
 @app.route("/api/stick-update/refresh", methods=["POST"])
