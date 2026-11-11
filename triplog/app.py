@@ -1648,7 +1648,7 @@ def _range_inputs(db, v):
 
 def _range_area_vehicle(db, v):
     """One vehicle: cheap estimate per direction (has anything changed?),
-    and — only when a render is due — the energy field along real routes."""
+    and — only when a render is due — the edge of the range from real routes."""
     import range_area
     import wind_range
     inp = _range_inputs(db, v)
@@ -1671,13 +1671,13 @@ def _range_area_vehicle(db, v):
 
             def field_fn():
                 import range_field
-                f = range_field.rays(cruise["left"], cruise["model"], cruise.get("temp"), lat, lon, pts_w,
-                                     time.time(), guess, v_fixed=v_fix)
+                f = range_field.probe(cruise["left"], cruise["model"], cruise.get("temp"), lat, lon, pts_w,
+                                      time.time(), guess, v_fixed=v_fix)
                 if f:
-                    log.info("range area: %d of %d routes, %d samples, %.0f s",
-                             f["used"], f["rays"], len(f["samples"]), f["seconds"])
+                    log.info("range area: edge on %d bearings from %d routes, %.0f s",
+                             f["used"], f["routes"], f["seconds"])
                 else:
-                    log.info("range area: too few routes for the energy field")
+                    log.info("range area: too few routes for the edge of the range")
                 return f
     return range_area.render_if_due(db, v["device"], lat, lon, kms, dirs=dirs, field_fn=field_fn)
 

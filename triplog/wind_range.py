@@ -7,8 +7,8 @@
    consumption model (bms_learn.speed_model), the forecast temperature goes
    into the cold term. Where the energy runs out is the range of that bearing.
    Since 1.2.315 this is only the cheap estimate (has anything changed?) and
-   the fallback; the area itself comes from range_field (energy left along
-   real routes, interpolated to a field).
+   the fallback; the area itself comes from range_field (routes that end at
+   the edge of the range).
 2. compose(): Valhalla returns up to 4 road contours (distances); every
    bearing wedge takes the contour closest to its own range. The pieces are
    clipped to their wedges (Sutherland-Hodgman, local flat projection); the

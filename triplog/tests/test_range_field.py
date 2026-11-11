@@ -1,6 +1,6 @@
-"""Range area from an energy field (1.2.315): every route leaves samples
-"energy left here"; the area is where the interpolated field is not
-negative, inside one Valhalla contour as the mask."""
+"""Range area from routes that end at the edge of the range (1.2.316): per
+bearing the place where a route arrives with nothing left, found with two
+or three routes; the area is one Valhalla contour cut to that rim."""
 
 import json
 import math
@@ -31,72 +31,84 @@ def _road(speed_of=lambda th: 130.0, detour=1.25, n=120):
     return fn
 
 
+def _range(kwh, speed, detour=1.0):
+    """Reach as the crow flies on a straight road at one speed (walked like the code does)."""
+    prof = wr.route_profile(_road(lambda th: speed)(LAT, LON, *rf._target(LAT, LON, 0.0, 600.0)))
+    return wr.range_along_route(kwh, MODEL, 15, prof, [], 0) / detour
+
+
+def test_edge_is_where_a_route_arrives_with_nothing_left():
+    f = rf.probe(40.0, MODEL, 15, LAT, LON, [], 0, [190] * N, route_fn=_road())
+    want = _range(40.0, 130.0)
+    assert f["used"] == 2 * N                              # the bearings in between as well
+    assert all(abs(r - want) < 6 for _, r, _ in f["rim"])  # every bearing: within a few km
+    assert f["routes"] <= 3 * 2 * N and abs(f["dmax"] - want) < 6
+    assert rf.mask_km(f) % 5 == 0 and rf.mask_km(f) > f["dmax"]
+    assert all(abs(d - want) < 6 for d in f["dirs"])
+
+
 def test_slow_roads_reach_further_than_the_motorway():
     # east: motorway at 130, west: country roads at 80
-    f = rf.rays(40.0, MODEL, 15, LAT, LON, [], 0, [190] * N, route_fn=_road(lambda th: 130.0 if th < 180 else 80.0))
-    assert f["used"] == f["rays"] == 2 * N                 # the bearings in between as well
-    east, west = f["dirs"][N // 4], f["dirs"][3 * N // 4]
-    assert west > east * 1.1
-    # samples: positive near the car, negative far out, none past the route's end
-    near = [s for s in f["samples"] if s[3] < 50]
-    far = [s for s in f["samples"] if s[3] > west + 30]
-    assert near and all(s[2] > 0 for s in near) and far and all(s[2] < 0 for s in far)
-    assert east <= f["dmax"] <= west + wr.STEP_KM
-    assert rf.mask_km(f) % 5 == 0 and rf.mask_km(f) > f["dmax"]
+    f = rf.probe(40.0, MODEL, 15, LAT, LON, [], 0, [190] * N, route_fn=_road(lambda th: 130.0 if th < 180 else 80.0))
+    east = [r for th, r, _ in f["rim"] if 20 < th < 160]
+    west = [r for th, r, _ in f["rim"] if 200 < th < 340]
+    assert abs(sum(east) / len(east) - _range(40.0, 130.0)) < 6
+    assert abs(sum(west) / len(west) - _range(40.0, 80.0)) < 6
+    assert min(west) > max(east) * 1.1
+    assert f["dirs"][3 * N // 4] > f["dirs"][N // 4] * 1.1
 
 
-def test_no_samples_past_the_end_of_a_route():
-    # routes end after 60 km (coast): energy is left, nothing is made up beyond
+def test_where_the_land_ends_the_rim_goes_on_and_the_contour_cuts():
+    # every road ends after 60 km (coast): energy is left there
     def short(lat0, lon0, lat1, lon1, use_ferry=None):
-        th = math.radians(_bearing(lat0, lon0, lat1, lon1))
-        la, lo = rf._target(lat0, lon0, math.degrees(th), 60.0)
-        return _road()(lat0, lon0, la, lo)
-    f = rf.rays(40.0, MODEL, 15, LAT, LON, [], 0, [190] * N, route_fn=short)
-    assert max(s[3] for s in f["samples"]) <= 60 and all(s[2] > 0 for s in f["samples"])
-    assert all(d > 100 for d in f["dirs"])                 # the range itself still carries on
+        th, r = rf._polar(lat0, lon0, lat1, lon1)
+        return _road()(lat0, lon0, *rf._target(lat0, lon0, th, min(r, 60.0)))
+    f = rf.probe(40.0, MODEL, 15, LAT, LON, [], 0, [190] * N, route_fn=short)
+    assert all(r > 60 for _, r, _ in f["rim"])             # not pulled in to the coast …
+    gj = rf.compose({"features": [_circle(LAT, LON, 60)]}, f["rim"], LAT, LON)
+    assert max(_extent(gj, LAT, LON)) < 65                 # … the land itself is the limit
+    assert f["routes"] <= 2 * 2 * N                        # and no third route into the sea
 
 
-def test_second_half_of_the_rays_only_when_fast():
+def test_second_half_of_the_bearings_only_when_fast():
     t = [0.0]
     def clock():
         t[0] += 2.0                                        # every look at the clock: 2 s later
         return t[0]
-    slow = rf.rays(40.0, MODEL, 15, LAT, LON, [], 0, [190] * N, route_fn=_road(), budget_s=1, clock=clock)
-    assert slow["rays"] == N
-    fast = rf.rays(40.0, MODEL, 15, LAT, LON, [], 0, [190] * N, route_fn=_road(), budget_s=60, clock=clock)
-    assert fast["rays"] == 2 * N
+    slow = rf.probe(40.0, MODEL, 15, LAT, LON, [], 0, [190] * N, route_fn=_road(), budget_s=1, clock=clock)
+    assert slow["used"] == N
+    fast = rf.probe(40.0, MODEL, 15, LAT, LON, [], 0, [190] * N, route_fn=_road(), budget_s=60, clock=clock)
+    assert fast["used"] == 2 * N
 
 
-def test_long_ferry_counts_up_to_the_terminal():
+def test_long_ferry_ends_the_range_at_the_terminal():
     n = 200
     def ferry(lat0, lon0, lat1, lon1, use_ferry=None):
+        # 30 km of road to the quay, 100 km of ferry, the far shore from 130 km on
+        th, r = rf._polar(lat0, lon0, lat1, lon1)
+        if r < 130:                                        # target in the sea: the road ends at the quay
+            return _road()(lat0, lon0, *rf._target(lat0, lon0, th, min(r, 30.0)))
         pts = [(lat0 + (lat1 - lat0) * i / n, lon0 + (lon1 - lon0) * i / n) for i in range(n + 1)]
-        x, y = wr._xy(lat0, lon0, lat1, lon1)
-        km = math.hypot(x, y)
+        k0, k1 = round(n * 30.0 / r), round(n * 130.0 / r)
         return {"trip": {"legs": [{"shape": _enc(pts), "maneuvers": [
-            {"length": km * 0.1, "time": km * 0.1 / 100 * 3600, "begin_shape_index": 0, "end_shape_index": 20},
-            {"type": 28, "length": km * 0.6, "time": 9 * 3600, "begin_shape_index": 20, "end_shape_index": 140},
-            {"length": km * 0.3, "time": km * 0.3 / 100 * 3600, "begin_shape_index": 140, "end_shape_index": n}]}]}}
-    f = rf.rays(40.0, MODEL, 15, LAT, LON, [], 0, [190] * N, route_fn=ferry)
-    assert f["dirs"] == [190] * N                          # no range from these routes: the estimate stays
-    assert f["samples"] and max(s[3] for s in f["samples"]) < 60     # only the road to the terminal
+            {"length": 30.0, "time": 30.0 / 100 * 3600, "begin_shape_index": 0, "end_shape_index": k0},
+            {"type": 28, "length": 100.0, "time": 9 * 3600, "begin_shape_index": k0, "end_shape_index": k1},
+            {"length": r - 130.0, "time": (r - 130.0) / 100 * 3600, "begin_shape_index": k1, "end_shape_index": n}]}]}}
+    f = rf.probe(40.0, MODEL, 15, LAT, LON, [], 0, [190] * N, route_fn=ferry)
+    # the far shore (130 km) is never part of the range, although the energy
+    # would do: the range ends at the quay, at most a little out into the sea
+    assert f["used"] == 2 * N and all(28 < r < 60 for _, r, _ in f["rim"])
+    assert all(28 < r < 38 for th, r, _ in f["rim"] if round(th / (360 / N), 3).is_integer())
 
 
-def test_too_few_routes_is_no_field():
+def test_too_few_routes_is_no_rim():
     def none(*a, **k):
         raise OSError("no route")
-    assert rf.rays(40.0, MODEL, 15, LAT, LON, [], 0, [190] * N, route_fn=none) is None
+    assert rf.probe(40.0, MODEL, 15, LAT, LON, [], 0, [190] * N, route_fn=none) is None
 
 
-def _samples(reach):
-    """Synthetic field: reach(th) km as the crow flies, 1 kWh per 10 km."""
-    out = []
-    for i in range(72):
-        th = i * 5.0
-        for r in range(5, 260, 10):
-            la, lo = rf._target(LAT, LON, th, r)
-            out.append((la, lo, (reach(th) - r) / 10.0, r * 1.25))
-    return out
+def _rim(reach):
+    return [(i * 5.0, reach(i * 5.0), reach(i * 5.0) * 1.25) for i in range(72)]
 
 
 def _extent(gj, lat0, lon0):
@@ -105,18 +117,24 @@ def _extent(gj, lat0, lon0):
     return (max(p[0] for p in pts), -min(p[0] for p in pts), max(p[1] for p in pts), -min(p[1] for p in pts))
 
 
-def test_compose_cuts_the_mask_where_the_energy_runs_out():
+def test_compose_cuts_the_contour_to_the_rim():
     mask = {"features": [_circle(LAT, LON, 240)]}
-    gj = rf.compose(mask, _samples(lambda th: 200.0 if th < 180 else 120.0), LAT, LON)
+    gj = rf.compose(mask, _rim(lambda th: 200.0 if th < 180 else 120.0), LAT, LON)
     east, west, north, south = _extent(gj, LAT, LON)
-    assert 185 < east < 215 and 105 < west < 135           # each side its own reach, no wedges, no steps
+    assert 190 < east < 205 and 115 < west < 125           # each side its own reach
     line = [f for f in gj["features"] if f["properties"]["kind"] == "line"][0]
     assert len(line["geometry"]["coordinates"]) == 1       # one clean outline
-    # the mask wins where the land ends before the energy does
-    small = rf.compose({"features": [_circle(LAT, LON, 90)]}, _samples(lambda th: 200.0), LAT, LON)
-    e, w, n, s = _extent(small, LAT, LON)
-    assert max(e, w, n, s) < 95
-    assert rf.compose(mask, [], LAT, LON) is None and rf.compose({"features": []}, _samples(lambda th: 1.0), LAT, LON) is None
+    # the contour wins where the land ends before the energy does
+    small = rf.compose({"features": [_circle(LAT, LON, 90)]}, _rim(lambda th: 200.0), LAT, LON)
+    assert max(_extent(small, LAT, LON)) < 95
+    assert rf.compose(mask, [], LAT, LON) is None and rf.compose({"features": []}, _rim(lambda th: 1.0), LAT, LON) is None
+
+
+def test_rim_table_is_smooth_around_the_circle():
+    t = rf.rim_table([(350.0, 100.0, 125.0), (10.0, 200.0, 250.0), (180.0, 100.0, 125.0)])
+    assert len(t) == rf.TABLE
+    assert abs(t[0] - 150.0) < 3                           # halfway between 350° and 10°, across north
+    assert max(abs(a - b) for a, b in zip(t, t[1:] + t[:1])) < 4      # no jumps
 
 
 def test_render_uses_the_field(app_module, db, monkeypatch):
@@ -128,8 +146,8 @@ def test_render_uses_the_field(app_module, db, monkeypatch):
         asked.append(list(kms))
         return {"type": "FeatureCollection", "features": [_circle(lat, lon, k) for k in kms]}
     monkeypatch.setattr(ra, "_fetch", fetch)
-    field = {"dirs": [150] * (N // 2) + [230] * (N // 2), "samples": _samples(lambda th: 180.0 if th < 180 else 120.0),
-             "dmax": 228.0, "used": 64, "rays": 64, "seconds": 1.0}
+    field = {"dirs": [150] * (N // 2) + [230] * (N // 2), "rim": _rim(lambda th: 180.0 if th < 180 else 120.0),
+             "dmax": 228.0, "used": 64, "routes": 130, "seconds": 1.0}
     calls = []
     def field_fn():
         calls.append(1)
@@ -139,7 +157,7 @@ def test_render_uses_the_field(app_module, db, monkeypatch):
     assert asked == [[240]]                                # one contour: the mask, a little beyond dmax
     assert rec["dirs"] == field["dirs"] and rec["kms"] == [180]
     east, west, _, _ = _extent(rec["geojson"], LAT, LON)
-    assert 165 < east < 195 and 105 < west < 135
+    assert 170 < east < 185 and 115 < west < 125
     # nothing changed: no routes, no render
     assert ra.render_if_due(db, "devF", LAT, LON, [180], now=5000, field_fn=field_fn) == "unchanged"
     assert len(calls) == 1
