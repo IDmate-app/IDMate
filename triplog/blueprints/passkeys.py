@@ -244,7 +244,8 @@ def login_finish():
         db.close()
     _login_attempts.pop(ip, None)
     # Passkey with user verification = both factors: no TOTP step.
-    session.pop("pending_user_id", None)
+    for k in ("pending_user_id", "pending_user_next", "pending_at"):
+        session.pop(k, None)
     login_user(_user_from_row(user), remember=True)
     mark_fresh_login()
     log.info("passkey sign-in: user %s", user["id"])

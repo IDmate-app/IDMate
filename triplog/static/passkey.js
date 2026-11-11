@@ -18,9 +18,9 @@
   }
   const descs = list => (list || []).map(c => ({ ...c, id: b64uToBuf(c.id) }));
 
-  async function api(url, body) {
+  async function api(url, body, signal) {
     const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                 body: JSON.stringify(body || {}) });
+                                 body: JSON.stringify(body || {}), signal });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { const e = new Error(j.error || ('HTTP ' + r.status)); e.data = j; e.status = r.status; throw e; }
     return j;
@@ -66,16 +66,25 @@
     async register(label, extra) {
       return this.create(await this.begin(extra), label);
     },
-    // Sign in. conditional: offer the passkeys in the user name autofill
-    // (runs until a passkey is picked or `signal` aborts it).
-    async login({ next, conditional, signal } = {}) {
-      const b = await api('/login/passkey/begin');
-      const pk = b.publicKey;
+    // Sign in, in two steps like adding one: loginBegin() fetches the
+    // options, loginWith() opens the browser dialog — the login page fetches
+    // them ahead, so the dialog opens right inside the click (Safari).
+    // conditional: offer the passkeys in the user name autofill (runs until
+    // a passkey is picked or `signal` aborts it). picked(): the browser has
+    // handed over a passkey, the server is asked next.
+    async loginBegin(signal) {
+      return (await api('/login/passkey/begin', null, signal)).publicKey;
+    },
+    async login(o) {
+      return this.loginWith(await this.loginBegin(o && o.signal), o);
+    },
+    async loginWith(pk, { next, conditional, signal, picked } = {}) {
       const opts = { publicKey: { ...pk, challenge: b64uToBuf(pk.challenge),
                                   allowCredentials: descs(pk.allowCredentials) } };
       if (conditional) opts.mediation = 'conditional';
       if (signal) opts.signal = signal;
       const a = await navigator.credentials.get(opts);
+      if (picked) picked();
       const r = a.response;
       const j = await api('/login/passkey/finish', { next, credential: {
         id: a.id, rawId: bufToB64u(a.rawId), type: a.type,

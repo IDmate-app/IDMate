@@ -5,6 +5,8 @@ hidden one), the password field is gone and the code field is
 "one-time-code". The 2FA setup offers the otpauth link, which opens Apple
 Passwords on an iPhone so the code joins the existing IDmate entry."""
 
+import time
+
 import pytest
 
 pyotp = pytest.importorskip("pyotp")
@@ -22,7 +24,7 @@ def client(app_module, db):
 
 def test_code_page_names_the_account_for_password_managers(client):
     with client.session_transaction() as s:
-        s["pending_user_id"] = 1
+        s["pending_user_id"], s["pending_at"] = 1, time.time()
     html = client.get("/login/totp").get_data(as_text=True)
     assert 'name="username" value="ingo" readonly autocomplete="username"' in html
     assert 'autocomplete="one-time-code"' in html

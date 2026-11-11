@@ -40,6 +40,29 @@
   </style>
 </head>
 <body>
+  <script nonce="{{ csp_nonce }}">
+  // The server accepts the form of this page for an hour. A page that was
+  // open longer (tab in the background, app resumed) loads itself afresh:
+  // when the user comes back to it, or while nobody is typing.
+  var loginPage = { born: Date.now(), touched: 0, busy: false, leaving: false };
+  (function () {
+    var STALE_MS = 30 * 60 * 1000, TYPING_MS = 2 * 60 * 1000;
+    function renew(cameBack) {
+      var now = Date.now();
+      if (loginPage.busy || loginPage.leaving || now - loginPage.born < STALE_MS) return;
+      if (!cameBack && now - loginPage.touched < TYPING_MS) return;
+      loginPage.leaving = true;
+      location.replace(location.pathname + location.search);   // GET, also after a failed attempt
+    }
+    document.addEventListener('input', function () { loginPage.touched = Date.now(); });
+    document.addEventListener('submit', function () { loginPage.leaving = true; });
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) renew(true); });
+    window.addEventListener('pageshow', function (e) {
+      if (e.persisted) { loginPage.leaving = loginPage.busy = false; renew(true); }   // back from the page cache
+    });
+    setInterval(function () { renew(false); }, 60000);
+  })();
+  </script>
   {% if step == 'code' %}
   {# 2FA step: SAME page and form as the password step. The user name stays in
      a visible read-only "username" field, the password field is gone and the
@@ -57,7 +80,7 @@
     <button type="submit">{{ t.totp_confirm }}</button>
     <button type="button" class="link" id="recoveryToggle">{{ t.login_code_recovery }}</button>
     <p class="hint">{{ t.login_code_apple_hint }}</p>
-    <a class="back" href="/login"><svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:middle"><path d="M9 6H3m2.5-2.5L3 6l2.5 2.5"/></svg> {{ t.totp_back }}</a>
+    <a class="back" href="/login?new=1"><svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:middle"><path d="M9 6H3m2.5-2.5L3 6l2.5 2.5"/></svg> {{ t.totp_back }}</a>
   </form>
   <script nonce="{{ csp_nonce }}">
     // Recovery codes contain letters: switch the keyboard from digits to text.
@@ -91,24 +114,61 @@
     var box = document.getElementById('pkBox'), btn = document.getElementById('pkBtn');
     var err = document.getElementById('loginError');
     var next = new URLSearchParams(location.search).get('next') || '/';
-    var auto = null;  // pending autofill request (user name field)
+    var FRESH_MS = 4 * 60 * 1000;  // the server accepts a challenge for 5 min
+    var pk = null, pkAt = 0;       // sign-in options fetched ahead, and when
+    var auto = null;               // the request behind them (options, then the autofill)
+    var conditional = false;
     function show(e) {
       if (P.isCancel(e)) return;
       err.textContent = e.message || String(e); err.hidden = false;
     }
-    function stopAuto() { if (auto) { auto.abort(); auto = null; } }
+    function stopAuto() { if (auto) { var a = auto; auto = null; a.abort(); } }
+    // Fetch the sign-in options ahead and offer the passkeys in the user name
+    // autofill. Ahead, because Safari opens the passkey dialog only right
+    // inside the click, with no request in between. And anew before the 5 min
+    // are over (and after every attempt, a challenge is good for one): a page
+    // that was open for a while answered a picked passkey with "expired".
+    function arm() {
+      if (loginPage.busy || loginPage.leaving) return;
+      stopAuto();
+      var ac = auto = new AbortController();
+      pk = null; pkAt = 0;
+      P.loginBegin(ac.signal).then(function (o) {
+        if (ac !== auto) return;
+        pk = o; pkAt = Date.now();
+        if (!conditional) return;
+        // busy while the server checks a picked passkey: no new challenge
+        // meanwhile (its answer would overwrite the session that just signed in)
+        return P.loginWith(o, { next: next, conditional: true, signal: ac.signal,
+                                picked: function () { loginPage.busy = true; } }).then(function () {
+          loginPage.leaving = true;
+        }, function (e) {
+          var refused = loginPage.busy;
+          loginPage.busy = false;
+          if (ac !== auto) return;   // stopped on purpose
+          auto = null;
+          show(e);
+          if (refused) arm();        // the challenge is used up
+        });
+      }, function () { if (ac === auto) auto = null; });   // no options: the button asks again
+    }
+    function keepFresh() { if (!document.hidden && Date.now() - pkAt > FRESH_MS) arm(); }
     box.hidden = false;
     btn.addEventListener('click', function () {
-      stopAuto();
+      if (loginPage.busy) return;
       err.hidden = true;
-      P.login({ next: next }).catch(show);
+      var o = pk && Date.now() - pkAt < FRESH_MS ? pk : null;
+      stopAuto(); pk = null; pkAt = 0;
+      loginPage.busy = true;
+      (o ? P.loginWith(o, { next: next }) : P.login({ next: next })).then(function () {
+        loginPage.leaving = true;
+      }, show).then(function () { loginPage.busy = false; arm(); });
     });
     document.getElementById('login-form').addEventListener('submit', stopAuto);
-    P.conditionalAvailable().then(function (ok) {
-      if (!ok) return;
-      auto = new AbortController();
-      P.login({ next: next, conditional: true, signal: auto.signal }).catch(function (e) { if (auto) show(e); });
-    });
+    document.addEventListener('visibilitychange', keepFresh);
+    window.addEventListener('pageshow', function (e) { if (e.persisted) arm(); });
+    setInterval(keepFresh, 30000);
+    P.conditionalAvailable().then(function (ok) { conditional = ok; arm(); });
   })();
   </script>
   {% endif %}

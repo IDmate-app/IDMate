@@ -1447,6 +1447,8 @@
   "trip_split_failed": "Teilen fehlgeschlagen",
   "login_too_many_attempts": "Zu viele Versuche. Bitte {s}s warten.",
   "login_too_many_attempts_relogin": "Zu viele Versuche. Bitte erneut anmelden.",
+  "page_stale": "Die Seite war zu lange offen. Bitte noch einmal anmelden.",
+  "login_step_expired": "Die Anmeldung hat zu lange gedauert. Bitte noch einmal anmelden.",
   "totp_invalid_code": "Ungültiger Code. Bitte erneut versuchen.",
   "setup_username_empty": "Benutzername darf nicht leer sein.",
   "setup_passwords_mismatch": "Passwörter stimmen nicht überein.",

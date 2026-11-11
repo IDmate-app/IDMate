@@ -1447,6 +1447,8 @@
   "trip_split_failed": "Split failed",
   "login_too_many_attempts": "Too many attempts. Please wait {s}s.",
   "login_too_many_attempts_relogin": "Too many attempts. Please sign in again.",
+  "page_stale": "This page was open for too long. Please sign in again.",
+  "login_step_expired": "Signing in took too long. Please sign in again.",
   "totp_invalid_code": "Invalid code. Please try again.",
   "setup_username_empty": "Username must not be empty.",
   "setup_passwords_mismatch": "Passwords do not match.",
