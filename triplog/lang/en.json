@@ -1612,7 +1612,7 @@
   "bms_cruise_notemp": "– no temperature data, rather a yearly average",
   "bms_drive": "Range at avg {0} km/h",
   "bms_drive_hint": "current speed over the last {1} km, {0} kWh/100 km at {2} °C (for charge planning)",
-  "bms_wind_dirs": "with wind, by direction",
+  "bms_wind_dirs": "depending on roads and wind",
   "bms_buffer": "Display 0 % at CAN {0} %",
   "bms_window": "VW average follows about the last {0} km",
   "bms_e": "E = {0} kWh per 100 % display",
