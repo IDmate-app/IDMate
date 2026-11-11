@@ -63,35 +63,51 @@ def _left_at(trace, km):
     return a[2] + (b[2] - a[2]) * (km - a[3]) / span
 
 
-def _arrive(remaining_kwh, model, temp_now, lat0, lon0, th, r_km, points, now, v_fixed, route_fn):
-    """Route to the place r_km out on bearing th → dict or None (no route):
-    {"r": km as the crow flies of where the route really ends, "th": its
-    bearing, "road": road km, "left": kWh on arrival (negative: short by
-    that much), "ferry": True when a long ferry lies on the way — then r,
-    road and left are those at its terminal}."""
-    lat1, lon1 = _target(lat0, lon0, th, r_km)
+def arrival(remaining_kwh, model, temp_now, lat0, lon0, lat1, lon1, points, now, v_fixed=None, route_fn=None):
+    """One route from the car to a place → dict or None (no route):
+    {"lat", "lon": where the route really ends (the nearest road), "road":
+    road km, "left": kWh on arrival (negative: short by that much),
+    "ferry": True when a long ferry lies on the way — then lat/lon, road
+    and left are those at its terminal —, "ferry_km": km on short ferries
+    (free), "ferry_name": the long ferry, "empty_km": road km where the
+    energy runs out (None when it lasts)}."""
+    route_fn = route_fn or wr._route
     try:
         prof = wr.route_profile(route_fn(lat0, lon0, lat1, lon1))
     except Exception:
         prof = None
     if not prof or prof["km"] < 1:
         return None
-    end, ferry = prof["km"], False
+    end, ferry, name = prof["km"], False, ""
+    short = 0.0
     for c in prof.get("crossings") or []:
         if c["km_to"] - c["km_from"] > wr.MAX_FERRY_KM:
-            end, ferry = c["km_from"], True        # a long sea crossing: only up to the terminal
+            end, ferry, name = c["km_from"], True, c.get("name") or ""   # a long sea crossing: only up to the terminal
             break
+        short += c["km_to"] - c["km_from"]
     if end < 1:
         return None
     trace = [(lat0, lon0, remaining_kwh, 0.0)]
-    wr.range_along_route(remaining_kwh, model, temp_now, prof, points, now, v_fixed=v_fixed,
-                         trace=trace, trace_km=end)
+    km = wr.range_along_route(remaining_kwh, model, temp_now, prof, points, now, v_fixed=v_fixed,
+                              trace=trace, trace_km=end)
     left = _left_at(trace, end)
     if left is None:
         return None
     la, lo, _, _ = wr._at_km(prof, end)
-    th1, r1 = _polar(lat0, lon0, la, lo)
-    return {"r": r1, "th": th1, "road": end, "left": left, "ferry": ferry, "asked": r_km}
+    return {"lat": la, "lon": lo, "road": end, "left": left, "ferry": ferry, "ferry_km": short,
+            "ferry_name": name, "empty_km": km if left < 0 else None}
+
+
+def _arrive(remaining_kwh, model, temp_now, lat0, lon0, th, r_km, points, now, v_fixed, route_fn):
+    """arrival() at the place r_km out on bearing th, plus "r"/"th": km as
+    the crow flies and bearing of where the route really ends."""
+    lat1, lon1 = _target(lat0, lon0, th, r_km)
+    a = arrival(remaining_kwh, model, temp_now, lat0, lon0, lat1, lon1, points, now, v_fixed, route_fn)
+    if a is None:
+        return None
+    a["th"], a["r"] = _polar(lat0, lon0, a["lat"], a["lon"])
+    a["asked"] = r_km
+    return a
 
 
 def _edge(remaining_kwh, model, temp_now, lat0, lon0, th, r0, points, now, v_fixed, route_fn, seen=None):

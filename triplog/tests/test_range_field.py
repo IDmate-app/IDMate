@@ -300,3 +300,53 @@ def test_background_pass_wires_estimate_field_and_render(app_module, db, monkeyp
     east, west, _, _ = _extent(rec["geojson"], LAT, LON)
     assert west > east + 15                                # slow roads to the west reach further
     assert app_module._range_area_vehicle(db, v) == "unchanged"
+
+
+def test_point_check_answers_for_one_place(app_module, db, monkeypatch):
+    """Long press on the map (1.2.319): one route to that place, energy left
+    on arrival — reached, short by how much, or only by a long ferry."""
+    import config
+    monkeypatch.setattr(config, "VALHALLA_URL", "http://valhalla:8002")
+    monkeypatch.setattr(config, "WIND_SOURCE", "")
+    cruise = {"left": 40.0, "model": MODEL, "temp": 15, "v_eval": 110, "mode": "model", "km": 190}
+
+    def inputs(d, v):
+        inputs.cruise = cruise
+        return (LAT, LON, [190])
+    monkeypatch.setattr(app_module, "_range_inputs", inputs)
+    monkeypatch.setattr(wr, "_route", _road())
+    db.execute("INSERT INTO vehicles (id, plate, device) VALUES (1, 'EV1', 'devC')")
+    db.execute("INSERT INTO users (id, username, password_hash, is_admin, active_vehicle_id) VALUES (1, 'a', 'x', 1, 1)")
+    db.commit()
+    app_module.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+    reach = _range(40.0, 130.0)
+    with app_module.app.test_client() as c:
+        with c.session_transaction() as s:
+            s["_user_id"] = "1"
+        near = rf._target(LAT, LON, 90.0, reach - 40)
+        d = c.get(f"/api/range-check?lat={near[0]}&lon={near[1]}").get_json()
+        assert d["status"] == "ok" and d["reached"] and abs(d["road_km"] - (reach - 40)) < 2
+        assert d["left_kwh"] > 5 and 15 < d["left_share"] < 40 and d["empty_km"] is None and d["off_km"] < 1
+        far = rf._target(LAT, LON, 90.0, reach + 30)
+        d = c.get(f"/api/range-check?lat={far[0]}&lon={far[1]}").get_json()
+        assert d["status"] == "ok" and not d["reached"] and d["left_kwh"] < -3
+        assert abs(d["empty_km"] - reach) < 6                  # where the battery is empty on that route
+        assert "lat" not in d and "lon" not in d               # no position in the answer
+        # a long ferry on the way: not reached by rule, distance up to the terminal
+        def ferry(lat0, lon0, lat1, lon1, use_ferry=None):
+            n = 100
+            pts = [(lat0 + (lat1 - lat0) * i / n, lon0 + (lon1 - lon0) * i / n) for i in range(n + 1)]
+            return {"trip": {"legs": [{"shape": _enc(pts), "maneuvers": [
+                {"length": 20, "time": 20 / 100 * 3600, "begin_shape_index": 0, "end_shape_index": 20},
+                {"type": 28, "length": 80, "time": 5 * 3600, "begin_shape_index": 20, "end_shape_index": n,
+                 "street_names": ["Hier - Dort"]}]}]}}
+        monkeypatch.setattr(wr, "_route", ferry)
+        port = rf._target(LAT, LON, 0.0, 100.0)
+        d = c.get(f"/api/range-check?lat={port[0]}&lon={port[1]}").get_json()
+        assert d["long_ferry"] and not d["reached"] and d["ferry_name"] == "Hier - Dort" and 18 < d["road_km"] < 22
+        # no route, bad input, no model
+        monkeypatch.setattr(wr, "_route", lambda *a, **k: {"trip": {"legs": []}})
+        assert c.get(f"/api/range-check?lat={port[0]}&lon={port[1]}").get_json() == {"status": "noroute"}
+        assert c.get("/api/range-check?lat=x&lon=1").status_code == 400
+        cruise["model"] = None
+        assert c.get(f"/api/range-check?lat={port[0]}&lon={port[1]}").get_json()["error"] == "no_model"

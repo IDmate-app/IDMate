@@ -14,6 +14,18 @@
     white-space:normal;width:max-content;max-width:210px;font-size:0.75rem;line-height:1.35;
     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-variant-numeric:tabular-nums}
   .leaflet-tooltip.ferry-tip::before{display:none}
+  /* Point check (long press on the map): the same card look as a popup */
+  .leaflet-popup.range-check .leaflet-popup-content-wrapper{background:var(--bg-card);color:var(--text-1);border:1px solid var(--border);
+    border-left:3px solid var(--accent);border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.25);padding:0}
+  .leaflet-popup.range-check.no .leaflet-popup-content-wrapper{border-left-color:var(--danger)}
+  .leaflet-popup.range-check .leaflet-popup-content{margin:0.45rem 0.6rem;font-size:0.75rem;line-height:1.35;min-width:150px;
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-variant-numeric:tabular-nums}
+  .leaflet-popup.range-check .leaflet-popup-tip-container{display:none}
+  .leaflet-popup.range-check a.leaflet-popup-close-button{color:var(--text-2)}
+  .range-check b{display:block;font-size:0.8rem;font-weight:600;margin-bottom:0.25rem;padding-right:1rem}
+  .range-check .row{display:flex;justify-content:space-between;gap:0.8rem}
+  .range-check .row span:first-child{color:var(--text-2)}
+  .range-check .note{color:var(--text-2);margin-top:0.2rem}
   .ferry-tip b{display:block;font-size:0.8rem;font-weight:600;margin-bottom:0.25rem}
   .ferry-tip .row{display:flex;justify-content:space-between;gap:0.8rem}
   .ferry-tip .row span:first-child{color:var(--text-2)}
@@ -816,6 +828,40 @@
       } catch (e) { btnFerry.classList.remove('busy'); }
     });
 
+    // ── Point check: long press / right click on the map ──
+    // One route from the car to that place: the exact answer for one point
+    // (the drawn area connects the edges of the bearings measured).
+    let checkPopup = null, checkSeq = 0;
+    map.on('contextmenu', async e => {
+      if (!MAP_BOOT.valhalla) return;
+      const seq = ++checkSeq;
+      const row = (k, v) => `<div class="row"><span>${k}</span><span>${v}</span></div>`;
+      const show = (html, no) => {
+        if (checkPopup) map.closePopup(checkPopup);
+        checkPopup = L.popup({className: 'range-check' + (no ? ' no' : ''), maxWidth: 230, autoPan: false})
+          .setLatLng(e.latlng).setContent(html).openOn(map);
+      };
+      show(`<b>${T.check_wait}</b>`);
+      try {
+        const d = await (await fetch(`/api/range-check?lat=${e.latlng.lat.toFixed(5)}&lon=${e.latlng.lng.toFixed(5)}`)).json();
+        if (seq !== checkSeq) return;                // a newer press is on its way
+        const num = v => Number(v).toLocaleString(document.documentElement.lang || undefined);
+        if (d.status !== 'ok') return show(`<b>${d.status === 'noroute' ? T.check_noroute : d.error === 'no_model' ? T.ferry_nomodel : T.check_err}</b>`, true);
+        let html = `<b>${d.long_ferry ? T.check_ferry : d.reached ? T.check_yes : T.check_no}</b>`;
+        html += row(T.check_road, `${d.road_km} km` + (d.ferry_km ? ` · ${T.check_ferry_km.replace('{0}', d.ferry_km)}` : ''));
+        if (d.long_ferry) {
+          html += `<div class="note">${T.check_ferry_note.replace('{0}', d.ferry_name ? ` (${esc(d.ferry_name)})` : '')}</div>`;
+        } else if (d.reached) {
+          html += row(T.check_left, `${num(d.left_kwh)} kWh` + (d.left_share != null ? ` · ${d.left_share} %` : ''));
+        } else {
+          html += row(T.check_short, `${num(-d.left_kwh)} kWh`);
+          if (d.empty_km != null) html += row(T.check_empty, `${d.empty_km} km`);
+        }
+        if (d.off_km >= 2) html += `<div class="note">${T.check_off.replace('{0}', num(d.off_km))}</div>`;
+        show(html, !d.reached);
+      } catch (err) { if (seq === checkSeq) show(`<b>${T.check_err}</b>`, true); }
+    });
+
     // after the whole script ran (labels T are defined further down)
     setTimeout(() => pollWind(true), 0);
     setInterval(pollWind, 60 * 1000);
@@ -1014,6 +1060,13 @@
     }
 
     const T = {
+      check_wait: {{ t.dash_check_wait | tojson }}, check_yes: {{ t.dash_check_yes | tojson }},
+      check_no: {{ t.dash_check_no | tojson }}, check_ferry: {{ t.dash_check_ferry | tojson }},
+      check_ferry_note: {{ t.dash_check_ferry_note | tojson }}, check_road: {{ t.dash_check_road | tojson }},
+      check_ferry_km: {{ t.dash_check_ferry_km | tojson }}, check_left: {{ t.dash_check_left | tojson }},
+      check_short: {{ t.dash_check_short | tojson }}, check_empty: {{ t.dash_check_empty | tojson }},
+      check_off: {{ t.dash_check_off | tojson }}, check_noroute: {{ t.dash_check_noroute | tojson }},
+      check_err: {{ t.dash_check_err | tojson }},
       ferry_tip_title: {{ t.dash_ferry_tip_title | tojson }},
       ferry_tip_sea: {{ t.dash_ferry_tip_sea | tojson }},
       ferry_tip_term: {{ t.dash_ferry_tip_term | tojson }},
