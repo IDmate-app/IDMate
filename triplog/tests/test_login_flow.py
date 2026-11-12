@@ -115,3 +115,18 @@ def test_code_with_a_space_counts(client):
     r = client.post("/login/totp", data={"code": code[:3] + " " + code[3:]})
     assert r.status_code == 302 and not r.headers["Location"].endswith("/login/totp")
     assert client.get("/api/passkeys").status_code == 200        # signed in
+
+
+def test_debug_pages_carry_the_script_nonce(client, app_module, monkeypatch):
+    """The CSP only runs inline scripts with the nonce of the request. The
+    MQTT monitor had none: it stayed at "Connecting…" for good."""
+    import config
+    monkeypatch.setattr(config, "ENABLE_DEBUG", True)
+    with client.session_transaction() as s:
+        s["_user_id"] = "1"
+    r = client.get("/mqtt-monitor")
+    html = r.get_data(as_text=True)
+    assert r.status_code == 200 and "refresh()" in html
+    nonce = re.search(r"'nonce-([^']+)'", r.headers["Content-Security-Policy"]).group(1)
+    scripts = re.findall(r"<script[^>]*>", html)
+    assert scripts and all(f'nonce="{nonce}"' in tag for tag in scripts)
