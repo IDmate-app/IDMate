@@ -76,12 +76,12 @@ One envelope for every source a client may have (stick, OBD dongle, backend, car
 | Field | Unit | Stick field |
 |---|---|---|
 | `soc` | % | `s` |
-| `range` | km | `r` |
+| `range` | km | – (IDmate's own figure: energy left ÷ consumption of the last 1000 km, as on the dashboard) |
 | `power` | kW | `p` |
 | `speed` | km/h | `v` |
 | `lat`, `lon` | WGS84 | `la`, `lo` |
 | `odometer` | km | `od` |
-| `charging`, `dc` | bool | `c`, `dc` |
+| `charging`, `dc` | bool | `c`, `dc` (true only while the newest telegram carries the bit) |
 | `t_ext`, `t_batt` | °C | `et`, `bt` |
 
 Trip items: `id`, `start`, `end`, `from`, `to`, `distance` (km), `soc_start`, `soc_end`, `energy` (kWh),

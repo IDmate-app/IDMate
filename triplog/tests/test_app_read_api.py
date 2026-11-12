@@ -80,7 +80,9 @@ def test_status_telegram_only_known_fields(env):
     anon = app_module.app.test_client()
     t = anon.get("/api/v1/status", headers=_hdr(tok)).get_json()
     assert (t["v"], t["src"], t["type"], t["ts"]) == (1, "backend", "status", "2026-11-12T14:03:21Z")
-    assert t["data"] == {"soc": 71.5, "range": 312, "power": -12.4, "speed": 87, "lat": 50.1,
+    # no range: without trips IDmate has no figure of its own, and what the
+    # stick once stored as the car's range (312) is not served
+    assert t["data"] == {"soc": 71.5, "power": -12.4, "speed": 87, "lat": 50.1,
                          "lon": 12.3, "odometer": 23456.7, "charging": False, "dc": False,
                          "t_ext": 9}                    # no t_batt, no voltage
     t2 = anon.get("/api/v1/status", headers=_hdr(tok)).get_json()
@@ -89,6 +91,39 @@ def test_status_telegram_only_known_fields(env):
     assert caps["type"] == "caps"
     assert set(caps["data"]["status"]) == set(t["data"])
     assert "t_batt" not in caps["data"]["status"]
+
+
+def test_range_is_idmates_own_and_charging_only_while_it_is(env):
+    """The range is the figure of the dashboard (energy left ÷ consumption of
+    the last trips), and "charging" is true only while the newest telegram
+    says so — the state keeps the bit of the last charging stop for ever."""
+    app_module, db, adm, vids = env
+    adm.post("/api/admin/read-api", json={"enabled": True})
+    tok = _key(adm, vids[0])["token"]
+    db.execute("UPDATE vehicles SET battery_capacity_kwh = 80 WHERE id = ?", (vids[0],))
+    for d in range(1, 6):
+        db.execute("INSERT INTO trips (device, start_time, end_time, distance_km, energy_kwh) "
+                   "VALUES ('dev1', ?, ?, 100, 20)", (f"2026-11-0{d}T08:00:00", f"2026-11-0{d}T09:00:00"))
+    db.commit()
+    anon = app_module.app.test_client()
+    with app_module._state_lock:
+        st = app_module._state_cache["dev1"]
+        st.update(charging=1, dc_charging=1,
+                  field_times={"charging": "2026-11-06T14:05:25Z", "dc_charging": "2026-11-06T14:05:25Z"})
+    d = anon.get("/api/v1/status", headers=_hdr(tok)).get_json()["data"]
+    assert d["range"] == round(71.5 / 100 * 80 / 20 * 100)               # 286 km, not the stored 312
+    assert d["charging"] is False and d["dc"] is False                   # the bit is six days old
+    with app_module._state_lock:
+        app_module._state_cache["dev1"]["field_times"] = {"charging": "2026-11-12T14:03:10Z",
+                                                          "dc_charging": "2026-11-06T14:05:25Z"}
+    d = anon.get("/api/v1/status", headers=_hdr(tok)).get_json()["data"]
+    assert d["charging"] is True and d["dc"] is False                    # charging now, on AC
+    caps = anon.get("/api/v1/capabilities", headers=_hdr(tok)).get_json()["data"]["status"]
+    assert "range" in caps
+    # last_used_at is not written on every poll
+    first = db.execute("SELECT last_used_at FROM read_api_keys").fetchone()[0]
+    anon.get("/api/v1/status", headers=_hdr(tok))
+    assert db.execute("SELECT last_used_at FROM read_api_keys").fetchone()[0] == first and first
 
 
 def test_token_is_bound_to_its_vehicle(env):
