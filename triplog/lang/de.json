@@ -809,7 +809,7 @@
   "dg_check_trips_energy_mismatch": "Fahrt-Energie passt nicht zu SoC × Kapazität (über 25 % daneben)",
   "dg_check_trips_soc_unchanged": "Fahrten ab 20 km ohne SoC-Änderung",
   "admin_tab_telemetry": "Telemetrie",
-  "admin_tab_homeassistant": "Home Assistant",
+  "admin_tab_homeassistant": "Schnittstellen",
   "ha_export_title": "Fahrzeuge an Home Assistant freigeben",
   "ha_export_desc": "Stellt die letzten Werte ausgewaehlter Fahrzeuge ueber eine token-geschuetzte API bereit. Die Home-Assistant-Integration 'IDMate Telemetry' liest sie per Basis-URL + Token. Fahrzeuge, deren Daten aus Home Assistant stammen, hier einfach nicht anhaken (kein Rueckkanal).",
   "ha_export_url_label": "Basis-URL (in Home Assistant eintragen)",

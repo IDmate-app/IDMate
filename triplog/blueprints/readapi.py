@@ -1,6 +1,6 @@
 """Read API for display clients (e.g. the Android Auto app), /api/v1.
 
-Opt-in, off by default: until an admin switches it on (Admin -> Home Assistant
+Opt-in, off by default: until an admin switches it on (Admin -> Interfaces
 -> Read API) every /api/v1 route answers 404, as if it did not exist.
 
 One access per vehicle. Creating it shows a QR code once; the client scans it

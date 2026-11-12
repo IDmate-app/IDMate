@@ -9,7 +9,7 @@ the car. It only reads: what the dashboard already shows (latest state) plus the
 
 ## Switching it on
 
-*Admin → Home Assistant → Read API for display devices*
+*Admin → Interfaces → Read API for display devices*
 
 1. Tick **Enable read API**.
 2. Enter the address at which the device reaches the server (it goes into the QR code). Expose the API to

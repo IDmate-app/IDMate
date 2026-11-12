@@ -60,4 +60,4 @@ Adapt the entity IDs to your installation.
 
 ## Vehicles as HA sensors
 
-Settings → Home Assistant serves the latest values of selected vehicles over a token-protected API. The "IDMate Telemetry" Home Assistant integration reads them with the base URL and the token.
+Admin → Interfaces serves the latest values of selected vehicles over a token-protected API. The "IDMate Telemetry" Home Assistant integration reads them with the base URL and the token.
