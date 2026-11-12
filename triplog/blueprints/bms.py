@@ -152,6 +152,32 @@ def _trips(db, device, extra=False):
     return out
 
 
+PARKED_TEMP_H = 0.5            # standing this long: the sensor no longer tells the weather
+
+
+def _outside_temp(db, device, live, parked_h):
+    """(°C, "car" | "forecast"). On the road the car's own sensor. Standing,
+    the sensor holds the last value of the trip before, or the garage: then
+    the forecast for this hour at the car's place, which comes with the wind
+    (wind.py) — so the range before setting off already knows the weather."""
+    sensor = live.get("ext_temp")
+    moving = (live.get("speed") or 0) > 0 or (parked_h is not None and parked_h < PARKED_TEMP_H)
+    if moving or not config.WIND_SOURCE:
+        return sensor, "car"
+    with _state_lock:
+        st = _state_cache.get(device) or {}
+        lat, lon = st.get("lat"), st.get("lon")
+    if lat is None or lon is None:
+        return sensor, "car"
+    import wind
+    try:
+        temp = wind.temp_at(db, float(lat), float(lon))
+    except Exception as e:      # the range must not fail over the weather
+        log.warning("bms learn: forecast temperature failed: %s", e)
+        temp = None
+    return (round(temp, 1), "forecast") if temp is not None else (sensor, "car")
+
+
 def _r1(v, nd=1):
     return round(v, nd) if v is not None else None
 
@@ -214,6 +240,8 @@ def _state(db, v):
         cons = bl.window_consumption([(o, s) for _t, o, s in series], cap).get(rng["window_km"])
         if cons:
             now["vw_range"] = round(now["display_soc"] / 100.0 * rng["e_kwh"] / (rng["cons_factor"] * cons) * 100)
+    et, temp_src = _outside_temp(db, device, live, ctx["parked_h"])
+    now["temp"], now["temp_src"] = et, temp_src
     trips = _trips(db, device) if left else []
     now["real"] = bl.real_range(left, trips, et) if left else None
     # One number for map and box: the model from the own trips at today's
@@ -231,7 +259,7 @@ def _state(db, v):
         warm = min(left, bl.warmup_kwh(model, et, ctx["parked_h"])) if model else 0.0
         cruise = bl.cruise_range(left - warm, model, et, v=v_eval)
         if cruise:
-            cruise.update(mode="drive" if drv else "model", temp=et, trips=model["n"],
+            cruise.update(mode="drive" if drv else "model", temp=et, temp_src=temp_src, trips=model["n"],
                           with_temp=model["temp"], dist=drv["km"] if drv else None,
                           warmup_kwh=round(warm, 2), parked_h=ctx["parked_h"],
                           left_full=round(left, 2),          # for "arrive with … %" on the map

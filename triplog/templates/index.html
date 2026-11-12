@@ -1446,7 +1446,7 @@
     'drive': t.bms_drive, 'drive_hint': t.bms_drive_hint, 'wind_dirs': t.bms_wind_dirs,
     'points_last': t.bms_points_last, 'export': t.bms_export, 'fresh_trip': t.bms_fresh_trip,
     'model': t.bms_model, 'form_flat': t.bms_form_flat, 'form_km': t.bms_form_km, 'form_hour': t.bms_form_hour,
-    'form_start': t.bms_form_start, 'warmup': t.bms_warmup } | tojson }};
+    'form_start': t.bms_form_start, 'warmup': t.bms_warmup, 'temp_forecast': t.bms_temp_forecast } | tojson }};
   let _bms = null, _bmsTimer = null;
   const _bmsNum = (v, d = 1) => (v === null || v === undefined) ? '–' : Number(v).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: 0 });
   function _bmsAge(s) {
@@ -1486,6 +1486,7 @@
       info.push(BMS_T.cruise.replace('{0}', now.cruise.v) + ': ' + BMS_T.cruise_hint
         .replace('{0}', _bmsNum(now.cruise.cons, 1)).replace('{1}', now.cruise.temp != null ? _bmsNum(now.cruise.temp, 0) : '–')
         .replace('{2}', now.cruise.trips).replace('{3}', now.cruise.v_avg || now.cruise.v)
+        + (now.cruise.temp_src === 'forecast' ? ' ' + BMS_T.temp_forecast : '')
         + (now.cruise.with_temp ? '' : ' ' + BMS_T.cruise_notemp));
     }
     if (now.cruise && now.cruise.model) {
