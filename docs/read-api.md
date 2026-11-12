@@ -34,7 +34,7 @@ QR content (JSON):
 |---|---|
 | `GET /api/v1/health` | `{"ok": true, "api": 1}` – no token; `404` while the API is off |
 | `GET /api/v1/capabilities` | telegram `caps`: the fields the server has for this vehicle, with their interval in seconds |
-| `GET /api/v1/config` | vehicle (`id`, `name`, `model`), active modules, poll interval drive / parked |
+| `GET /api/v1/config` | vehicle (`id`, `name`, `model`), what IDmate delivers (`modules`), poll interval drive / parked |
 | `GET /api/v1/status` | telegram `status`: latest state |
 | `GET /api/v1/trips?limit=n` | telegram `trip`: the last *n* trips (default 10, at most 100) |
 | `GET /api/v1/charging?limit=n` | telegram `charge`: the last *n* charges |
@@ -90,5 +90,5 @@ Trip items: `id`, `start`, `end`, `from`, `to`, `distance` (km), `soc_start`, `s
 
 ## Modules
 
-`config.modules` tells the client which parts to show: `dashboard`, `navi`, `music`, `messenger`. Set per
-vehicle next to its access; default `dashboard`. A module that is not listed stays invisible on the device.
+`config.modules` names what IDmate contributes: `dashboard`, the vehicle data above. Navigation, music and
+messenger are parts of the app itself; IDmate neither delivers nor switches them.

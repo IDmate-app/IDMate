@@ -40,8 +40,10 @@ INTERVAL_DRIVE_S = 10
 INTERVAL_PARK_S = 60
 LIMIT_DEFAULT = 10
 LIMIT_MAX = 100
-MODULES = ("dashboard", "navi", "music", "messenger")
-MODULES_DEFAULT = ("dashboard",)
+# What IDmate contributes to a display device: the vehicle data. Navigation,
+# music and messenger are the app's own and are neither delivered nor
+# switched from here.
+MODULES = ("dashboard",)
 
 # telegram field -> key of the dashboard state (app._vehicle_state).
 # range: IDmate's own figure, the one on the dashboard (energy left ÷ the
@@ -102,14 +104,6 @@ def _hash(token):
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def _modules(raw):
-    try:
-        val = json.loads(raw) if raw else list(MODULES_DEFAULT)
-    except ValueError:
-        val = list(MODULES_DEFAULT)
-    return [m for m in MODULES if m in val]
-
-
 # ── Authentication ────────────────────────────────────────────────────────────
 
 def _client_ip():
@@ -131,7 +125,7 @@ def _vehicle_for_request(db):
     row = None
     if token:
         row = db.execute(
-            "SELECT k.id AS key_id, k.token_hash, k.modules, k.last_used_at, v.id, v.plate, v.name, v.model, v.device "
+            "SELECT k.id AS key_id, k.token_hash, k.last_used_at, v.id, v.plate, v.name, v.model, v.device "
             "FROM read_api_keys k JOIN vehicles v ON v.id = k.vehicle_id "
             "WHERE k.token_hash = ?", (_hash(token),)).fetchone()
     if row is None or not hmac.compare_digest(row["token_hash"], _hash(token)):
@@ -272,7 +266,7 @@ def config_():
         "v": API_VERSION,
         "vehicle": _clean({"id": v["device"], "name": v["name"] or v["plate"],
                            "model": v["model"]}),
-        "modules": _modules(v["modules"]),
+        "modules": list(MODULES),
         "interval": {"drive": INTERVAL_DRIVE_S, "park": INTERVAL_PARK_S},
     })
 
@@ -371,18 +365,16 @@ def _qr_png_b64(text):
 def admin_get():
     db = get_db()
     rows = db.execute(
-        "SELECT v.id, v.plate, v.name, v.device, k.created_at, k.last_used_at, k.modules, "
+        "SELECT v.id, v.plate, v.name, v.device, k.created_at, k.last_used_at, "
         "k.id AS key_id FROM vehicles v LEFT JOIN read_api_keys k ON k.vehicle_id = v.id "
         "WHERE v.device IS NOT NULL AND v.device != '' ORDER BY v.plate").fetchall()
     out = {
         "enabled": _enabled(db),
         "url": _base_url(db),
-        "modules": list(MODULES),
         "vehicles": [{
             "id": r["id"], "name": r["name"] or r["plate"], "plate": r["plate"],
             "device": r["device"], "has_key": r["key_id"] is not None,
             "created_at": r["created_at"], "last_used_at": r["last_used_at"],
-            "modules": _modules(r["modules"]),
         } for r in rows],
     }
     db.close()
@@ -411,22 +403,16 @@ def admin_save():
 def admin_key_create(vehicle_id):
     """Create (or replace) the access of one vehicle. The token and its QR code
     are in this answer only."""
-    data = request.get_json(force=True, silent=True) or {}
     db = get_db()
     v = db.execute("SELECT id, plate, name, device FROM vehicles WHERE id = ?",
                    (vehicle_id,)).fetchone()
     if v is None or not v["device"]:
         db.close()
         return jsonify({"error": "vehicle not found"}), 404
-    old = db.execute("SELECT modules FROM read_api_keys WHERE vehicle_id = ?",
-                     (vehicle_id,)).fetchone()
-    wanted = data.get("modules")
-    modules = _modules(json.dumps(wanted)) if isinstance(wanted, list) \
-        else _modules(old["modules"] if old else "")
     token = secrets.token_urlsafe(32)
     db.execute("DELETE FROM read_api_keys WHERE vehicle_id = ?", (vehicle_id,))
-    db.execute("INSERT INTO read_api_keys (vehicle_id, token_hash, modules, created_at) "
-               "VALUES (?, ?, ?, ?)", (vehicle_id, _hash(token), json.dumps(modules), _now_iso()))
+    db.execute("INSERT INTO read_api_keys (vehicle_id, token_hash, created_at) "
+               "VALUES (?, ?, ?)", (vehicle_id, _hash(token), _now_iso()))
     db.commit()
     url = _base_url(db) + "/api/v1"
     db.close()
@@ -434,26 +420,7 @@ def admin_key_create(vehicle_id):
                           "vehicle": v["device"], "name": v["name"] or v["plate"]},
                          separators=(",", ":"), ensure_ascii=False)
     log.info("Read API: access created for vehicle %s", v["device"])
-    return jsonify({"ok": True, "url": url, "token": token, "modules": modules,
-                    "qr": _qr_png_b64(payload)})
-
-
-@readapi_admin_bp.route("/api/admin/read-api/<int:vehicle_id>/modules", methods=["POST"])
-@admin_required
-def admin_modules(vehicle_id):
-    data = request.get_json(force=True, silent=True) or {}
-    wanted = data.get("modules")
-    if not isinstance(wanted, list):
-        return jsonify({"error": "modules must be a list"}), 400
-    modules = _modules(json.dumps(wanted))
-    db = get_db()
-    cur = db.execute("UPDATE read_api_keys SET modules = ? WHERE vehicle_id = ?",
-                     (json.dumps(modules), vehicle_id))
-    db.commit()
-    db.close()
-    if not cur.rowcount:
-        return jsonify({"error": "no access for this vehicle"}), 404
-    return jsonify({"ok": True, "modules": modules})
+    return jsonify({"ok": True, "url": url, "token": token, "qr": _qr_png_b64(payload)})
 
 
 @readapi_admin_bp.route("/api/admin/read-api/<int:vehicle_id>/key", methods=["DELETE"])

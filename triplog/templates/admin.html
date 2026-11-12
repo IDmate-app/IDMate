@@ -1730,8 +1730,6 @@
     function haExportToken(action) { saveHaExport(action); }
 
     // ── Read API (/api/v1) ─────────────────────────────────
-    const READ_API_MOD = { dashboard: '{{ t.read_api_mod_dashboard }}', navi: '{{ t.read_api_mod_navi }}',
-                           music: '{{ t.read_api_mod_music }}', messenger: '{{ t.read_api_mod_messenger }}' };
     let readApiData = null;
     function _readApiDate(iso) {
       return iso ? new Date(iso).toLocaleString() : '{{ t.read_api_never }}';
@@ -1759,17 +1757,6 @@
         head.append(name, sub);
         const tools = document.createElement('div');
         tools.style.cssText = 'display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap;margin-top:0.35rem';
-        if (v.has_key) {
-          (readApiData.modules || []).forEach(m => {
-            const lbl = document.createElement('label');
-            lbl.className = 'chk-lbl'; lbl.style.cssText = 'display:flex;gap:0.3rem;align-items:center;cursor:pointer';
-            const cb = document.createElement('input');
-            cb.type = 'checkbox'; cb.checked = v.modules.includes(m); cb.dataset.module = m;
-            cb.addEventListener('change', () => saveReadApiModules(v.id, tools));
-            lbl.append(cb, READ_API_MOD[m] || m);
-            tools.appendChild(lbl);
-          });
-        }
         const make = document.createElement('button');
         make.className = 'btn-sm';
         make.textContent = v.has_key ? '{{ t.read_api_recreate }}' : '{{ t.read_api_create }}';
@@ -1803,22 +1790,10 @@
       loadReadApi();
     }
 
-    function _readApiModules(tools) {
-      return Array.from(tools.querySelectorAll('input[type=checkbox]:checked')).map(c => c.dataset.module);
-    }
-
-    async function saveReadApiModules(vehicleId, tools) {
-      await fetch('/api/admin/read-api/' + vehicleId + '/modules', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modules: _readApiModules(tools) }),
-      });
-    }
-
     async function readApiKey(v, tools) {
       if (v.has_key && !confirm('{{ t.read_api_confirm_recreate }}')) return;
-      const body = v.has_key ? { modules: _readApiModules(tools) } : {};
       const res = await fetch('/api/admin/read-api/' + v.id + '/key', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
       });
       if (!res.ok) return;
       const out = await res.json();
