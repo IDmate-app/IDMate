@@ -149,3 +149,24 @@ def test_not_enabled_vehicle_cannot_save(app_module, db):
         assert 'data-onclick="openBms"' not in page and 'id="bmsOv"' not in page
     finally:
         app_module._state_cache.pop("dev1", None)
+
+
+def test_a_frozen_can_range_is_not_a_range(app_module):
+    """The stick stopped sending the range; the last value of months ago
+    (86.4, by its looks the capacity) stayed in every learning point and
+    next to today's SoC."""
+    pts = [{"disp_soc": s, "disp_range": r, "disp_cons": 22.0, "can_range": 86.4}
+           for s, r in ((30, 116), (27, 103), (74, 293), (47, 191), (59, 237))]
+    off = bl.range_offset(pts)
+    assert off["n"] == 0 and off["diff"] is None and not off["reliable"]
+    assert bl.fit_range(pts)["can_range_n"] == 0
+    # a real one moves with the display
+    real = [dict(p, can_range=p["disp_range"] - 17) for p in pts]
+    assert bl.range_offset(real)["reliable"] and bl.range_offset(real)["diff"] == 17
+    # two points at the same charge are no proof either way
+    assert bl.range_offset(pts[:2])["n"] == 2
+    cur = app_module.range_is_current
+    assert cur("2026-11-12T11:30:00Z", "2026-11-12T11:37:00Z")          # came with the SoC
+    assert cur("2026-11-10T18:00:00Z", "2026-11-10T18:02:00Z")          # parked for days: both old, still the car's range
+    assert not cur("2026-08-01T10:00:00Z", "2026-11-12T11:37:00Z")      # the SoC went on for months without it
+    assert not cur(None, "2026-11-12T11:37:00Z") and cur("2026-11-12T11:30:00Z", None)

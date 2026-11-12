@@ -41,6 +41,7 @@ TEMP_BAND_C = (4.0, 8.0)       # trips this close to today's temperature
 MIN_BAND_KM = 150.0
 RANGE_CAN_MIN_N = 5            # points with display AND CAN range before the
 RANGE_CAN_SPREAD_KM = 3.0      # display range may come from CAN: offset stable
+FROZEN_RANGE_KM = 20.0         # the display moved this much, the CAN range not at all
 
 
 def _f(v):
@@ -220,8 +221,15 @@ def range_offset(points):
     car: {n, diff (median display − CAN), spread (median |deviation|),
     reliable}. Reliable = enough points and a stable offset; then the display
     range need not be typed in any more (display = CAN + diff)."""
-    diffs = [_f(p["disp_range"]) - _f(p["can_range"]) for p in points
+    pairs = [(_f(p["disp_range"]), _f(p["can_range"])) for p in points
              if (_f(p.get("disp_range")) or 0) > 0 and _f(p.get("can_range")) is not None]
+    # A "range" that reads the same number at every state of charge is not
+    # one (a car showed 116 to 301 km while the stored value stayed 86.4, a
+    # leftover of an old firmware): such points say nothing.
+    if len(pairs) >= 3 and max(c for _d, c in pairs) - min(c for _d, c in pairs) < 1.0 \
+            and max(d for d, _c in pairs) - min(d for d, _c in pairs) > FROZEN_RANGE_KM:
+        pairs = []
+    diffs = [d - c for d, c in pairs]
     if not diffs:
         return {"n": 0, "diff": None, "spread": None, "reliable": False}
     med = fm.median(diffs)
