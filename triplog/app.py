@@ -581,8 +581,50 @@ def _user_from_row(row):
                 row["language"] if "language" in row.keys() else None)
 
 
+class DisplayUser(User):
+    """A display device signed in through the read API (/api/v1/display,
+    blueprints/readapi.py): no account, just the right to look at the
+    dashboard map of ONE vehicle. require_login lets it GET the endpoints in
+    DISPLAY_ENDPOINTS and nothing else."""
+
+    def __init__(self, vehicle_id):
+        super().__init__(f"display:{int(vehicle_id)}", "display")
+        self.display_vehicle_id = int(vehicle_id)
+
+
+# What a display session may call: the dashboard page and what its map reads.
+DISPLAY_ENDPOINTS = frozenset({
+    "dashboard", "static", "service_worker", "healthz", "roundtrip_tile",
+    "vehicle_state", "vehicle_stream", "trail",
+    "range_area_api", "range_area_last", "range_check", "wind_now", "ferries_status",
+    "list_locations", "list_charge_locations",
+})
+
+
+def is_display_session():
+    return getattr(current_user, "display_vehicle_id", None) is not None
+
+
+def _load_display_user(user_id):
+    """Valid only while the read API is on and the vehicle still has an access:
+    switching the API off or deleting the access ends the session at once."""
+    try:
+        vid = int(str(user_id).split(":", 1)[1])
+    except (IndexError, ValueError):
+        return None
+    db = get_db()
+    on = db.execute("SELECT value FROM settings WHERE key = 'read_api_enabled'").fetchone()
+    key = db.execute("SELECT 1 FROM read_api_keys WHERE vehicle_id = ?", (vid,)).fetchone()
+    db.close()
+    if not on or on[0] != "1" or not key:
+        return None
+    return DisplayUser(vid)
+
+
 @login_manager.user_loader
 def load_user(user_id):
+    if str(user_id).startswith("display:"):
+        return _load_display_user(user_id)
     db = get_db()
     row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     db.close()
@@ -712,6 +754,14 @@ def require_login():
     """All routes except /login require authentication."""
     # Gastseiten der Live-Reise (blueprints/share.py): Link + Code statt Login.
     if request.blueprint == "share":
+        return
+    # Lese-API /api/v1 (blueprints/readapi.py): Bearer-Token je Fahrzeug statt Login.
+    if request.blueprint == "readapi":
+        return
+    # Anzeige-Sitzung (DisplayUser): nur lesen, nur die Dashboard-Karte.
+    if is_display_session():
+        if request.method != "GET" or request.endpoint not in DISPLAY_ENDPOINTS:
+            return jsonify({"error": "not available for a display session"}), 403
         return
     if request.endpoint in ("auth.login", "static", "charges.charge_webhook", "auth.setup", "auth.setup_2fa", "auth.login_totp", "healthz", "ha_export_vehicles",
                             "passkeys.login_begin", "passkeys.login_finish"):
@@ -924,6 +974,8 @@ def allowed_vehicle_ids(db, user):
     without assignment rows also see all (backward compatibility)."""
     if user is None or not getattr(user, "is_authenticated", False):
         return None
+    if getattr(user, "display_vehicle_id", None) is not None:
+        return {user.display_vehicle_id}       # display session: exactly its vehicle
     if getattr(user, "is_admin", False):
         return None
     rows = db.execute("SELECT vehicle_id FROM user_vehicle_access WHERE user_id = ?", (user.id,)).fetchall()
@@ -1639,9 +1691,11 @@ def ha_export_vehicles():
 @app.route("/")
 def dashboard():
     fahrzeug = active_vehicle()
+    display = is_display_session()
     return render_template("index.html", device=active_device(),
                            kartenauto=kartenauto_fuer(fahrzeug),
-                           bms_learn=bool(fahrzeug and fahrzeug.get("bms_learn")),
+                           display_mode=display,
+                           bms_learn=bool(fahrzeug and fahrzeug.get("bms_learn")) and not display,
                            map_boot=_map_boot(active_device()))
 
 
@@ -7074,6 +7128,7 @@ from blueprints.diagnostics import diagnostics_bp  # noqa: E402
 from blueprints.model import model_bp  # noqa: E402
 from blueprints.report import report_bp  # noqa: E402
 from blueprints.bms import bms_bp  # noqa: E402
+from blueprints.readapi import readapi_admin_bp, readapi_bp  # noqa: E402
 app.register_blueprint(auth_bp)
 app.register_blueprint(journeys_bp)
 app.register_blueprint(charges_bp)
@@ -7086,6 +7141,8 @@ app.register_blueprint(diagnostics_bp)
 app.register_blueprint(bms_bp)
 app.register_blueprint(model_bp)
 app.register_blueprint(report_bp)
+app.register_blueprint(readapi_bp)
+app.register_blueprint(readapi_admin_bp)
 
 
 def _print_startup_banner(host, port):

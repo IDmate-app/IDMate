@@ -1066,6 +1066,21 @@ def m081_trip_temp(db, log):
     log.info("Migration: trips.temp_c added")
 
 
+def m082_read_api(db, log):
+    """Read API (/api/v1, blueprints/readapi.py): one access per vehicle. Only
+    the SHA-256 of the token is kept."""
+    if "read_api_keys" not in _tables(db):
+        db.execute("""CREATE TABLE read_api_keys (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            vehicle_id   INTEGER NOT NULL UNIQUE,
+            token_hash   TEXT NOT NULL UNIQUE,
+            modules      TEXT,
+            created_at   TEXT NOT NULL,
+            last_used_at TEXT
+        )""")
+        log.info("Migration: read_api_keys table created")
+
+
 MIGRATIONS = [
     (1,  "trips_is_gpx",            m001_trips_is_gpx),
     (2,  "trips_odo",              m002_trips_odo),
@@ -1148,6 +1163,7 @@ MIGRATIONS = [
     (79, "wind_points",            m079_wind_points),
     (80, "bms_trip_context",       m080_bms_trip_context),
     (81, "trip_temp",              m081_trip_temp),
+    (82, "read_api",               m082_read_api),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]
