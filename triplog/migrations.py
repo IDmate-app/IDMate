@@ -1045,6 +1045,18 @@ def m079_wind_points(db, log):
         log.info("Migration: wind_points table created")
 
 
+def m080_bms_trip_context(db, log):
+    """Where in a trip a learning point was taken: km and minutes since the
+    trip began, hours the car stood before it. A point from the first km
+    carries the cold start in its displayed average."""
+    if "bms_points" in _tables(db):
+        cols = _cols(db, "bms_points")
+        for c in ("trip_km", "trip_min", "stood_h"):
+            if c not in cols:
+                db.execute(f"ALTER TABLE bms_points ADD COLUMN {c} REAL")
+    log.info("Migration: bms_points trip context added")
+
+
 MIGRATIONS = [
     (1,  "trips_is_gpx",            m001_trips_is_gpx),
     (2,  "trips_odo",              m002_trips_odo),
@@ -1125,6 +1137,7 @@ MIGRATIONS = [
     (77, "vehicle_trash",          m077_vehicle_trash),
     (78, "range_area_last",        m078_range_area_last),
     (79, "wind_points",            m079_wind_points),
+    (80, "bms_trip_context",       m080_bms_trip_context),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

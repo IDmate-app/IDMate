@@ -91,9 +91,7 @@ def direction_ranges(remaining_kwh, model, temp_now, v_kmh, lat0, lon0, points, 
                     along = w["kmh"] * WIND_AT_CAR * math.cos(math.radians(to - th))
                     if w.get("temp") is not None:
                         temp = w["temp"]
-            v_air = max(0.0, v_kmh - along)                  # tail wind: less air speed
-            cold = max(0.0, bl.COLD_C - temp) if temp is not None else 0.0
-            cons = model["a"] + model["b"] * (v_air / 100) ** 2 + model["c"] * cold
+            cons = bl.consumption(model, v_kmh, temp, v_air=v_kmh - along)   # tail wind: less air speed
             need = max(cons, 5.0) * STEP_KM / 100
             h = data.get("elev") if pts else None
             if h is not None and h_prev is not None and h != h_prev:
@@ -508,8 +506,7 @@ def range_along_route(remaining_kwh, model, temp_now, prof, points, now, v_fixed
             if w.get("temp") is not None:
                 temp = w["temp"]
         t += STEP_KM / max(v, 5.0) * 3600 / 2
-        cold = max(0.0, bl.COLD_C - temp) if temp is not None else 0.0
-        cons = model["a"] + model["b"] * (max(0.0, v - along) / 100) ** 2 + model["c"] * cold
+        cons = bl.consumption(model, v, temp, v_air=v - along)
         need = max(cons, 5.0) * STEP_KM / 100
         h = height(min(mid + STEP_KM / 2, prof["km"]), lat, lon)
         if h is not None and h_prev is not None and h != h_prev:

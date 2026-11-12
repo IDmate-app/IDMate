@@ -2,10 +2,11 @@
 what the car's display shows next to the CAN values of that moment, and the
 models fitted from those points (logic in bms_learn.py)."""
 
+import json
 import time
 from datetime import datetime, timedelta, timezone
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request
 
 import bms_learn as bl
 import config
@@ -17,8 +18,9 @@ from app import (_state_cache, _state_lock, _translations, active_vehicle, get_b
 
 bms_bp = Blueprint("bms", __name__)
 
-_temp_cache = {}               # device -> (t, {YYYY-MM-DD: °C})
+_temp_cache = {}               # (device, field) -> (t, {YYYY-MM-DDTHH: mean})
 _TEMP_TTL_S = 6 * 3600
+SHOWN_POINTS = 3
 
 
 def _t():
@@ -47,9 +49,9 @@ def _live(device):
     return out
 
 
-def _series(device, hours=36, with_time=False):
-    """[(odometer, SoC)] of the last hours, oldest first (delta-compressed
-    telemetry: both carried forward); with_time: [(epoch s, odometer, SoC)]."""
+def _series(device, hours=36):
+    """[(epoch s, odometer, SoC)] of the last hours, oldest first
+    (delta-compressed telemetry: both carried forward)."""
     client = detector.get_influx(timeout_ms=15000)
     if not client:
         return []
@@ -70,11 +72,8 @@ def _series(device, hours=36, with_time=False):
             od = r.get("od") if r.get("od") is not None else od
             soc = detector.sanitize_soc(r.get("s")) if r.get("s") is not None else soc
             if od is not None and soc is not None:
-                if with_time:
-                    t = r.get("_time")
-                    out.append((t.timestamp() if t else None, float(od), float(soc)))
-                else:
-                    out.append((float(od), float(soc)))
+                t = r.get("_time")
+                out.append((t.timestamp() if t else None, float(od), float(soc)))
         return out
     except Exception as e:      # the point is stored without the windows
         log.warning("bms learn: consumption series failed: %s", e)
@@ -83,41 +82,94 @@ def _series(device, hours=36, with_time=False):
         client.close()
 
 
-def _daily_temps(device):
-    hit = _temp_cache.get(device)
+def _hourly(device, field="et"):
+    """{"YYYY-MM-DDTHH" (UTC): mean of that hour} of one telemetry field over
+    the last year: et outside, bt battery, ct cabin temperature, hk heating
+    and cooling power. The car only reports while it is awake, so there are
+    hours for the trips and little else."""
+    hit = _temp_cache.get((device, field))
     if hit and time.time() - hit[0] < _TEMP_TTL_S:
         return hit[1]
-    temps = {}
+    vals = {}
     client = detector.get_influx(timeout_ms=30000)
     if client:
         try:
             q = f'''
             from(bucket: "{config.INFLUX_BUCKET}")
               |> range(start: -365d)
-              |> filter(fn: (r) => r._measurement == "v" and r.d == "{device}" and r._field == "et")
+              |> filter(fn: (r) => r._measurement == "v" and r.d == "{device}" and r._field == "{field}")
               |> filter(fn: (r) => r._value > -50.0 and r._value < 60.0)
-              |> aggregateWindow(every: 1d, fn: mean, createEmpty: false, timeSrc: "_start")
+              |> aggregateWindow(every: 1h, fn: mean, createEmpty: false, timeSrc: "_start")
             '''
             for table in client.query_api().query(q, org=config.INFLUX_ORG):
                 for rec in table.records:
-                    temps[rec.get_time().strftime("%Y-%m-%d")] = rec.get_value()
+                    vals[rec.get_time().strftime("%Y-%m-%dT%H")] = rec.get_value()
         except Exception as e:
-            log.warning("bms learn: daily temperatures failed: %s", e)
+            log.warning("bms learn: hourly %s failed: %s", field, e)
         finally:
             client.close()
-    _temp_cache[device] = (time.time(), temps)
-    return temps
+    _temp_cache[(device, field)] = (time.time(), vals)
+    return vals
 
 
-def _trips(db, device):
+def _utc(local_iso):
+    """Trip times are stored as local time without offset."""
+    try:
+        dt = datetime.fromisoformat(str(local_iso).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return (dt if dt.tzinfo else dt.replace(tzinfo=detector.LOCAL_TZ)).astimezone(timezone.utc)
+
+
+def _trips(db, device, extra=False):
+    """The trips of the last year as the models want them: km, kWh/100 km,
+    average speed, the outside temperature during the trip and how long the
+    car stood before it. extra (export): battery and cabin temperature at
+    the start and the heating power, where the stick reports them."""
     since = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
-    temps = _daily_temps(device)
-    return [{"km": r["distance_km"], "cons": fm.trip_consumption(r["energy_kwh"], r["distance_km"]),
-             "temp": temps.get((r["start_time"] or "")[:10]),
-             "v": _avg_kmh(r["start_time"], r["end_time"], r["distance_km"])}
-            for r in db.execute(
-                "SELECT start_time, end_time, distance_km, energy_kwh FROM trips WHERE device = ? "
-                "AND start_time >= ? AND energy_kwh > 0 AND distance_km > 0", (device, since))]
+    temps = _hourly(device)
+    more = {f: _hourly(device, f) for f in ("bt", "ct", "hk")} if extra else {}
+    out, prev_end = [], None
+    # every trip counts for the standing time, only those with energy as points
+    for r in db.execute("SELECT id, start_time, end_time, distance_km, energy_kwh, soc_start, soc_end FROM trips "
+                        "WHERE device = ? AND start_time >= ? ORDER BY start_time", (device, since)):
+        t0, t1 = _utc(r["start_time"]), _utc(r["end_time"])
+        stood = round((t0 - prev_end).total_seconds() / 3600, 2) if t0 and prev_end and t0 >= prev_end else None
+        prev_end = t1 or prev_end
+        if not (r["energy_kwh"] or 0) > 0 or not (r["distance_km"] or 0) > 0:
+            continue
+        t = {"id": r["id"], "start": r["start_time"], "end": r["end_time"],
+             "km": r["distance_km"], "kwh": r["energy_kwh"],
+             "cons": fm.trip_consumption(r["energy_kwh"], r["distance_km"]),
+             "temp": bl.trip_temp(temps, t0, t1), "stood_h": stood,
+             "v": _avg_kmh(r["start_time"], r["end_time"], r["distance_km"]),
+             "soc_start": r["soc_start"], "soc_end": r["soc_end"]}
+        if extra and t0:
+            h = t0.strftime("%Y-%m-%dT%H")
+            t.update(bat_temp_start=_r1(more["bt"].get(h)), cabin_temp_start=_r1(more["ct"].get(h)),
+                     hvac_kw=_r1(bl.trip_temp(more["hk"], t0, t1), 2))
+        out.append(t)
+    return out
+
+
+def _r1(v, nd=1):
+    return round(v, nd) if v is not None else None
+
+
+_model_cache = {}              # device -> (key, model)
+
+
+def _model(device, trips):
+    """The speed model of these trips; fitted anew only when they changed
+    (the fit checks four forms on held-out trips, a few 100 ms a year)."""
+    key = (len(trips), trips[-1]["start"] if trips else None, round(sum(t["km"] for t in trips)),
+           sum(1 for t in trips if t.get("temp") is not None))
+    hit = _model_cache.get(device)
+    if hit and hit[0] == key:
+        return hit[1]
+    model = bl.speed_model(trips)
+    _model_cache[device] = (key, model)
+    return model
 
 
 def _avg_kmh(start, end, km):
@@ -144,7 +196,9 @@ def _state(db, v):
            "learn": _learn_status(points, disp, rng),
            "stick": stick_cfg.build(points),
            "stick_sent": (stick_cfg.last_sent(db, device) or {}).get("ts") if device else None,
-           "points": list(reversed(points[-30:]))}
+           # the dialog shows the last few (to delete a slip); all of them
+           # are in the export
+           "points": list(reversed(points[-SHOWN_POINTS:]))}
     can = live.get("can_soc")
     if can is None:
         return out
@@ -153,8 +207,11 @@ def _state(db, v):
     zero = bl.display_zero_can(disp, bt, et)
     left = (can - (zero or 0.0)) / 100.0 * cap if cap else None
     now["remaining_kwh"] = round(left, 1) if left is not None else None
+    series = _series(device)
+    ctx = bl.trip_context(series, time.time())
+    live.update(trip_km=ctx["trip_km"], fresh_trip=bl.fresh_trip(ctx))
     if rng and rng.get("window_km") and now["display_soc"] is not None and live.get("fresh"):
-        cons = bl.window_consumption(_series(device), cap).get(rng["window_km"])
+        cons = bl.window_consumption([(o, s) for _t, o, s in series], cap).get(rng["window_km"])
         if cons:
             now["vw_range"] = round(now["display_soc"] / 100.0 * rng["e_kwh"] / (rng["cons_factor"] * cons) * 100)
     trips = _trips(db, device) if left else []
@@ -164,14 +221,22 @@ def _state(db, v):
     # 2 h, at the current average speed (charge planning on the way).
     cruise = None
     if left:
-        model = bl.speed_model(trips)
-        drv = bl.recent_speed(_series(device, hours=bl.DRIVE_WINDOW_H, with_time=True)) if model else None
+        model = _model(device, trips)
+        since = time.time() - bl.DRIVE_WINDOW_H * 3600
+        drv = bl.recent_speed([p for p in series if p[0] and p[0] >= since]) if model else None
         v_eval = drv["v"] if drv else bl.CRUISE_AVG_KMH
-        cruise = bl.cruise_range(left, model, et, v=v_eval)
+        # A car that stood in the cold spends energy once on warming up
+        # before it gets anywhere: taken off the energy for the range (and
+        # with it off the map and the check of a place).
+        warm = min(left, bl.warmup_kwh(model, et, ctx["parked_h"])) if model else 0.0
+        cruise = bl.cruise_range(left - warm, model, et, v=v_eval)
         if cruise:
             cruise.update(mode="drive" if drv else "model", temp=et, trips=model["n"],
                           with_temp=model["temp"], dist=drv["km"] if drv else None,
-                          model=model, left=round(left, 2), v_eval=v_eval)   # for the wind per direction
+                          warmup_kwh=round(warm, 2), parked_h=ctx["parked_h"],
+                          left_full=round(left, 2),          # for "arrive with … %" on the map
+                          soc_now=now["display_soc"] if now["display_soc"] is not None else can,
+                          model=model, left=round(left - warm, 2), v_eval=v_eval)   # for the wind per direction
             if not drv:                 # shown as cruise control 130, computed at its trip average
                 cruise.update(v=round(bl.CRUISE_KMH), v_avg=round(bl.CRUISE_AVG_KMH))
     now["cruise"] = cruise
@@ -249,16 +314,19 @@ def bms_add():
             msg = t["bms_stale"].replace("{0}", str(round(age / 60))) if age is not None else t["bms_stale_none"]
             return jsonify({"error": msg, "live": live}), 409
         cap = get_bat_kwh(db, v["device"], datetime.now().isoformat())
-        win = bl.window_consumption(_series(v["device"]), cap)
+        series = _series(v["device"])
+        win = bl.window_consumption([(o, s) for _t, o, s in series], cap)
+        ctx = bl.trip_context(series, time.time())
         db.execute(
             """INSERT INTO bms_points (plate, created_at, disp_soc, disp_range, disp_cons, can_soc, can_age_s,
                    bat_temp, ext_temp, speed, odometer, capacity_kwh, cons_10, cons_30, cons_50, cons_100,
-                   can_range, soe, hvac_kw, cabin_temp)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   can_range, soe, hvac_kw, cabin_temp, trip_km, trip_min, stood_h)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (v["plate"], datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), soc, rng, cons,
              live["can_soc"], live["age_s"], live.get("bat_temp"), live.get("ext_temp"), live.get("speed"),
              live.get("odometer"), cap, win[10], win[30], win[50], win[100], live.get("range_km"),
-             live.get("soe"), live.get("hvac_kw"), live.get("cabin_temp")))
+             live.get("soe"), live.get("hvac_kw"), live.get("cabin_temp"),
+             ctx["trip_km"], ctx["trip_min"], ctx["stood_h"]))
         db.commit()
         log.info("bms learn: %s display %s %% at CAN %s %%", v["plate"], soc, live["can_soc"])
         stick_cfg.push_vehicle(db, v["plate"], v["device"])
@@ -280,3 +348,57 @@ def bms_delete(point_id):
         return jsonify(_state(db, v))
     finally:
         db.close()
+
+
+@bms_bp.route("/api/bms-learn/export")
+def bms_export():
+    """Everything the models are built from, as one JSON file to talk about
+    how they learn: all learning points, the fitted models with the error of
+    every form, and the trips of the last year with what the model expects
+    for each. No positions, addresses, plate or device name."""
+    db = get_db()
+    try:
+        v = active_vehicle(db)
+        if not v:
+            return jsonify({"error": _t()["err_not_found"]}), 404
+        st = _state(db, v)
+        device = v["device"]
+        trips = _trips(db, device, extra=True) if device else []
+        model = _model(device, trips) if device else None
+        usable = lambda t: bool(t["cons"] and t.get("v") and 25 <= t["v"] <= 125 and 5 <= t["cons"] <= 60)
+        for t in trips:
+            t["in_model"] = bool(model) and usable(t) and (t["temp"] is not None or not model["temp"])
+            if model and t.get("v") and t["km"]:
+                warm = bl.warmup_kwh(model, t["temp"], t["stood_h"])
+                t["model_cons"] = round(bl.consumption(model, t["v"], t["temp"]) + warm * 100.0 / t["km"], 1)
+                t["model_warmup_kwh"] = round(warm, 2)
+        points = [{k: r[k] for k in r.keys() if k != "plate"} for r in db.execute(
+            "SELECT * FROM bms_points WHERE plate = ? ORDER BY created_at", (v["plate"],))]
+        now = st.get("now") or {}
+        data = {
+            "idmate": config.VERSION,
+            "exported_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "about": {
+                "speed_model": "kWh/100 km = a + b*(v/100)^2 + c*cold + p*cold*100/v, plus e0*cold*w kWh once per "
+                               "trip; cold = max(0, 15 - outside C), w = 1 - exp(-stood_h/2); v = trip average km/h",
+                "cv": "error of each form on trips left out of the fit, kWh/100 km (lower is better)",
+                "trips": "cons = kwh/km*100 (none below 10 km); temp = outside C during the trip; stood_h = hours "
+                         "since the trip before; model_cons = what the model expects; hvac_kw = mean heating/cooling "
+                         "power of the hours the trip touches",
+                "points": "disp_* typed from the car's display, the rest read from the CAN bus at that moment; "
+                          "trip_km/trip_min = since the trip began, stood_h = standing time before it",
+            },
+            "capacity_kwh": get_bat_kwh(db, device, datetime.now().isoformat()) if device else None,
+            "now": {"live": st.get("live"), "display_soc": now.get("display_soc"),
+                    "remaining_kwh": now.get("remaining_kwh"), "vw_range": now.get("vw_range"),
+                    "real": now.get("real"), "cruise": now.get("cruise")},
+            "display_model": st.get("display"), "range_model": st.get("range"), "learn": st.get("learn"),
+            "speed_model": model,
+            "points": points,
+            "trips": trips,
+        }
+    finally:
+        db.close()
+    name = "idmate-bms-%s.json" % datetime.now().strftime("%Y-%m-%d")
+    return Response(json.dumps(data, ensure_ascii=False, indent=1), mimetype="application/json",
+                    headers={"Content-Disposition": 'attachment; filename="%s"' % name})
