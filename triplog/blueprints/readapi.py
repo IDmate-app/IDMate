@@ -30,8 +30,8 @@ from flask import Blueprint, abort, jsonify, redirect, request, session, url_for
 from flask_login import login_user
 
 import detector
-from app import (DisplayUser, _fetch_influx_state, _is_rate_limited, _record_attempt, _state_cache,
-                 _state_lock, admin_required, get_db, log, qrcode)
+from app import (DisplayUser, _is_rate_limited, _record_attempt, _vehicle_state, admin_required,
+                 get_db, log, qrcode)
 
 API_VERSION = 1
 # Poll interval a client should use, seconds (drive / parked).
@@ -42,10 +42,14 @@ LIMIT_MAX = 100
 MODULES = ("dashboard", "navi", "music", "messenger")
 MODULES_DEFAULT = ("dashboard",)
 
-# telegram field -> key of the dashboard state (app._ALL_FIELDS values)
+# telegram field -> key of the dashboard state (app._vehicle_state).
+# range: IDmate's own figure, the one on the dashboard (energy left ÷ the
+# consumption of the last 1000 km). Not the range the stick could read from
+# the car: no stick delivers one today, and the value stored from an early
+# firmware was the capacity (86.4), not a range.
 STATUS_FIELDS = (
     ("soc", "soc"),
-    ("range", "range_km"),
+    ("range", "calc_range"),
     ("power", "power"),
     ("speed", "speed"),
     ("lat", "lat"),
@@ -57,6 +61,12 @@ STATUS_FIELDS = (
     ("t_batt", "bat_temp"),
 )
 BOOL_FIELDS = {"charging", "dc"}
+# charging and dc are bits a telegram carries only while they are true, and
+# the state keeps the last one for ever (a car parked for days still read
+# "charging" from its last charging stop): true only when the bit came with
+# the newest values.
+FLAG_FRESH_S = 120
+LAST_USED_EVERY_S = 60         # last_used_at: not a database write per poll
 
 # Public, token-authenticated routes. Exempt from the login gate as a whole
 # (app.require_login checks the blueprint name), so nothing else belongs here.
@@ -120,16 +130,17 @@ def _vehicle_for_request(db):
     row = None
     if token:
         row = db.execute(
-            "SELECT k.id AS key_id, k.token_hash, k.modules, v.id, v.plate, v.name, v.model, v.device "
+            "SELECT k.id AS key_id, k.token_hash, k.modules, k.last_used_at, v.id, v.plate, v.name, v.model, v.device "
             "FROM read_api_keys k JOIN vehicles v ON v.id = k.vehicle_id "
             "WHERE k.token_hash = ?", (_hash(token),)).fetchone()
     if row is None or not hmac.compare_digest(row["token_hash"], _hash(token)):
         _record_attempt(ip)
         db.close()
         abort(401)
-    db.execute("UPDATE read_api_keys SET last_used_at = ? WHERE id = ?",
-               (_now_iso(), row["key_id"]))
-    db.commit()
+    now = _now_iso()
+    if _age_s(row["last_used_at"], now) is None or _age_s(row["last_used_at"], now) >= LAST_USED_EVERY_S:
+        db.execute("UPDATE read_api_keys SET last_used_at = ? WHERE id = ?", (now, row["key_id"]))
+        db.commit()
     return row
 
 
@@ -152,6 +163,16 @@ def _too_many(_e):
 
 def _now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _age_s(then_iso, now_iso):
+    """Seconds from one "…Z" time to another, None when either is missing."""
+    try:
+        a = datetime.strptime(then_iso, "%Y-%m-%dT%H:%M:%SZ")
+        b = datetime.strptime(now_iso, "%Y-%m-%dT%H:%M:%SZ")
+    except (TypeError, ValueError):
+        return None
+    return (b - a).total_seconds()
 
 
 def _utc(local_iso):
@@ -177,20 +198,22 @@ def _telegram(device, kind, data, ts=None):
 
 
 def _state(device):
-    if not device:
-        return {}
-    with _state_lock:
-        state = dict(_state_cache.get(device, {}))
-    return state or _fetch_influx_state(device)
+    """What the dashboard shows for this vehicle: the live values and the
+    figures IDmate works out itself (range)."""
+    return _vehicle_state(device) if device else {}
 
 
 def _status_data(state):
     data = {}
+    times = state.get("field_times") or {}
     for field, key in STATUS_FIELDS:
         val = state.get(key)
         if val is None:
             continue
-        data[field] = bool(val) if field in BOOL_FIELDS else val
+        if field in BOOL_FIELDS:
+            age = _age_s(times.get(key), state.get("time"))
+            val = bool(val) and age is not None and age <= FLAG_FRESH_S
+        data[field] = val
     return data
 
 
