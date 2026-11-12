@@ -4156,7 +4156,7 @@ def mqtt_monitor():
 <table><thead><tr><th>Time</th><th>Topic</th><th>Payload</th><th>QoS</th></tr></thead>
 <tbody id="msgs"></tbody></table>
 
-<script>
+<script nonce="{g.get('csp_nonce', '')}">
 async function refresh() {{
   try {{
     const res = await fetch('/api/mqtt-messages');
