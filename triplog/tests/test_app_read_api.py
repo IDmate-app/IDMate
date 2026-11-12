@@ -165,7 +165,9 @@ def test_new_key_replaces_old_and_delete_revokes(env):
     assert anon.get("/api/v1/status", headers=_hdr(tok)).status_code == 404
 
 
-def test_modules_default_and_change(env):
+def test_config_names_what_idmate_delivers(env):
+    """Navigation, music and messenger are the app's own: IDmate neither
+    delivers nor switches them, so there is nothing to tick."""
     app_module, db, adm, vids = env
     adm.post("/api/admin/read-api", json={"enabled": True})
     tok = _key(adm, vids[0])["token"]
@@ -173,10 +175,9 @@ def test_modules_default_and_change(env):
     cfg = anon.get("/api/v1/config", headers=_hdr(tok)).get_json()
     assert cfg["modules"] == ["dashboard"]
     assert cfg["interval"] == {"drive": 10, "park": 60}
-    r = adm.post(f"/api/admin/read-api/{vids[0]}/modules", json={"modules": ["music", "dashboard", "x"]})
-    assert r.get_json()["modules"] == ["dashboard", "music"]
-    assert anon.get("/api/v1/config", headers=_hdr(tok)).get_json()["modules"] == ["dashboard", "music"]
-    assert adm.post(f"/api/admin/read-api/{vids[1]}/modules", json={"modules": []}).status_code == 404
+    assert adm.post(f"/api/admin/read-api/{vids[0]}/modules", json={"modules": ["music"]}).status_code in (404, 405)
+    page = adm.get("/admin").get_data(as_text=True)
+    assert "Messenger" not in page and "read_api_mod" not in page
 
 
 def test_trips_and_charging_of_the_vehicle_only_in_utc(env):
