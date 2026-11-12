@@ -809,7 +809,7 @@
   "dg_check_trips_energy_mismatch": "Trip energy does not match SoC × capacity (off by over 25 %)",
   "dg_check_trips_soc_unchanged": "Trips from 20 km without SoC change",
   "admin_tab_telemetry": "Telemetry",
-  "admin_tab_homeassistant": "Home Assistant",
+  "admin_tab_homeassistant": "Interfaces",
   "ha_export_title": "Expose vehicles to Home Assistant",
   "ha_export_desc": "Serves the latest values of selected vehicles over a token-protected API. The 'IDMate Telemetry' Home Assistant integration reads them via base URL + token. Vehicles whose data originates in Home Assistant: simply leave unchecked (no loopback).",
   "ha_export_url_label": "Base URL (enter in Home Assistant)",
