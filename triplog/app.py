@@ -1720,10 +1720,15 @@ def range_check():
     if a is None:
         return jsonify({"status": "noroute"})
     import ferries
+    # "arrive with … %": the charge the car will show there, i.e. today's
+    # display share of the energy that is left on arrival (before any
+    # warm-up came off). Without a display value: % of the energy of now.
+    full = cruise.get("left_full") or cruise["left"]
+    soc_now = cruise.get("soc_now") if cruise.get("soc_now") is not None else 100.0
     out = {"status": "ok", "reached": a["left"] >= 0 and not a["ferry"], "long_ferry": a["ferry"],
            "ferry_name": a["ferry_name"], "road_km": round(a["road"]), "ferry_km": round(a["ferry_km"]),
            "left_kwh": round(a["left"], 1),
-           "left_share": round(100 * a["left"] / cruise["left"]) if cruise["left"] > 0 else None,
+           "left_share": round(soc_now * a["left"] / full) if full > 0 else None,
            "empty_km": round(a["empty_km"]) if a["empty_km"] is not None else None,
            # how far the nearest road is from the place asked for
            "off_km": round(ferries._km((lat1, lon1), (a["lat"], a["lon"])), 1)}

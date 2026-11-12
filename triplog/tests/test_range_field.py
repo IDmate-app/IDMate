@@ -327,6 +327,14 @@ def test_point_check_answers_for_one_place(app_module, db, monkeypatch):
         d = c.get(f"/api/range-check?lat={near[0]}&lon={near[1]}").get_json()
         assert d["status"] == "ok" and d["reached"] and abs(d["road_km"] - (reach - 40)) < 2
         assert d["left_kwh"] > 5 and 15 < d["left_share"] < 40 and d["empty_km"] is None and d["off_km"] < 1
+        # "arrive with … %" is the charge shown there: the car shows 50 % now for
+        # 41 kWh, of which 1 kWh goes into warming up (already off the 40)
+        share = d["left_share"]
+        cruise.update(soc_now=50.0, left_full=41.0)
+        d2 = c.get(f"/api/range-check?lat={near[0]}&lon={near[1]}").get_json()
+        assert d2["left_kwh"] == d["left_kwh"] and abs(d2["left_share"] - 50.0 * d["left_kwh"] / 41.0) <= 1
+        assert d2["left_share"] < share
+        del cruise["soc_now"], cruise["left_full"]
         far = rf._target(LAT, LON, 90.0, reach + 30)
         d = c.get(f"/api/range-check?lat={far[0]}&lon={far[1]}").get_json()
         assert d["status"] == "ok" and not d["reached"] and d["left_kwh"] < -3

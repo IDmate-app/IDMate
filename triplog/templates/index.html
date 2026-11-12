@@ -138,6 +138,8 @@
   .bms-pt{display:flex;gap:0.5rem;align-items:center;padding:0.3rem 0;border-top:1px solid var(--border-soft)}
   .bms-pt span{flex:1}
   .bms-pt button{background:none;border:none;color:var(--text-2);cursor:pointer;font-size:1rem;padding:0 0.3rem}
+  .bms-export{display:inline-block;margin-top:0.6rem;color:var(--accent);text-decoration:none}
+  .bms-export:hover{text-decoration:underline}
   .bms-x{position:absolute;top:0.5rem;right:0.7rem;background:none;border:none;color:var(--text-2);font-size:1.4rem;cursor:pointer}
   .notes-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem;color:var(--text-2);font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em}
   .notes-add-btn{background:var(--bg-hover);color:var(--text-2);border:none;border-radius:4px;width:24px;height:22px;cursor:pointer;font-size:0.9rem;line-height:1;padding:0;display:inline-flex;align-items:center;justify-content:center}
@@ -1441,7 +1443,10 @@
     'range_prog': t.bms_range_progress, 'range_unst': t.bms_range_unstable,
     'stick': t.bms_stick, 'stick_soc': t.bms_stick_soc, 'stick_odo': t.bms_stick_odo,
     'cruise': t.bms_cruise, 'cruise_hint': t.bms_cruise_hint, 'cruise_notemp': t.bms_cruise_notemp,
-    'drive': t.bms_drive, 'drive_hint': t.bms_drive_hint, 'wind_dirs': t.bms_wind_dirs } | tojson }};
+    'drive': t.bms_drive, 'drive_hint': t.bms_drive_hint, 'wind_dirs': t.bms_wind_dirs,
+    'points_last': t.bms_points_last, 'export': t.bms_export, 'fresh_trip': t.bms_fresh_trip,
+    'model': t.bms_model, 'form_flat': t.bms_form_flat, 'form_km': t.bms_form_km, 'form_hour': t.bms_form_hour,
+    'form_start': t.bms_form_start, 'warmup': t.bms_warmup } | tojson }};
   let _bms = null, _bmsTimer = null;
   const _bmsNum = (v, d = 1) => (v === null || v === undefined) ? '–' : Number(v).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: 0 });
   function _bmsAge(s) {
@@ -1482,6 +1487,14 @@
         .replace('{0}', _bmsNum(now.cruise.cons, 1)).replace('{1}', now.cruise.temp != null ? _bmsNum(now.cruise.temp, 0) : '–')
         .replace('{2}', now.cruise.trips).replace('{3}', now.cruise.v_avg || now.cruise.v)
         + (now.cruise.with_temp ? '' : ' ' + BMS_T.cruise_notemp));
+    }
+    if (now.cruise && now.cruise.model) {
+      // which form of the model the own trips carry, and what standing in
+      // the cold costs before the first km
+      const f = now.cruise.model.form || '', base = f.split('+')[0];
+      let txt = BMS_T.model.replace('{0}', BMS_T['form_' + base] || base) + (f.endsWith('+start') ? ' + ' + BMS_T.form_start : '');
+      if (now.cruise.warmup_kwh >= 0.05) txt += ' · ' + BMS_T.warmup.replace('{0}', _bmsNum(now.cruise.warmup_kwh, 1));
+      info.push(txt);
     }
     // With the wind forecast the reach differs by direction (wind_range.py).
     if (now.cruise && window._windDirs) {
@@ -1531,15 +1544,21 @@
     if (el) {
       el.className = 'bms-live' + (live.fresh ? '' : ' stale');
       el.innerHTML = `${BMS_T.can_now}: <b>${_bmsNum(live.can_soc, 1)} %</b>${live.range_km ? ' · ' + _bmsNum(live.range_km, 0) + ' km' : ''} · ${BMS_T.bat} ${_bmsNum(live.bat_temp, 1)} °C · ${BMS_T.ext} ${_bmsNum(live.ext_temp, 1)} °C · ${_bmsAge(live.age_s)}`
-        + (live.fresh ? '' : `<br>${BMS_T.fresh_hint}`);
+        + (live.fresh ? '' : `<br>${BMS_T.fresh_hint}`)
+        + (live.fresh_trip ? `<br>${BMS_T.fresh_trip.replace('{0}', _bmsNum(live.trip_km, 0))}` : '');
     }
     const btn = document.getElementById('bmsSave'); if (btn) btn.disabled = !live.fresh;
     const pts = document.getElementById('bmsPts');
-    if (pts) pts.innerHTML = (d.points || []).length ? `<div>${BMS_T.points}: ${d.n}</div>` + d.points.map(p => `
+    // Only the last few points (to delete a slip); all of them, the trips and
+    // the model values are in the download.
+    if (pts) pts.innerHTML = `<div>${BMS_T.points}: ${d.n || 0}`
+      + ((d.points || []).length < (d.n || 0) ? ' · ' + BMS_T.points_last.replace('{0}', d.points.length) : '') + '</div>'
+      + (d.points || []).map(p => `
       <div class="bms-pt"><span>${new Date(p.created_at).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })} ·
         ${_bmsNum(p.disp_soc, 1)} % / ${p.disp_range ? _bmsNum(p.disp_range, 0) + ' km' : '–'} / ${p.disp_cons ? Math.round(p.disp_cons * 10) + ' Wh/km' : '–'} ·
         CAN ${_bmsNum(p.can_soc, 1)} %${p.can_range ? ' / ' + _bmsNum(p.can_range, 0) + ' km' : ''} · ${_bmsNum(p.bat_temp, 0)}/${_bmsNum(p.ext_temp, 0)} °C</span>
-        <button data-onclick="deleteBmsPoint" data-args='[${p.id}]' aria-label="delete">&times;</button></div>`).join('') : '';
+        <button data-onclick="deleteBmsPoint" data-args='[${p.id}]' aria-label="delete">&times;</button></div>`).join('')
+      + `<a class="bms-export" href="/api/bms-learn/export" download>${BMS_T.export}</a>`;
   }
   function openBms() {
     document.getElementById('bmsOv').style.display = 'flex';
