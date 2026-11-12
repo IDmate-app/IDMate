@@ -112,10 +112,11 @@ def _hourly(device, field="et"):
     return vals
 
 
-def _range_history(device, days=120):
-    """[{day, min, max}] of the range the stick reads from the car (CAN "r"),
-    per UTC day: when did it last move? (It stood at one value in every
-    learning point of Nov 2026.)"""
+def _range_history(device, field="r", days=120):
+    """[{day, min, max}] of one value the stick reads from the car, per UTC
+    day: "r" the range, "ca" the capacity. When did the range last move? (In
+    every learning point of Nov 2026 it read 86.4, which looks like the
+    capacity.)"""
     client = detector.get_influx(timeout_ms=30000)
     if not client:
         return []
@@ -125,7 +126,7 @@ def _range_history(device, days=120):
             q = f'''
             from(bucket: "{config.INFLUX_BUCKET}")
               |> range(start: -{int(days)}d)
-              |> filter(fn: (r) => r._measurement == "v" and r.d == "{device}" and r._field == "r")
+              |> filter(fn: (r) => r._measurement == "v" and r.d == "{device}" and r._field == "{field}")
               |> aggregateWindow(every: 1d, fn: {fn}, createEmpty: false, timeSrc: "_start")
             '''
             for table in client.query_api().query(q, org=config.INFLUX_ORG):
@@ -446,7 +447,8 @@ def bms_export():
                          "its own sensor, archive: weather archive at the nearest 50-km raster point); stood_h = hours "
                          "since the trip before; model_cons = what the model expects; hvac_kw = mean heating/cooling "
                          "power of the hours the trip touches",
-                "can_range_daily": "lowest and highest range the stick read from the car per UTC day (last 120 days)",
+                "can_range_daily": "lowest and highest range the stick read from the car per UTC day (last 120 days); "
+                                   "can_capacity_daily: the same for the capacity it read",
                 "points": "disp_* typed from the car's display, the rest read from the CAN bus at that moment; "
                           "trip_km/trip_min = since the trip began, stood_h = standing time before it",
             },
@@ -458,6 +460,7 @@ def bms_export():
             "speed_model": model,
             "points": points,
             "can_range_daily": _range_history(device) if device else [],
+            "can_capacity_daily": _range_history(device, "ca") if device else [],
             "trips": trips,
         }
     finally:
