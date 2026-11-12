@@ -112,6 +112,32 @@ def _hourly(device, field="et"):
     return vals
 
 
+def _range_history(device, days=120):
+    """[{day, min, max}] of the range the stick reads from the car (CAN "r"),
+    per UTC day: when did it last move? (It stood at one value in every
+    learning point of Nov 2026.)"""
+    client = detector.get_influx(timeout_ms=30000)
+    if not client:
+        return []
+    out = {}
+    try:
+        for fn in ("min", "max"):
+            q = f'''
+            from(bucket: "{config.INFLUX_BUCKET}")
+              |> range(start: -{int(days)}d)
+              |> filter(fn: (r) => r._measurement == "v" and r.d == "{device}" and r._field == "r")
+              |> aggregateWindow(every: 1d, fn: {fn}, createEmpty: false, timeSrc: "_start")
+            '''
+            for table in client.query_api().query(q, org=config.INFLUX_ORG):
+                for rec in table.records:
+                    out.setdefault(rec.get_time().strftime("%Y-%m-%d"), {})[fn] = rec.get_value()
+    except Exception as e:
+        log.warning("bms learn: range history failed: %s", e)
+    finally:
+        client.close()
+    return [{"day": d, "min": v.get("min"), "max": v.get("max")} for d, v in sorted(out.items())]
+
+
 def _utc(local_iso):
     """Trip times are stored as local time without offset."""
     try:
@@ -131,17 +157,21 @@ def _trips(db, device, extra=False):
     more = {f: _hourly(device, f) for f in ("bt", "ct", "hk")} if extra else {}
     out, prev_end = [], None
     # every trip counts for the standing time, only those with energy as points
-    for r in db.execute("SELECT id, start_time, end_time, distance_km, energy_kwh, soc_start, soc_end FROM trips "
-                        "WHERE device = ? AND start_time >= ? ORDER BY start_time", (device, since)):
+    for r in db.execute("SELECT id, start_time, end_time, distance_km, energy_kwh, soc_start, soc_end, temp_c "
+                        "FROM trips WHERE device = ? AND start_time >= ? ORDER BY start_time", (device, since)):
         t0, t1 = _utc(r["start_time"]), _utc(r["end_time"])
         stood = round((t0 - prev_end).total_seconds() / 3600, 2) if t0 and prev_end and t0 >= prev_end else None
         prev_end = t1 or prev_end
         if not (r["energy_kwh"] or 0) > 0 or not (r["distance_km"] or 0) > 0:
             continue
+        # the car's own sensor during the trip; for trips from before it
+        # reported one, the weather archive (trips.temp_c)
+        temp = bl.trip_temp(temps, t0, t1)
+        src = "car" if temp is not None else ("archive" if r["temp_c"] is not None else None)
         t = {"id": r["id"], "start": r["start_time"], "end": r["end_time"],
              "km": r["distance_km"], "kwh": r["energy_kwh"],
              "cons": fm.trip_consumption(r["energy_kwh"], r["distance_km"]),
-             "temp": bl.trip_temp(temps, t0, t1), "stood_h": stood,
+             "temp": temp if temp is not None else r["temp_c"], "temp_src": src, "stood_h": stood,
              "v": _avg_kmh(r["start_time"], r["end_time"], r["distance_km"]),
              "soc_start": r["soc_start"], "soc_end": r["soc_end"]}
         if extra and t0:
@@ -412,9 +442,11 @@ def bms_export():
                                "e_start = median of what start_n short trips after standing used beyond the model",
                 "cv": "error of each form on trips left out of the fit, kWh/100 km (lower is better); form 'hour' "
                       "(p) is only taken when it is clearly better than 'km' (c)",
-                "trips": "cons = kwh/km*100 (none below 10 km); temp = outside C during the trip; stood_h = hours "
+                "trips": "cons = kwh/km*100 (none below 10 km); temp = outside C during the trip (temp_src car: "
+                         "its own sensor, archive: weather archive at the nearest 50-km raster point); stood_h = hours "
                          "since the trip before; model_cons = what the model expects; hvac_kw = mean heating/cooling "
                          "power of the hours the trip touches",
+                "can_range_daily": "lowest and highest range the stick read from the car per UTC day (last 120 days)",
                 "points": "disp_* typed from the car's display, the rest read from the CAN bus at that moment; "
                           "trip_km/trip_min = since the trip began, stood_h = standing time before it",
             },
@@ -425,6 +457,7 @@ def bms_export():
             "display_model": st.get("display"), "range_model": st.get("range"), "learn": st.get("learn"),
             "speed_model": model,
             "points": points,
+            "can_range_daily": _range_history(device) if device else [],
             "trips": trips,
         }
     finally:

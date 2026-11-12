@@ -1057,6 +1057,15 @@ def m080_bms_trip_context(db, log):
     log.info("Migration: bms_points trip context added")
 
 
+def m081_trip_temp(db, log):
+    """Outside temperature of a trip where the car's sensor has none (trips
+    from before its telemetry): filled from the weather archive by
+    trip_temp_backfill.py. The column stays when that module goes."""
+    if "temp_c" not in _cols(db, "trips"):
+        db.execute("ALTER TABLE trips ADD COLUMN temp_c REAL")
+    log.info("Migration: trips.temp_c added")
+
+
 MIGRATIONS = [
     (1,  "trips_is_gpx",            m001_trips_is_gpx),
     (2,  "trips_odo",              m002_trips_odo),
@@ -1138,6 +1147,7 @@ MIGRATIONS = [
     (78, "range_area_last",        m078_range_area_last),
     (79, "wind_points",            m079_wind_points),
     (80, "bms_trip_context",       m080_bms_trip_context),
+    (81, "trip_temp",              m081_trip_temp),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

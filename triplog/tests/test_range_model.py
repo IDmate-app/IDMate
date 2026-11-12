@@ -235,3 +235,50 @@ def test_before_setting_off_the_forecast_gives_the_temperature(app_module, db, m
         assert bms._outside_temp(db, "dev1", garage, 9.0) == (14.0, "car")            # position unknown
     finally:
         app_module._state_cache.pop("dev1", None)
+
+
+def test_old_trips_get_their_temperature_from_the_weather_archive(app_module, db, monkeypatch):
+    """Trips from before the car reported a temperature: the weather archive
+    has the hours of those days. Only raster points are asked for, the car's
+    own sensor wins where it has a value, and what was found stays in the
+    trip (trip_temp_backfill.py is a one-off)."""
+    import blueprints.bms as bms
+    import config
+    import detector
+    import trip_temp_backfill as tb
+    import wind
+    monkeypatch.setattr(config, "WIND_SOURCE", "open-meteo")
+    now = datetime(2026, 11, 12, 12, 0, tzinfo=timezone.utc)
+    lat, lon = 53.6123, 10.0456
+    rows = [(1, "2026-02-03T06:46:00", "2026-02-03T07:59:00"),     # before the telemetry
+            (2, "2026-02-04T15:56:00", "2026-02-04T17:07:00"),
+            (3, "2026-06-10T08:00:00", "2026-06-10T09:00:00"),     # the car measured this one itself
+            (4, "2026-11-10T08:00:00", "2026-11-10T09:00:00"),     # too fresh for the archive
+            (5, "2025-06-10T08:00:00", "2025-06-10T09:00:00")]     # older than the model looks back
+    for i, a, b in rows:
+        db.execute("INSERT INTO trips (id, device, start_time, end_time, distance_km, energy_kwh, start_lat, start_lon) "
+                   "VALUES (?, 'dev1', ?, ?, 80, 20, ?, ?)", (i, a, b, lat, lon))
+    db.commit()
+    sensor = {"2026-06-10T06": 17.0, "2026-06-10T07": 19.0}
+    asked = []
+
+    def fetch(point, day0, day1):
+        asked.append((point, day0, day1))
+        return {"2026-02-03T05": -4.0, "2026-02-03T06": -3.0, "2026-02-04T14": 1.0, "2026-02-04T15": 2.0, "2026-02-04T16": 3.0}
+    n = tb.run(db, lambda device: sensor, detector.LOCAL_TZ, now=now, fetch=fetch)
+    assert n == 2 and len(asked) == 1
+    point, day0, day1 = asked[0]
+    assert point == wind.grid(lat, lon, 0.0)[0] and point != (lat, lon)        # a raster point, not the place
+    assert (day0, day1) == ("2026-02-03", "2026-02-04")
+    temps = {r["id"]: r["temp_c"] for r in db.execute("SELECT id, temp_c FROM trips")}
+    assert temps == {1: -3.5, 2: 2.0, 3: None, 4: None, 5: None}
+    assert tb.run(db, lambda device: sensor, detector.LOCAL_TZ, now=now, fetch=fetch) == 0 and len(asked) == 1   # done: asks nothing
+    # the model sees them: sensor where there is one, archive otherwise
+    monkeypatch.setattr(bms, "_hourly", lambda device, field="et": sensor if field == "et" else {})
+    monkeypatch.setattr(bms, "datetime", type("D", (datetime,), {"now": classmethod(lambda cls, tz=None: now.replace(tzinfo=None) if tz is None else now)}))
+    got = {t["id"]: (t["temp"], t["temp_src"]) for t in bms._trips(db, "dev1")}
+    assert got[1] == (-3.5, "archive") and got[3] == (18.0, "car") and got[4] == (None, None)
+    # weather switched off: nothing is asked
+    monkeypatch.setattr(config, "WIND_SOURCE", "")
+    db.execute("UPDATE trips SET temp_c = NULL"); db.commit()
+    assert tb.run(db, lambda device: sensor, detector.LOCAL_TZ, now=now, fetch=fetch) == 0 and len(asked) == 1

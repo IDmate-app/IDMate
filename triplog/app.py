@@ -1854,6 +1854,24 @@ def _range_area_vehicle(db, v):
     return range_area.render_if_due(db, v["device"], lat, lon, kms, dirs=dirs, field_fn=field_fn)
 
 
+def _trip_temp_backfill():
+    """TEST BUILD, once after the start: outside temperature from the
+    weather archive for trips the car has no sensor value for (see
+    trip_temp_backfill.py; goes again with that module)."""
+    time.sleep(120)                     # after the first scans
+    try:
+        import detector
+        import trip_temp_backfill
+        from blueprints import bms
+        db = get_db()
+        try:
+            trip_temp_backfill.run(db, bms._hourly, detector.LOCAL_TZ)
+        finally:
+            db.close()
+    except Exception as e:
+        log.warning("trip temperatures: %s", e, exc_info=True)
+
+
 def _range_area_loop():
     """Background thread: renders the road area per vehicle and stores it, at
     most every RENDER_EVERY_S when position or range changed. Opening the
@@ -7094,6 +7112,7 @@ if __name__ == "__main__":
     threading.Thread(target=background_geocoder, daemon=True).start()
     threading.Thread(target=_state_poller, daemon=True).start()
     threading.Thread(target=_range_area_loop, name="range-area-loop", daemon=True).start()
+    threading.Thread(target=_trip_temp_backfill, name="trip-temp-backfill", daemon=True).start()
     threading.Thread(target=background_mqtt, daemon=True).start()
     # journeys list pictures for anything missing (first run, rendering change)
     try:
