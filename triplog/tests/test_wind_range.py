@@ -265,3 +265,25 @@ def test_small_wind_drift_renders_nothing(app_module, db, monkeypatch):
     turned = [210] * H + [150] * H                       # wind really turned
     assert ra.render_if_due(db, "dev4", 53.8, 10.4, [180], dirs=turned, now=1000 + 7200) == "rendered"
     assert len(asked) == 2
+
+
+def test_on_the_road_the_own_pace_counts_on_fast_roads_only():
+    """While driving, the map used the pace of the last km for every road
+    (94 km/h through a 50 zone). Now the road decides in town and on country
+    roads, and the pace only replaces the model's motorway average."""
+    sf = 110 / 130
+    spd = wr.section_speed
+    assert spd(130, None, sf) == 110 and spd(50, None, sf) == 50 * sf       # standing: as before
+    assert spd(50, 94, sf) == 50 * sf and spd(80, 94, sf) == 80 * sf         # town, country road: the road decides
+    assert spd(130, 120, sf) == 120 and spd(130, 94, sf) == 94               # open motorway: 120 or behind a lorry
+    assert spd(130, 180, sf) == 180                                          # … or all the car has
+    assert abs(spd(120, 110, sf) - 110 * 120 / 130) < 1e-9                   # a slower section, scaled
+    assert spd(120, 180, sf) == 120 and spd(100, 180, sf) == 100             # a limit: not above it
+    assert abs(spd(100, 110, sf) - 100 * sf) < 1e-9                          # the model's own pace changes nothing
+    assert spd(130, 45, sf) == 110                                           # a pace from town says nothing about the motorway
+    # a route out of town onto the motorway: only the motorway part reacts to the pace
+    town = wr.route_profile(_resp(53.8, 10.4, 60, 50))
+    bab = wr.route_profile(_resp(53.8, 10.4, 60, 130))
+    left = lambda prof, pace: wr.range_along_route(30.0, MODEL, 10, prof, [], 0, v_fixed=pace, until_km=60)
+    assert left(town, 94) == left(town, None) == left(town, 180)
+    assert left(bab, 94) > left(bab, None) > left(bab, 130) > left(bab, 180)

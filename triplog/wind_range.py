@@ -443,10 +443,32 @@ def _at_km(prof, km):
     return a + (c - a) * f, b + (d - b) * f, (math.degrees(math.atan2(x, y)) + 360) % 360, k
 
 
+FAST_ROAD_KMH = 100.0          # motorway, expressway: here the driver's own pace counts
+OPEN_ROAD_KMH = 125.0          # no limit to speak of: the pace may exceed the road's speed
+PACE_MIN_KMH = 80.0            # a slower recent pace was not driven on such roads
+
+
+def section_speed(v_road, pace, sf):
+    """Speed for one road section. Standing (pace None): the road's speed ×
+    sf, the trip average the model learned from. On the road, the driver's
+    pace of the last km replaces that on fast roads only — 120, 130 or all
+    the car has make a big difference there — scaled to the section
+    (pace × road speed ÷ TOP_SPEED) and, on a road with a limit, not above
+    it. In town and on country roads the road decides: 94 km/h of motorway
+    say nothing about a 50 zone."""
+    base = (v_road or bl.CRUISE_KMH) * sf
+    if not pace or pace < PACE_MIN_KMH or not v_road or v_road < FAST_ROAD_KMH:
+        return base
+    v = pace * min(v_road, TOP_SPEED) / TOP_SPEED
+    return v if v_road >= OPEN_ROAD_KMH else min(v, max(v_road, base))
+
+
 def range_along_route(remaining_kwh, model, temp_now, prof, points, now, v_fixed=None,
                       speed_factor=None, mass_kg=None, until_km=None, trace=None, trace_km=None):
     """Road km until the energy runs out along one route profile; beyond the
     route's end it carries on with the last section's speed and heading.
+    v_fixed: the driver's pace while on the road (section_speed), None when
+    the car stands.
     until_km: stop there and return the energy left (kWh, ≤ 0 = not reached)
     instead — e.g. at a ferry terminal.
     trace: a list that receives (lat, lon, kWh left, road km) for the middle
@@ -496,7 +518,7 @@ def range_along_route(remaining_kwh, model, temp_now, prof, points, now, v_fixed
             extra = (mid - prof["km"]) / DETOUR
             lat += extra * math.cos(math.radians(head)) / KY
             lon += extra * math.sin(math.radians(head)) / (KX0 * math.cos(math.radians(lat)))
-        v = v_fixed or ((v_road or bl.CRUISE_KMH) * sf)
+        v = section_speed(v_road, v_fixed, sf)
         t += STEP_KM / max(v, 5.0) * 3600 / 2
         along, temp = 0.0, temp_now
         d = raster(lat, lon)
