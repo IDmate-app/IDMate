@@ -90,6 +90,7 @@
       const picker = document.getElementById('vehPicker');
       if (!picker) return;
       const res = await fetch('/api/vehicles');
+      if (!res.ok) return;                 // a display session has one vehicle and may not list them
       const vehicles = await res.json();
       if (vehicles.length <= 1) { picker.style.cursor = 'default'; return; }
       document.getElementById('vehDropdown').innerHTML = vehicles.map(v =>
