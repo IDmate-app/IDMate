@@ -713,8 +713,14 @@
       setTimeout(() => map.invalidateSize(), 50);
       syncFerrySea();
     }
+    {% if display_mode %}
+    // Display device (read API, /api/v1/display): nothing but the map, and no way out of it
+    // (setFull(true) runs at boot, once everything it touches is declared).
+    btnFull.hidden = true;
+    {% else %}
     btnFull.addEventListener('click', () => setFull(!mapCol.classList.contains('map-max')));
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && mapCol.classList.contains('map-max')) setFull(false); });
+    {% endif %}
     document.getElementById('mapCenter').addEventListener('click', () => {
       // back to the automatic view: the whole range, else the car
       mapTouched = false; rangeFitKm = null;
@@ -1355,6 +1361,7 @@
       };
     }
 
+    {% if display_mode %}setFull(true);{% endif %}
     // Boot: first a full refresh (InfluxDB state + trail), then SSE
     loadLocations();
     loadChargeLocations();
@@ -1363,6 +1370,7 @@
       resetFallbackTimer();
     });
   </script>
+  {% if not display_mode %}
   <script nonce="{{ csp_nonce }}">
   // ── Notes scratchpad ───────────────────────────────────
   function _noteEsc(s) {
@@ -1431,6 +1439,8 @@
   }
   loadNotes();
   </script>
+  {% endif %}
+  {% if not display_mode %}
   <script nonce="{{ csp_nonce }}">
   // ── BMS learning: what the car shows vs. the CAN bus ─────────────
   const BMS_T = {{ {
@@ -1595,4 +1605,5 @@
   bmsLoad();
   setInterval(() => { if (!_bmsTimer) bmsLoad(); }, 30000);
   </script>
+  {% endif %}
 {% endblock %}

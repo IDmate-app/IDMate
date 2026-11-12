@@ -1054,6 +1054,30 @@
       <button class="btn-sm btn-save" data-onclick="saveHaExport">{{ t.ha_export_save }}</button>
       <span id="haExportMsg" style="font-size:0.8rem;margin-left:0.5rem"></span>
     </div>
+
+    <!-- Read API (/api/v1, blueprints/readapi.py) -->
+    <hr style="border:0;border-top:1px solid var(--border-soft);margin:1.6rem 0 1.2rem">
+    <h3 class="h-sec2">{{ t.read_api_title }}</h3>
+    <p style="font-size:0.8rem;color:var(--text-2);margin-bottom:0.8rem;line-height:1.45">{{ t.read_api_desc }}</p>
+    <label class="chk-lbl" style="display:flex;gap:0.5rem;align-items:center;font-size:0.85rem;cursor:pointer">
+      <input type="checkbox" id="readApiEnabled" data-onchange="saveReadApi"> <b>{{ t.read_api_enable }}</b>
+      <span id="readApiMsg" style="font-size:0.8rem;margin-left:0.5rem"></span>
+    </label>
+    <div id="readApiBody" style="display:none">
+      <h3 class="h-sec" style="margin-top:1rem">{{ t.read_api_url_label }}</h3>
+      <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+        <input type="text" id="readApiUrl" placeholder="https://idmate.example" style="flex:1;min-width:240px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:0.35rem 0.5rem;font-size:0.82rem;color:var(--text)">
+        <button class="btn-sm btn-save" data-onclick="saveReadApi">{{ t.ha_export_save }}</button>
+      </div>
+      <p style="font-size:0.75rem;color:var(--text-2);margin-top:0.4rem">{{ t.read_api_url_hint }}</p>
+      <h3 class="h-sec" style="margin-top:1rem">{{ t.read_api_vehicles_label }}</h3>
+      <div id="readApiVehicles" style="margin:0.4rem 0"></div>
+      <div id="readApiQr" style="display:none;margin-top:0.8rem;padding:0.8rem;border:1px solid var(--border-soft);border-radius:6px;max-width:340px">
+        <b id="readApiQrName" style="font-size:0.9rem"></b>
+        <img id="readApiQrImg" alt="QR" style="display:block;width:260px;height:260px;margin:0.6rem 0;background:#fff;padding:8px;border-radius:4px;image-rendering:pixelated">
+        <p style="font-size:0.75rem;color:var(--text-2);line-height:1.4">{{ t.read_api_once }}</p>
+      </div>
+    </div>
   </div>
 
   <div class="tab-content" id="tab-database">
@@ -1642,7 +1666,7 @@
       if (name === 'users') loadUsers();
       if (name === 'database' && !document.getElementById('dbSqlite').dataset.loaded) loadDbStats();
       if (name === 'telemetry') { loadStickBattery(); loadDataVolume(); loadCarrierAll(); }
-      if (name === 'homeassistant') loadHaExport();
+      if (name === 'homeassistant') { loadHaExport(); loadReadApi(); }
       if (name === 'diagnostics') initDiagTab();
       if (name === 'gaps') initGapsTab();
     }
@@ -1704,6 +1728,112 @@
     }
 
     function haExportToken(action) { saveHaExport(action); }
+
+    // ── Read API (/api/v1) ─────────────────────────────────
+    const READ_API_MOD = { dashboard: '{{ t.read_api_mod_dashboard }}', navi: '{{ t.read_api_mod_navi }}',
+                           music: '{{ t.read_api_mod_music }}', messenger: '{{ t.read_api_mod_messenger }}' };
+    let readApiData = null;
+    function _readApiDate(iso) {
+      return iso ? new Date(iso).toLocaleString() : '{{ t.read_api_never }}';
+    }
+    async function loadReadApi() {
+      try {
+        const res = await fetch('/api/admin/read-api');
+        readApiData = await res.json();
+      } catch (e) { return; }
+      document.getElementById('readApiEnabled').checked = !!readApiData.enabled;
+      document.getElementById('readApiBody').style.display = readApiData.enabled ? '' : 'none';
+      document.getElementById('readApiUrl').value = readApiData.url || '';
+      const box = document.getElementById('readApiVehicles');
+      box.textContent = '';
+      (readApiData.vehicles || []).forEach(v => {
+        const row = document.createElement('div');
+        row.style.cssText = 'padding:0.5rem 0.2rem;border-bottom:1px solid var(--border-soft);font-size:0.85rem';
+        const head = document.createElement('div');
+        const name = document.createElement('b'); name.textContent = v.name;
+        const sub = document.createElement('span'); sub.style.color = 'var(--text-2)';
+        sub.textContent = ' (' + v.device + (v.plate ? ' · ' + v.plate : '') + ') — '
+          + (v.has_key ? '{{ t.read_api_since }} ' + _readApiDate(v.created_at)
+                         + ', {{ t.read_api_last_used }} ' + _readApiDate(v.last_used_at)
+                       : '{{ t.read_api_none }}');
+        head.append(name, sub);
+        const tools = document.createElement('div');
+        tools.style.cssText = 'display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap;margin-top:0.35rem';
+        if (v.has_key) {
+          (readApiData.modules || []).forEach(m => {
+            const lbl = document.createElement('label');
+            lbl.className = 'chk-lbl'; lbl.style.cssText = 'display:flex;gap:0.3rem;align-items:center;cursor:pointer';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox'; cb.checked = v.modules.includes(m); cb.dataset.module = m;
+            cb.addEventListener('change', () => saveReadApiModules(v.id, tools));
+            lbl.append(cb, READ_API_MOD[m] || m);
+            tools.appendChild(lbl);
+          });
+        }
+        const make = document.createElement('button');
+        make.className = 'btn-sm';
+        make.textContent = v.has_key ? '{{ t.read_api_recreate }}' : '{{ t.read_api_create }}';
+        make.addEventListener('click', () => readApiKey(v, tools));
+        tools.appendChild(make);
+        if (v.has_key) {
+          const del = document.createElement('button');
+          del.className = 'btn-sm danger'; del.textContent = '{{ t.read_api_delete }}';
+          del.addEventListener('click', () => readApiDelete(v));
+          tools.appendChild(del);
+        }
+        row.append(head, tools);
+        box.appendChild(row);
+      });
+      if (!(readApiData.vehicles || []).length) box.textContent = '—';
+    }
+
+    async function saveReadApi() {
+      const msg = document.getElementById('readApiMsg');
+      try {
+        const res = await fetch('/api/admin/read-api', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: document.getElementById('readApiEnabled').checked,
+                                 url: document.getElementById('readApiUrl').value.trim() }),
+        });
+        if (!res.ok) throw new Error();
+        msg.textContent = '✓'; msg.style.color = 'var(--accent)';
+        setTimeout(() => { msg.textContent = ''; }, 2000);
+      } catch (e) { msg.textContent = '✕'; msg.style.color = 'var(--danger)'; }
+      document.getElementById('readApiQr').style.display = 'none';
+      loadReadApi();
+    }
+
+    function _readApiModules(tools) {
+      return Array.from(tools.querySelectorAll('input[type=checkbox]:checked')).map(c => c.dataset.module);
+    }
+
+    async function saveReadApiModules(vehicleId, tools) {
+      await fetch('/api/admin/read-api/' + vehicleId + '/modules', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modules: _readApiModules(tools) }),
+      });
+    }
+
+    async function readApiKey(v, tools) {
+      if (v.has_key && !confirm('{{ t.read_api_confirm_recreate }}')) return;
+      const body = v.has_key ? { modules: _readApiModules(tools) } : {};
+      const res = await fetch('/api/admin/read-api/' + v.id + '/key', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      if (!res.ok) return;
+      const out = await res.json();
+      await loadReadApi();
+      document.getElementById('readApiQrName').textContent = v.name;
+      document.getElementById('readApiQrImg').src = 'data:image/png;base64,' + out.qr;
+      document.getElementById('readApiQr').style.display = '';
+    }
+
+    async function readApiDelete(v) {
+      if (!confirm('{{ t.read_api_confirm_delete }}')) return;
+      await fetch('/api/admin/read-api/' + v.id + '/key', { method: 'DELETE' });
+      document.getElementById('readApiQr').style.display = 'none';
+      loadReadApi();
+    }
 
     function switchSubTab(id) {
       // Find which group this sub-tab belongs to

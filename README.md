@@ -56,6 +56,7 @@ Open `http://your-host:3004/setup` to create the admin account.
 | [Setup guide](docs/HOW-TO-SETUP.md) | MQTT, port forwarding, remote access, first vehicle |
 | [User manual](docs/manual.md) | Every page and what it does |
 | [Home Assistant](docs/home-assistant.md) | Wallbox readings via webhook |
+| [Read API](docs/read-api.md) | Vehicle data for display devices (opt-in), set up by QR code |
 | [TeslaMate import](docs/teslamate-import.md) | Bring your history over |
 | [Architecture](docs/architecture.md) | Components, data format, project layout, development |
 | [FAQ](docs/faq.md) | Common questions |
