@@ -1390,6 +1390,26 @@ def hold_plausible_position(device, state, track_fn):
     return state
 
 
+RANGE_LAG_S = 6 * 3600         # the range comes with the SoC; older by more: no longer sent
+_stale_range_seen = set()
+
+
+def range_is_current(t_range, t_soc):
+    """The range the stick reads from the car (ISO times of the last range
+    and the last SoC): current while it is about as young as the SoC. A
+    parked car keeps both; a stick that no longer sends the range leaves it
+    behind."""
+    def ts(iso):
+        try:
+            return datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+        except (TypeError, ValueError):
+            return None
+    a, b = ts(t_range), ts(t_soc)
+    if a is None:
+        return False
+    return b is None or b - a <= RANGE_LAG_S
+
+
 def _fetch_influx_state(device: str) -> dict:
     """Get the last known state of a device from InfluxDB."""
     client = detector.get_influx()
@@ -1431,6 +1451,15 @@ def _fetch_influx_state(device: str) -> dict:
             state["soc"] = _sanitize_soc(state["soc"])
         if "range_km" in state:
             state["range_km"] = _sanitize_range(state["range_km"])
+        # last() looks back a year: a range the stick stopped sending long
+        # ago would stay "current" forever (86.4 km of an old firmware next
+        # to today's SoC).
+        if not range_is_current(field_times.get("range_km"), field_times.get("soc")):
+            if state.pop("range_km", None) is not None and device not in _stale_range_seen:
+                _stale_range_seen.add(device)
+                log.info("live state: the CAN range of %s is from %s, long before its SoC — not used",
+                         device, (field_times.get("range_km") or "?")[:10])
+            field_times.pop("range_km", None)
 
         # Mobile carrier: PLMN field is authoritative — the device transmits it
         # on every telegram. The legacy `op` tag on `ls` records (from pre-PLMN
