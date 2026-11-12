@@ -25,6 +25,7 @@ import json
 import secrets
 import threading
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 from flask import Blueprint, abort, jsonify, redirect, request, session, url_for
 from flask_login import login_user
@@ -342,7 +343,19 @@ def display():
 # ── Admin ─────────────────────────────────────────────────────────────────────
 
 def _base_url(db):
-    return _setting(db, "read_api_url") or f"{request.scheme}://{request.host}"
+    """The address that goes into the QR code: the one entered, else the one
+    this admin page is open at. Behind a reverse proxy that does not pass the
+    protocol on (X-Forwarded-Proto), the server sees http for an https page;
+    the browser knows better, so its Origin / Referer decides when it names
+    this very host."""
+    saved = _setting(db, "read_api_url")
+    if saved:
+        return saved
+    for header in ("Origin", "Referer"):
+        u = urlsplit(request.headers.get(header) or "")
+        if u.scheme in ("http", "https") and u.netloc == request.host:
+            return f"{u.scheme}://{u.netloc}"
+    return f"{request.scheme}://{request.host}"
 
 
 def _qr_png_b64(text):

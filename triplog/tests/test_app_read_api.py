@@ -287,3 +287,20 @@ def test_normal_login_is_untouched(env):
     html = adm.get("/").get_data(as_text=True)
     assert "setFull(true);" not in html and "async function loadNotes" in html
     assert adm.get("/admin").status_code == 200
+
+
+def test_address_for_the_qr_code_is_the_one_the_browser_uses(env):
+    """Behind a proxy that does not pass the protocol on, the server sees
+    http for a page opened over https. The QR code must carry https."""
+    app_module, db, adm, vids = env
+    adm.post("/api/admin/read-api", json={"enabled": True})
+    seen = lambda **h: adm.get("/api/admin/read-api", headers=h).get_json()["url"]
+    assert seen() == "http://localhost"                                   # what the server believes
+    assert seen(Referer="https://localhost/admin") == "https://localhost"
+    assert seen(Referer="https://evil.example/x") == "http://localhost"   # another host says nothing
+    out = adm.post(f"/api/admin/read-api/{vids[0]}/key", json={},
+                   headers={"Origin": "https://localhost"}).get_json()
+    assert out["url"] == "https://localhost/api/v1"
+    # an address typed in wins over everything
+    adm.post("/api/admin/read-api", json={"url": "https://car.example/"})
+    assert seen(Referer="https://localhost/admin") == "https://car.example"
