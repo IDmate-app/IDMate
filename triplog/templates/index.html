@@ -1492,8 +1492,8 @@
     if (now.cruise && now.cruise.model) {
       // which form of the model the own trips carry, and what standing in
       // the cold costs before the first km
-      const f = now.cruise.model.form || '', base = f.split('+')[0];
-      let txt = BMS_T.model.replace('{0}', BMS_T['form_' + base] || base) + (f.endsWith('+start') ? ' + ' + BMS_T.form_start : '');
+      const f = now.cruise.model.form || '';
+      let txt = BMS_T.model.replace('{0}', BMS_T['form_' + f] || f) + (now.cruise.model.e_start > 0 ? ' + ' + BMS_T.form_start : '');
       if (now.cruise.warmup_kwh >= 0.05) txt += ' · ' + BMS_T.warmup.replace('{0}', _bmsNum(now.cruise.warmup_kwh, 1));
       info.push(txt);
     }

@@ -334,20 +334,26 @@ def real_range(remaining_kwh, trips, temp_now):
 
 # ── range at motorway speed (one number instead of a span) ──────────────────
 # Consumption of the own trips as a function of trip speed and cold. One
-# trip is one point (average speed, kWh/100 km, outside temperature, how
-# long the car stood before), weighted by its km. Four forms are fitted and
-# checked on trips left out of the fit (FORMS):
+# trip is one point (average speed, kWh/100 km, outside temperature),
+# weighted by its km:
 #
 #   cons = a + b·(v/100)²                    rolling + drive train, air drag
-#        + c·cold                            cold per km          ("km")
+#        + c·cold                            cold per km           ("km")
 #     or + p·cold·100/v                      heating as power: p kW per K,
 #                                            per km more the slower ("hour")
-#        + e0·cold·w·100/km                  warming up after standing: e0 kWh
-#                                            per K, once per trip   ("+start")
 #
-# cold = max(0, COLD_C − T); w = how cold the car was when it set off, from
-# the time it stood (start_weight). Evaluated at CRUISE_KMH and today's
-# temperature; wind and topography come on top along the route.
+# cold = max(0, COLD_C − T). Both forms are checked on trips left out of
+# the fit; "hour" is only taken when it predicts them clearly better
+# (CV_GAIN). On 377 real trips of one car (Nov 2026) the two could not be
+# told apart, and "hour" read the few cold slow trips 2 kWh/100 km too high.
+#
+# What a trip costs once after the car stood (e_start, kWh) is not fitted
+# with the rest but measured: short trips after a long stop against the
+# model above (_start_energy). On those real trips it was 0.2 kWh and did
+# not grow with the cold.
+#
+# Evaluated at CRUISE_KMH and today's temperature; wind and topography come
+# on top along the route.
 
 CRUISE_KMH = 130.0
 # The model learns from trip averages; cruise control 130 averages about
@@ -358,15 +364,15 @@ COLD_C = 15.0
 FIT_MIN_TRIPS = 20
 FIT_MIN_KM = 300.0
 FIT_MIN_FAST_KM = 100.0        # trips ≥ 80 km/h: anchor for the drag term
-COOL_H = 2.0                   # after about this long the cabin is as cold as outside (assumed)
+COOL_H = 2.0                   # standing: after about this long a start costs the full e_start
 HEAT_V_MIN = 15.0              # km/h: below, heating per km stops growing (stop and go)
-# In this order of preference: the first form that predicts trips left out
-# of the fit at most CV_TIE worse than the best one is taken. Heating is
-# power × time and warming up happens once, so those forms win a tie; a
-# form the own trips do not carry loses.
-FORMS = ("hour+start", "hour", "km+start", "km")
+FORMS = ("km", "hour")         # the first is the simple reading, the second has to earn its place
 CV_FOLDS = 5
-CV_TIE = 0.02
+CV_GAIN = 0.03                 # … by predicting trips left out of the fit this much better
+START_KM = (3.0, 25.0)         # short trips show what a start costs
+START_STOOD_H = 2.0            # after standing at least this long
+START_V_MIN = 15.0             # not the crawl out of a car park
+START_MIN_TRIPS = 15
 
 
 def cold_k(temp):
@@ -405,30 +411,18 @@ def _fit_speed(rows, ys, ws):
 
 def _features(t, form):
     cold = cold_k(t["temp"])
-    row = [1.0, (t["v"] / 100) ** 2]
-    if form.startswith("km"):
-        row.append(cold)
-    elif form.startswith("hour"):
-        row.append(cold * 100.0 / max(t["v"], HEAT_V_MIN))
-    if form.endswith("+start"):
-        row.append(cold * start_weight(t.get("stood_h")) * 100.0 / t["km"])
-    return row
+    return [1.0, (t["v"] / 100) ** 2, cold if form == "km" else cold * 100.0 / max(t["v"], HEAT_V_MIN)]
 
 
-def _fit_form(trips, form):
-    """→ {"a", "b", "c", "p", "e0"} or None when the trips do not carry the
-    form (no solution, or a term with the wrong sign)."""
-    x = _fit_speed([_features(t, form) for t in trips], [t["cons"] for t in trips], [t["km"] for t in trips])
-    if not x or x[1] <= 0 or any(v < 0 for v in x[2:]):
+def _fit_form(trips, form, e_start=0.0):
+    """→ {"a", "b", "c", "p"} or None when the trips do not carry the form
+    (no solution, or a term with the wrong sign). e_start: the energy of a
+    start, taken off each trip first (it is not part of driving steadily)."""
+    ys = [t["cons"] - e_start * start_weight(t.get("stood_h")) * 100.0 / t["km"] for t in trips]
+    x = _fit_speed([_features(t, form) for t in trips], ys, [t["km"] for t in trips])
+    if not x or x[1] <= 0 or x[2] < 0:
         return None
-    m = {"a": x[0], "b": x[1], "c": 0.0, "p": 0.0, "e0": 0.0}
-    if form.startswith("km"):
-        m["c"] = x[2]
-    elif form.startswith("hour"):
-        m["p"] = x[2]
-    if form.endswith("+start"):
-        m["e0"] = x[3]
-    return m
+    return {"a": x[0], "b": x[1], "c": x[2] if form == "km" else 0.0, "p": x[2] if form == "hour" else 0.0}
 
 
 def trip_prediction(model, t):
@@ -452,11 +446,30 @@ def _cv_error(trips, form):
     return err / km if km else None
 
 
+def _start_energy(trips, model, with_temp):
+    """(kWh, n): what short trips after a long stop used beyond the model —
+    the median over the car's own trips. 0 with too few of them."""
+    extra = []
+    for t in trips:
+        km, v = t.get("km") or 0, t.get("v")
+        if not (START_KM[0] <= km < START_KM[1] and v and START_V_MIN <= v <= 125):
+            continue
+        if t.get("stood_h") is None or t["stood_h"] < START_STOOD_H or (with_temp and t.get("temp") is None):
+            continue
+        kwh = t.get("kwh") or (t["cons"] * km / 100.0 if t.get("cons") else None)
+        if kwh and kwh > 0:
+            extra.append(kwh - consumption(model, v, t.get("temp")) * km / 100.0)
+    if len(extra) < START_MIN_TRIPS:
+        return 0.0, len(extra)
+    return max(0.0, fm.median(extra)), len(extra)
+
+
 def speed_model(trips):
-    """trips: [{km, cons, v, temp, stood_h}] → {"a", "b", "c", "p", "e0",
-    "form", "n", "km", "temp", "cv"} or None. form: which of FORMS (or
-    "flat" without temperatures); cv: the error of each form on trips left
-    out, kWh/100 km."""
+    """trips: [{km, cons, v, temp, stood_h, kwh}] → {"a", "b", "c", "p",
+    "e_start", "form", "n", "km", "temp", "cv", "start_n"} or None. form:
+    which of FORMS (or "flat" without temperatures); cv: the error of each
+    form on trips left out, kWh/100 km; e_start: kWh per start after
+    standing, from start_n short trips."""
     ok = [t for t in trips
           if (t.get("km") or 0) >= fm.MIN_CONS_KM and t.get("v") and 25 <= t["v"] <= 125
           and t.get("cons") and 5 <= t["cons"] <= 60]
@@ -464,25 +477,39 @@ def speed_model(trips):
             or sum(t["km"] for t in ok if t["v"] >= 80) < FIT_MIN_FAST_KM:
         return None
     warm = [t for t in ok if t.get("temp") is not None]
-    m, form, used, cv = None, "flat", ok, {}
+    form, used, cv = "flat", ok, {}
     if len(warm) >= FIT_MIN_TRIPS and sum(t["km"] for t in warm) >= FIT_MIN_KM \
             and sum(t["km"] for t in warm if t["v"] >= 80) >= FIT_MIN_FAST_KM:
-        fits = {f: _fit_form(warm, f) for f in FORMS}
-        cv = {f: _cv_error(warm, f) for f in FORMS if fits[f]}
+        cv = {f: _cv_error(warm, f) for f in FORMS if _fit_form(warm, f)}
         cv = {f: e for f, e in cv.items() if e is not None}
         if cv:
-            best = min(cv.values())
-            form = next(f for f in FORMS if f in cv and cv[f] <= best * (1 + CV_TIE))
-            m, used = fits[form], warm
-    if not m:                                      # no usable temperature effect
-        x = _fit_speed([[1.0, (t["v"] / 100) ** 2] for t in ok], [t["cons"] for t in ok], [t["km"] for t in ok])
-        if not x or x[1] <= 0:
-            return None
-        m, form, used = {"a": x[0], "b": x[1], "c": 0.0, "p": 0.0, "e0": 0.0}, "flat", ok
+            form = next(f for f in FORMS if f in cv)             # the simple one, if the trips carry it
+            better = [f for f in cv if cv[f] <= cv[form] * (1 - CV_GAIN)]
+            if better:
+                form = min(better, key=cv.get)
+            used = warm
+
+    def fit(e_start):
+        if form != "flat":
+            return _fit_form(used, form, e_start)
+        ys = [t["cons"] - e_start * start_weight(t.get("stood_h")) * 100.0 / t["km"] for t in used]
+        x = _fit_speed([[1.0, (t["v"] / 100) ** 2] for t in used], ys, [t["km"] for t in used])
+        return {"a": x[0], "b": x[1], "c": 0.0, "p": 0.0} if x and x[1] > 0 else None
+    m = fit(0.0)
+    if not m:
+        return None
+    # The trips the model is fitted on carry their start too: measure it
+    # against the model, take it off the trips, fit again, measure again.
+    e, n_start = _start_energy(trips, m, used is warm)
+    if e > 0:
+        m2 = fit(e)
+        if m2:
+            m = m2
+            e, n_start = _start_energy(trips, m, used is warm)
     return {"a": round(m["a"], 3), "b": round(m["b"], 3), "c": round(m["c"], 4), "p": round(m["p"], 4),
-            "e0": round(m["e0"], 4), "form": form,
+            "e_start": round(e, 2), "start_n": n_start, "form": form,
             "n": len(used), "km": round(sum(t["km"] for t in used)), "temp": used is warm,
-            "cv": {f: round(e, 2) for f, e in cv.items()}}
+            "cv": {f: round(v, 2) for f, v in cv.items()}}
 
 
 def consumption(model, v, temp, v_air=None):
@@ -495,9 +522,10 @@ def consumption(model, v, temp, v_air=None):
 
 
 def warmup_kwh(model, temp, stood_h):
-    """Energy the next trip spends once on warming up: the more the colder
-    it is and the longer the car stood (stood_h None: long)."""
-    return model.get("e0", 0.0) * cold_k(temp) * start_weight(stood_h)
+    """Energy the next trip spends once on getting going: the more the
+    longer the car stood (stood_h None: long). temp is not used: on the
+    trips this was measured on, the cold made no difference to it."""
+    return model.get("e_start", 0.0) * start_weight(stood_h)
 
 
 def cruise_range(remaining_kwh, model, temp_now, v=CRUISE_KMH):
