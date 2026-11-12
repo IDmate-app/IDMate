@@ -1,7 +1,8 @@
-"""The consumption model behind the range (1.2.327): a car's own trips, with
-heating as power × time, a warm-up after standing, and a fit that a few odd
-trips do not bend. A new form is only used when it predicts trips left out
-of the fit. Plus: where in a trip a learning point was taken, the outside
+"""The consumption model behind the range (1.2.327, reworked on real trips
+in 1.2.329): a car's own trips, cold per km, a fit that a few odd trips do
+not bend, and what a start after standing costs, measured on short trips.
+Heating as power × time is only taken when it clearly predicts trips left
+out of the fit better. Plus: where in a trip a learning point was taken, the outside
 temperature during a trip, and the export of everything as JSON."""
 
 import json
@@ -12,62 +13,74 @@ from datetime import datetime, timedelta, timezone
 
 import bms_learn as bl
 
-HOUR = {"a": 13.0, "b": 7.5, "p": 0.13, "e0": 0.08}     # 0.13 kW heating per K, 0.08 kWh warm-up per K
-KM = {"a": 13.0, "b": 7.5, "c": 0.15}
+HOUR = {"a": 13.0, "b": 7.5, "p": 0.25}                 # heating 0.25 kW per K: per km more the slower
+KM = {"a": 13.0, "b": 7.5, "c": 0.3}                    # cold costs per km
 
 
-def trips(n, truth, seed=1, noise=0.05, outliers=0):
+def trips(n, truth, seed=1, noise=0.05, outliers=0, start=0.0):
+    """Invented trips with a known truth. start: kWh every trip costs once
+    after the car stood (less after a short stop)."""
     r, out = random.Random(seed), []
     for i in range(n):
         temp = 10 - 12 * math.cos(2 * math.pi * r.random()) + r.gauss(0, 3)
-        km, v = r.choice([(r.uniform(10, 25), r.uniform(28, 50)), (r.uniform(20, 70), r.uniform(50, 80)),
+        km, v = r.choice([(r.uniform(4, 25), r.uniform(28, 50)), (r.uniform(20, 70), r.uniform(50, 80)),
                           (r.uniform(80, 300), r.uniform(90, 120))])
         stood = r.choice([0.3, 1, 4, 9, 14, 40])
         cold = max(0, 15 - temp)
         cons = truth["a"] + truth["b"] * (v / 100) ** 2 + truth.get("c", 0) * cold + truth.get("p", 0) * cold * 100 / v \
-            + truth.get("e0", 0) * cold * (1 - math.exp(-stood / 2)) * 100 / km
-        out.append({"km": km, "v": v, "temp": temp, "stood_h": stood,
-                    "cons": cons * (1 + r.gauss(0, noise)) * (1.9 if i < outliers else 1)})
+            + start * (1 - math.exp(-stood / 2)) * 100 / km
+        cons *= (1 + r.gauss(0, noise)) * (1.9 if i < outliers else 1)
+        out.append({"km": km, "v": v, "temp": temp, "stood_h": stood, "kwh": cons * km / 100,
+                    "cons": cons if km >= 10 else None})
     return out
 
 
-def test_heating_as_power_and_the_warm_up_are_learned():
-    m = bl.speed_model(trips(400, HOUR))
-    assert m["form"] == "hour+start" and m["c"] == 0
-    assert abs(m["p"] - 0.13) < 0.02 and abs(m["e0"] - 0.08) < 0.015 and abs(m["b"] - 7.5) < 0.4
-    # the forms were compared on trips left out of the fit
-    assert m["cv"]["hour+start"] < m["cv"]["km"]
-    # at 2 °C the city leg costs more per km than the old form says, the motorway less
-    old = dict(bl._fit_form(trips(400, HOUR), "km"))
-    assert bl.consumption(m, 25, 2) > bl.consumption(old, 25, 2) + 1.0
-    assert bl.consumption(m, 110, 2) < bl.consumption(old, 110, 2)
-    assert abs(bl.consumption(m, 25, 2) - (13 + 7.5 * 0.0625 + 0.13 * 13 * 4)) < 0.6
+def test_cold_per_km_is_the_simple_reading():
+    m = bl.speed_model(trips(400, KM, noise=0.02))
+    assert m["form"] == "km" and m["p"] == 0 and abs(m["c"] - 0.3) < 0.03 and abs(m["b"] - 7.5) < 0.4
+    assert set(m["cv"]) == {"km", "hour"}                               # both were checked on trips left out
 
 
-def test_a_form_the_trips_do_not_carry_is_not_taken():
-    # cold costs per km in these trips, and nothing at the start
-    m = bl.speed_model(trips(400, KM, noise=0.01))
-    assert m["form"] == "km" and m["p"] == 0 and m["e0"] == 0 and abs(m["c"] - 0.15) < 0.02
+def test_heating_as_power_has_to_earn_its_place():
+    # the trips show it clearly: slow cold trips cost far more per km
+    m = bl.speed_model(trips(400, HOUR, noise=0.02))
+    assert m["form"] == "hour" and m["c"] == 0 and abs(m["p"] - 0.25) < 0.03
+    assert m["cv"]["hour"] <= m["cv"]["km"] * (1 - bl.CV_GAIN)
+    assert abs(bl.consumption(m, 25, 2) - (13 + 7.5 * 0.0625 + 0.25 * 13 * 4)) < 1.0
+    # a truth in between, with the scatter of real trips: no clear winner, the simple form stays
+    mixed = bl.speed_model(trips(300, {"a": 13.0, "b": 7.5, "c": 0.2, "p": 0.08}, noise=0.10))
+    assert mixed["form"] == "km" and mixed["p"] == 0
+
+
+def test_the_start_after_standing_is_measured_on_short_trips():
+    m = bl.speed_model(trips(500, KM, noise=0.02, start=0.4))
+    assert m["start_n"] >= 15 and abs(m["e_start"] - 0.4) < 0.12
+    assert abs(m["a"] - 13.0) < 0.5                                     # … and no longer sits in the base consumption
+    none = bl.speed_model(trips(500, KM, noise=0.02))
+    assert none["e_start"] < 0.1
+    # too few short trips after a stop: nothing is assumed
+    few = bl.speed_model([t for t in trips(500, KM, start=0.4) if t["km"] >= 25 or t["stood_h"] < 2][:300])
+    assert few["e_start"] == 0 and few["start_n"] < 15
 
 
 def test_a_few_odd_trips_do_not_bend_a_small_model():
     for seed in range(8):
-        m = bl.speed_model(trips(40, HOUR, seed=seed, outliers=4))      # every tenth trip reads 90 % too high
+        m = bl.speed_model(trips(60, KM, seed=seed, outliers=5))        # every twelfth trip reads 90 % too high
         for v, temp in ((110, 2), (60, 2), (110, 20)):
-            truth = 13 + 7.5 * (v / 100) ** 2 + 0.13 * max(0, 15 - temp) * 100 / v
-            assert abs(bl.consumption(m, v, temp) - truth) < 4.0, (seed, v, temp, m)
+            truth = 13 + 7.5 * (v / 100) ** 2 + 0.3 * max(0, 15 - temp)
+            assert abs(bl.consumption(m, v, temp) - truth) < 3.0, (seed, v, temp, m)
 
 
-def test_warm_up_depends_on_cold_and_on_how_long_the_car_stood():
-    m = dict(HOUR)
+def test_the_start_costs_less_after_a_short_stop():
+    m = {"a": 13.0, "b": 7.5, "c": 0.3, "e_start": 0.4}
     night, short = bl.warmup_kwh(m, 2, 12), bl.warmup_kwh(m, 2, 0.3)
-    assert abs(night - 0.08 * 13) < 0.05 and short < 0.2 * night
-    assert abs(bl.warmup_kwh(m, 2, None) - 0.08 * 13) < 1e-9            # unknown: stood long
-    assert bl.warmup_kwh(m, 20, 12) == 0 and bl.warmup_kwh(KM, 2, 12) == 0
-    # an old model without the new terms still computes
-    assert abs(bl.consumption(KM, 110, 5) - (13 + 7.5 * 1.21 + 1.5)) < 1e-9
+    assert abs(night - 0.4) < 0.01 and short < 0.2 * night
+    assert bl.warmup_kwh(m, 2, None) == 0.4                             # unknown: stood long
+    assert bl.warmup_kwh(m, 25, 12) == night                            # the cold makes no difference to it
+    assert bl.warmup_kwh(KM, 2, 12) == 0                                # an older model without it still computes
+    assert abs(bl.consumption(KM, 110, 5) - (13 + 7.5 * 1.21 + 3.0)) < 1e-9
     # head wind raises the drag, not the heating
-    assert abs(bl.consumption(m, 100, 2, v_air=120) - bl.consumption(m, 100, 2) - 7.5 * 0.44) < 1e-9
+    assert abs(bl.consumption(HOUR, 100, 2, v_air=120) - bl.consumption(HOUR, 100, 2) - 7.5 * 0.44) < 1e-9
 
 
 def test_where_in_a_trip_the_car_is():
@@ -125,13 +138,13 @@ def _seed_trips(db, n=90):
     """A winter of trips of all kinds: short and long, after a night or
     after an hour, colder and milder days."""
     import blueprints.bms as bms
-    kinds = [(12.0, 35.0), (18.0, 45.0), (35.0, 65.0), (60.0, 75.0), (160.0, 105.0), (240.0, 115.0)]
+    kinds = [(6.0, 35.0), (12.0, 35.0), (18.0, 45.0), (35.0, 65.0), (60.0, 75.0), (160.0, 105.0), (240.0, 115.0)]
     r, t, prev_end = random.Random(4), datetime(2026, 9, 1, 7, 0), None
     for i in range(n):
         km, v = kinds[i % len(kinds)]
         cold = max(0.0, 15 - _temp_of(bms._utc(t.isoformat())))
         w = 1 - math.exp(-((t - prev_end).total_seconds() / 3600) / 2) if prev_end else 1.0
-        cons = 13 + 7.5 * (v / 100) ** 2 + 0.13 * cold * 100 / v + 0.08 * cold * w * 100 / km
+        cons = 13 + 7.5 * (v / 100) ** 2 + 0.3 * cold + 0.4 * w * 100 / km
         end = t + timedelta(hours=km / v)
         db.execute("INSERT INTO trips (device, start_time, end_time, distance_km, energy_kwh, soc_start, soc_end, "
                    "start_lat, start_lon, start_address) VALUES ('dev1', ?, ?, ?, ?, 80, 60, 53.5, 10.0, 'Secret Street 1')",
@@ -163,16 +176,17 @@ def test_export_and_dialog(app_module, db, monkeypatch):
         assert d["n"] == 5 and len(d["points"]) == 3                     # the dialog lists the last three only
         assert d["live"]["fresh_trip"] and d["live"]["trip_km"] == 5
         cr = d["now"]["cruise"]
-        assert cr["model"]["form"] == "hour+start" and cr["parked_h"] == 0 and cr["warmup_kwh"] == 0   # driving: warm
+        assert cr["model"]["form"] == "km" and abs(cr["model"]["e_start"] - 0.4) < 0.1
+        assert cr["parked_h"] == 0 and cr["warmup_kwh"] == 0                 # driving: nothing to take off
         r = c.get("/api/bms-learn/export")
         assert r.status_code == 200 and "attachment" in r.headers["Content-Disposition"]
         raw = r.get_data(as_text=True)
         x = json.loads(raw)
         assert len(x["points"]) == 5 and x["points"][0]["trip_km"] == 5 and abs(x["points"][0]["stood_h"] - 10) < 0.2
-        assert x["speed_model"]["form"] == "hour+start" and set(x["speed_model"]["cv"]) >= {"hour+start", "km"}
-        t = x["trips"][4]
+        assert x["speed_model"]["form"] == "km" and set(x["speed_model"]["cv"]) == {"km", "hour"}
+        t = x["trips"][5]
         assert t["km"] == 160 and t["temp"] is not None and t["stood_h"] == 15.0 and t["in_model"]
-        assert abs(t["model_cons"] - t["cons"]) < 1.0 and t["model_warmup_kwh"] > 0.2
+        assert abs(t["model_cons"] - t["cons"]) < 1.0 and 0.3 < t["model_warmup_kwh"] < 0.5
         assert x["trips"][2]["stood_h"] == 1.0
         # nothing that says where the car was or which car it is
         for word in ("NOX", "dev1", "Secret", "start_lat", "53.5", "address"):
@@ -181,7 +195,7 @@ def test_export_and_dialog(app_module, db, monkeypatch):
         bms._model_cache.clear()
         monkeypatch.setattr(bms, "_series", lambda device, hours=36: [(t - 9 * 3600, o, s) for t, o, s in series])
         cold = c.get("/api/bms-learn").get_json()["now"]["cruise"]
-        assert cold["parked_h"] > 8 and 0.8 < cold["warmup_kwh"] < 1.3
+        assert cold["parked_h"] > 8 and 0.3 < cold["warmup_kwh"] < 0.5
         assert abs((cr["left"] - cold["left"]) - cold["warmup_kwh"]) < 0.02 and cold["km"] < cr["km"]
     finally:
         app_module._state_cache.pop("dev1", None)

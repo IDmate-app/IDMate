@@ -407,9 +407,11 @@ def bms_export():
             "idmate": config.VERSION,
             "exported_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "about": {
-                "speed_model": "kWh/100 km = a + b*(v/100)^2 + c*cold + p*cold*100/v, plus e0*cold*w kWh once per "
-                               "trip; cold = max(0, 15 - outside C), w = 1 - exp(-stood_h/2); v = trip average km/h",
-                "cv": "error of each form on trips left out of the fit, kWh/100 km (lower is better)",
+                "speed_model": "kWh/100 km = a + b*(v/100)^2 + c*cold + p*cold*100/v, plus e_start*w kWh once per "
+                               "trip; cold = max(0, 15 - outside C), w = 1 - exp(-stood_h/2); v = trip average km/h; "
+                               "e_start = median of what start_n short trips after standing used beyond the model",
+                "cv": "error of each form on trips left out of the fit, kWh/100 km (lower is better); form 'hour' "
+                      "(p) is only taken when it is clearly better than 'km' (c)",
                 "trips": "cons = kwh/km*100 (none below 10 km); temp = outside C during the trip; stood_h = hours "
                          "since the trip before; model_cons = what the model expects; hvac_kw = mean heating/cooling "
                          "power of the hours the trip touches",
