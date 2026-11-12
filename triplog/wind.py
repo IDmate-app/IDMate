@@ -166,3 +166,16 @@ def points_near(db, lat, lon, radius_km):
             except ValueError:
                 pass
     return out
+
+
+def temp_at(db, lat, lon, t=None):
+    """Forecast outside temperature (°C) at a position for the hour that
+    contains t: the nearest stored raster point, or None when nothing is
+    stored there (yet) or the forecast does not reach that hour."""
+    t = t if t is not None else time.time()
+    pts = points_near(db, lat, lon, 0.0)
+    for p in sorted(pts, key=lambda p: _dist_km(lat, lon, p["lat"], p["lon"])):
+        w = at(p["data"], t)
+        if w and w.get("temp") is not None:
+            return float(w["temp"])
+    return None

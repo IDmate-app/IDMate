@@ -186,3 +186,38 @@ def test_export_and_dialog(app_module, db, monkeypatch):
     finally:
         app_module._state_cache.pop("dev1", None)
         bms._model_cache.clear()
+
+
+def test_before_setting_off_the_forecast_gives_the_temperature(app_module, db, monkeypatch):
+    """Standing, the car's sensor holds yesterday's value or the garage. The
+    temperature that comes with the wind forecast is used instead, so the
+    range before the trip already knows the weather."""
+    import blueprints.bms as bms
+    import config
+    import wind
+    lat, lon = wind.grid(54.0, 10.0, 0.0)[0]                             # a raster point: the car stands there
+    hour = int(time.time() // 3600) * 3600
+    data = {"t": [hour - 3600, hour, hour + 3600], "kmh": [10, 10, 10], "dir": [270, 270, 270],
+            "gust": [20, 20, 20], "temp": [1.0, -3.5, -4.0]}
+    db.execute("INSERT INTO wind_points (key, lat, lon, data, fetched) VALUES (?, ?, ?, ?, ?)",
+               (wind._key((lat, lon)), lat, lon, json.dumps(data), time.time()))
+    db.commit()
+    assert wind.temp_at(db, lat, lon) == -3.5 and wind.temp_at(db, lat, lon, hour + 3700) == -4.0
+    assert wind.temp_at(db, lat, lon, hour + 9 * 3600) is None            # the forecast ends before
+    assert wind.temp_at(db, -30.0, 100.0) is None                         # nothing stored there
+
+    monkeypatch.setattr(config, "WIND_SOURCE", "open-meteo")
+    app_module._state_cache["dev1"] = {"lat": lat, "lon": lon}
+    try:
+        garage = {"ext_temp": 14.0, "speed": 0}
+        assert bms._outside_temp(db, "dev1", garage, 9.0) == (-3.5, "forecast")       # stood over night
+        assert bms._outside_temp(db, "dev1", garage, None) == (-3.5, "forecast")      # no km for days
+        assert bms._outside_temp(db, "dev1", {"ext_temp": -2.0, "speed": 0}, 0.0) == (-2.0, "car")     # on a trip, at a light
+        assert bms._outside_temp(db, "dev1", {"ext_temp": -2.0, "speed": 80}, None) == (-2.0, "car")   # driving
+        monkeypatch.setattr(config, "WIND_SOURCE", "")
+        assert bms._outside_temp(db, "dev1", garage, 9.0) == (14.0, "car")            # no forecast set up
+        monkeypatch.setattr(config, "WIND_SOURCE", "open-meteo")
+        app_module._state_cache["dev1"] = {}
+        assert bms._outside_temp(db, "dev1", garage, 9.0) == (14.0, "car")            # position unknown
+    finally:
+        app_module._state_cache.pop("dev1", None)
