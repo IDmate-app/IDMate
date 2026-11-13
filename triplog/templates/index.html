@@ -498,7 +498,11 @@
           map.options.zoomSnap = 0.25;     // fill the map, not just half of it
           // the road area when there is one (it reaches further than the
           // circle where the roads are slow), else the circle
-          map.fitBounds(areaHere && areaBounds ? areaBounds : rangeOuter.getBounds(), {padding: [12, 12], animate: false});
+          // (the stored area may be from where the car was a few minutes
+          // ago: the car itself always belongs into the picture)
+          const frame = areaHere && areaBounds ? L.latLngBounds(areaBounds.getSouthWest(), areaBounds.getNorthEast()).extend(rangePos)
+                                                : rangeOuter.getBounds();
+          map.fitBounds(frame, {padding: [12, 12], animate: false});
           map.options.zoomSnap = snap;
           rangeFitKm = hi;
         } else {
@@ -508,6 +512,26 @@
       applyRangeVisibility();
     }
     window.updateRangeCircle = updateRangeCircle;
+    // The view fitted to the range sits on a quarter zoom step. Leaflet's
+    // panTo rounds the zoom to a whole step: the map jumped a few seconds
+    // after loading, and when it rounded up the area no longer fitted in.
+    function panKeepZoom(pos) {
+      const snap = map.options.zoomSnap;
+      map.options.zoomSnap = 0;
+      map.panTo(pos);
+      map.options.zoomSnap = snap;
+    }
+    // Follow the car — but not while the view shows the whole road area:
+    // that area is not centred on the car, moving the car into the middle
+    // pushed part of it off the map.
+    function followCar(pos) {
+      if (mapTouched) return;
+      if (rangeArea && areaBounds && rangeFitKm != null) {
+        if (!map.getBounds().contains(pos)) rangeFitKm = null;   // drove out of the picture: frame it anew
+        return;
+      }
+      panKeepZoom(pos);
+    }
     // New values (range, position) are picked up every 10 s even when no
     // live update arrives; unchanged values cost nothing.
     setInterval(() => updateRangeCircle(), 10000);
@@ -516,7 +540,7 @@
       if (typeof ferryOn !== 'undefined' && ferryOn) return;   // ferry view stays while switched on
       mapTouched = false; rangeFitKm = null;          // back to the normal view
       updateRangeCircle();
-      if (rangeFitKm == null && marker) map.panTo(marker.getLatLng());
+      if (rangeFitKm == null && marker) panKeepZoom(marker.getLatLng());
     }, 2000);
 
     // ── Road-based range area (own Valhalla) ──
@@ -1256,7 +1280,7 @@
           marker = L.marker(pos, {icon: icon, zIndexOffset: 1000}).addTo(map);
           map.setView(pos, 15, {animate: false});   // no zoom animation: it would undo the range fit below
         }
-        if (!mapTouched) map.panTo(pos);
+        followCar(pos);
         updateRangeCircle(pos, d.calc_range != null ? d.calc_range : d.range_km);
       }
 
