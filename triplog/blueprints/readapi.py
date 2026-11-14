@@ -24,16 +24,18 @@ import io
 import json
 import secrets
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
 from flask import Blueprint, abort, jsonify, redirect, request, session, url_for
 from flask_login import login_user
 
+import bms_learn as bl
 import detector
 import fahrzeugmodell as fm
 from app import (DisplayUser, _get_charge_efficiency, _is_rate_limited, _record_attempt,
-                 _vehicle_state, admin_required, get_db, log, qrcode)
+                 _vehicle_state, admin_required, get_bat_kwh, get_db, log, qrcode)
+from blueprints import bms
 
 API_VERSION = 1
 # Poll interval a client should use, seconds (drive / parked).
@@ -45,6 +47,11 @@ LIMIT_MAX = 100
 # music and messenger are the app's own and are neither delivered nor
 # switched from here.
 MODULES = ("dashboard",)
+# Energy model (/energy-model): speeds of the consumption table, and the
+# windows of "what the car really used lately".
+MODEL_SPEEDS = range(30, 161, 10)
+RECENT_H = 6
+AVERAGE_DAYS = 28
 
 # telegram field -> key of the dashboard state (app._vehicle_state).
 # range: IDmate's own figure, the one on the dashboard (energy left ÷ the
@@ -336,6 +343,63 @@ def charging():
             "power_avg": _num(r, "avg_kw", 1),
         }))
     return jsonify(_telegram(v["device"], "charge", {"items": items}))
+
+
+def _driven(trips, since):
+    """What the trips ended since then add up to: km, kWh/100 km and the
+    average speed over the time driven (standing between trips is not in
+    it). None below a distance that says something."""
+    rows = []
+    for t in trips:
+        t0, t1 = bms._utc(t["start"]), bms._utc(t["end"])
+        if t0 and t1 and t1 >= since and t1 > t0:
+            rows.append((t["km"], t["kwh"], (t1 - t0).total_seconds() / 3600))
+    km, kwh, hours = (sum(r[i] for r in rows) for i in range(3))
+    if km < bl.DRIVE_MIN_KM or not hours:
+        return None
+    return {"distance": round(km, 1), "consumption": round(kwh / km * 100, 1), "speed": round(km / hours)}
+
+
+def _energy_model(db, v):
+    """The vehicle's own consumption model, the one the range on the
+    dashboard and the range area on the map are computed with (bms_learn):
+    kWh/100 km by speed at the outside temperature of now, fitted on the
+    trips of the last year. Speed means the average actually driven over a
+    stretch — the model learns from trip averages."""
+    device = v["device"]
+    now = datetime.now(timezone.utc)
+    trips = bms._trips(db, device)
+    model = bms._model(device, trips)
+    out = {"capacity": bms._r1(get_bat_kwh(db, device, datetime.now().isoformat()))}
+    for key, window, span in (("recent", timedelta(hours=RECENT_H), {"hours": RECENT_H}),
+                              ("average", timedelta(days=AVERAGE_DAYS), {"days": AVERAGE_DAYS})):
+        d = _driven(trips, now - window)
+        if d:
+            out[key] = {**span, **d}
+    if not model:                    # too few trips yet (bms_learn.FIT_MIN_*)
+        return _clean(out)
+    live = bms._live(device)
+    parked_h = bl.trip_context(bms._series(device), now.timestamp())["parked_h"]
+    temp, _src = bms._outside_temp(db, device, live, parked_h)
+    out["t_ext"] = bms._r1(temp)
+    out["consumption"] = [{"v": s, "kwh100": round(bl.consumption(model, s, temp), 1)} for s in MODEL_SPEEDS]
+    if model.get("e_start"):
+        out["start"] = round(model["e_start"], 2)
+    fast = [t["v"] for t in trips if t.get("v") and t["km"] >= bl.FRESH_TRIP_KM]
+    out["basis"] = _clean({"trips": model["n"], "distance": round(model["km"]),
+                           "speed_max": round(max(fast)) if fast else None})
+    return _clean(out)
+
+
+@readapi_bp.route("/energy-model")
+def energy_model():
+    db = get_db()
+    v = _vehicle_for_request(db)
+    try:
+        data = _energy_model(db, v)
+    finally:
+        db.close()
+    return jsonify(_telegram(v["device"], "energy_model", data))
 
 
 @readapi_bp.route("/display")

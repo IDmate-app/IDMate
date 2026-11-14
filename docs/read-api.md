@@ -38,6 +38,7 @@ QR content (JSON):
 | `GET /api/v1/status` | telegram `status`: latest state |
 | `GET /api/v1/trips?limit=n` | telegram `trip`: the last *n* trips (default 10, at most 100) |
 | `GET /api/v1/charging?limit=n` | telegram `charge`: the last *n* charges |
+| `GET /api/v1/energy-model` | telegram `energy_model`: the vehicle's own consumption by speed |
 
 | `GET /api/v1/display` | opens a **display session** and redirects to the dashboard, which then shows only its map (see below) |
 
@@ -94,6 +95,37 @@ charges), newest first; the first item is the last charge. `energy` is the grid 
 or the receipt says, the figure the overview lists –, `energy_battery` what reached the battery
 (grid × charging efficiency). `dc` is false for a wallbox charge and, for an external one, follows
 its average power (above 22 kW); it is left out when no power is known.
+
+## Energy model
+
+`GET /api/v1/energy-model` gives the consumption model IDmate learned for this vehicle – the one the range
+on the dashboard and the range area on the map are computed with. It is fitted on the trips of the last
+year (one trip = one point: average speed, kWh/100 km, outside temperature). Fields the server does not
+know are left out; while the car has fewer than 20 usable trips there is no `consumption`.
+
+| Field | Unit | Meaning |
+|---|---|---|
+| `consumption` | list of `{"v": km/h, "kwh100": kWh/100 km}` | consumption of the warm car by speed, 30 to 160 km/h in steps of 10, at `t_ext`, heating included |
+| `t_ext` | °C | outside temperature `consumption` holds for: the car's sensor on the road; standing, the forecast at the car's place |
+| `capacity` | kWh | usable battery capacity as IDmate learned it from the charges |
+| `start` | kWh | energy of one start after standing long (measured on short trips) |
+| `recent` | `{"hours", "distance" km, "consumption" kWh/100 km, "speed" km/h}` | what the trips ended in the last 6 hours add up to; speed over the time driven |
+| `average` | same, with `"days"` | the same over the last 28 days |
+| `basis` | `{"trips", "distance" km, "speed_max" km/h}` | what the model rests on; `speed_max` is the fastest trip average measured, above it the curve is extrapolated |
+
+`v` is the average speed actually driven over a stretch, not the figure on the cruise control: the model
+learns from trip averages, and a motorway trip at 130 averages about 110. `recent` and `average` come from
+finished trips, so a trip in progress is not in them yet. A charging curve (`charge_curve`) is not served:
+IDmate does not evaluate the charging power by state of charge so far.
+
+```json
+{"v": 1, "src": "backend", "ts": "2026-11-14T09:12:40Z", "seq": 7, "type": "energy_model",
+ "data": {"capacity": 81.4, "t_ext": 5.0, "start": 0.3,
+          "consumption": [{"v": 30, "kwh100": 20.0}, {"v": 100, "kwh100": 24.3}, {"v": 130, "kwh100": 27.6}],
+          "recent": {"hours": 6, "distance": 120.0, "consumption": 21.7, "speed": 80},
+          "average": {"days": 28, "distance": 1250.0, "consumption": 19.8, "speed": 55},
+          "basis": {"trips": 240, "distance": 15200, "speed_max": 115}}}
+```
 
 ## Modules
 

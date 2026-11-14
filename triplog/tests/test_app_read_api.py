@@ -47,7 +47,7 @@ def test_off_by_default_everything_is_404(env):
     app_module, db, adm, vids = env
     anon = app_module.app.test_client()
     tok = _key(adm, vids[0])["token"]          # a key may exist, the API is still off
-    for path in ("health", "capabilities", "config", "status", "trips", "charging"):
+    for path in ("health", "capabilities", "config", "status", "trips", "charging", "energy-model"):
         assert anon.get(f"/api/v1/{path}", headers=_hdr(tok)).status_code == 404, path
 
 
@@ -364,3 +364,69 @@ def test_stored_http_guess_of_this_host_does_not_reach_the_qr_code(env):
     # the field carries the entry, the placeholder the address in use
     page = adm.get("/admin").get_data(as_text=True)
     assert "readApiData.url_saved || ''" in page and ".placeholder = readApiData.url" in page
+
+
+def test_energy_model_is_the_vehicles_own_consumption_by_speed(env, monkeypatch):
+    """/energy-model: what the range on the dashboard is computed with —
+    kWh/100 km by speed at the outside temperature of now, capacity, the
+    energy of a cold start, and what the car really used lately."""
+    from datetime import datetime, timedelta
+    import bms_learn as bl
+    from blueprints import bms
+    app_module, db, adm, vids = env
+    adm.post("/api/admin/read-api", json={"enabled": True})
+    tok = _key(adm, vids[0])["token"]
+    anon = app_module.app.test_client()
+    monkeypatch.setattr(bms, "_series", lambda device, hours=36: [])
+    monkeypatch.setattr(bms, "_hourly", lambda device, field="et": {})
+    bms._model_cache.clear()
+    monkeypatch.setattr(app_module, "get_bat_kwh", lambda *a, **k: 81.44)
+    import blueprints.readapi as readapi
+    monkeypatch.setattr(readapi, "get_bat_kwh", lambda *a, **k: 81.44)
+
+    # nothing learned yet: the capacity, and nothing made up
+    d = anon.get("/api/v1/energy-model", headers=_hdr(tok)).get_json()
+    assert d["type"] == "energy_model" and d["data"] == {"capacity": 81.4}
+
+    # a year of trips that follow 15 + 5·(v/100)² + 0.4·(15 − T) kWh/100 km
+    now = datetime.now().replace(microsecond=0)
+    n = 0
+    for day in range(2, 122):
+        v = (35, 60, 85, 110, 125)[day % 5]
+        temp = (-2, 4, 9, 14, 21)[(day // 5) % 5]
+        km = (18, 40, 75, 140, 60)[day % 5]
+        cons = 15 + 5 * (v / 100) ** 2 + 0.4 * max(0, 15 - temp)
+        start = now - timedelta(days=day, hours=3)
+        db.execute("INSERT INTO trips (device, start_time, end_time, distance_km, energy_kwh, temp_c) "
+                   "VALUES ('dev1', ?, ?, ?, ?, ?)",
+                   (start.isoformat(), (start + timedelta(hours=km / v)).isoformat(), km,
+                    round(km * cons / 100, 3), temp))
+        n += 1
+    # this morning: 100 km in one hour, 22 kWh; and 20 km in half an hour, 4 kWh
+    for back, hours, km, kwh in ((4, 1.0, 100, 22.0), (2, 0.5, 20, 4.0)):
+        start = now - timedelta(hours=back)
+        db.execute("INSERT INTO trips (device, start_time, end_time, distance_km, energy_kwh, temp_c) "
+                   "VALUES ('dev1', ?, ?, ?, ?, 5)",
+                   (start.isoformat(), (start + timedelta(hours=hours)).isoformat(), km, kwh))
+    db.commit()
+    with app_module._state_lock:
+        app_module._state_cache["dev1"]["ext_temp"] = 5.0
+    d = anon.get("/api/v1/energy-model", headers=_hdr(tok)).get_json()["data"]
+    assert d["capacity"] == 81.4 and d["t_ext"] == 5.0
+    table = {p["v"]: p["kwh100"] for p in d["consumption"]}
+    assert list(table) == list(range(30, 161, 10))
+    for v in (30, 80, 130, 160):                        # the law the trips were made with, at 5 °C
+        assert abs(table[v] - (15 + 5 * (v / 100) ** 2 + 0.4 * 10)) < 0.6
+    assert d["recent"] == {"hours": 6, "distance": 120.0, "consumption": 21.7, "speed": 80}
+    assert d["average"]["days"] == 28 and d["average"]["distance"] > 120
+    assert d["basis"]["trips"] >= 100 and d["basis"]["speed_max"] == 125
+    assert "charge_curve" not in d                       # not measured by IDmate (yet): left out
+    # warmer outside: the same car needs less
+    with app_module._state_lock:
+        app_module._state_cache["dev1"]["ext_temp"] = 20.0
+    warm = anon.get("/api/v1/energy-model", headers=_hdr(tok)).get_json()["data"]
+    assert warm["consumption"][5]["kwh100"] < d["consumption"][5]["kwh100"] - 3
+    # the other vehicle's token gets the other vehicle
+    tok2 = _key(adm, vids[1])["token"]
+    assert "consumption" not in anon.get("/api/v1/energy-model", headers=_hdr(tok2)).get_json()["data"]
+    bms._model_cache.clear()
