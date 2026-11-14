@@ -189,8 +189,9 @@ def test_trips_and_charging_of_the_vehicle_only_in_utc(env):
         db.execute("INSERT INTO trips (device, start_time, end_time, distance_km, soc_start, soc_end, "
                    "end_address, note) VALUES (?, ?, ?, 12.34, 80, 75, 'Ziel', 'privat')",
                    (dev, start, start.replace("10:00", "10:30")))
-    db.execute("INSERT INTO charges (device, start_time, end_time, type, energy_kwh) "
-               "VALUES ('dev1', '2026-07-01T12:00:00', '2026-07-01T12:20:00', 'dc', 31.456)")
+    db.execute("INSERT INTO charge_sessions (vehicle_plate, is_external, start_time, end_time, total_kwh, "
+               "avg_kw, cost_total) VALUES ('A-1', 1, '2026-07-01T12:00:00', '2026-07-01T12:20:00', "
+               "31.456, 94.0, 18.5)")
     db.commit()
     anon = app_module.app.test_client()
     t = anon.get("/api/v1/trips?limit=1", headers=_hdr(tok)).get_json()
@@ -202,6 +203,42 @@ def test_trips_and_charging_of_the_vehicle_only_in_utc(env):
     c = anon.get("/api/v1/charging", headers=_hdr(tok)).get_json()
     assert c["type"] == "charge"
     assert c["data"]["items"][0]["dc"] is True and c["data"]["items"][0]["energy"] == 31.46
+
+
+def test_charging_is_the_charge_book_not_the_detectors_raw_table(env):
+    """The app showed another last charge and another energy than IDmate: the
+    endpoint read the detector's table (charges), the pages read the charge
+    book (charge_sessions). Now the book: wallbox meter and receipts, newest
+    first, grid and battery side, of this vehicle only."""
+    app_module, db, adm, vids = env
+    adm.post("/api/admin/read-api", json={"enabled": True})
+    tok = _key(adm, vids[0])["token"]
+    db.execute("UPDATE vehicles SET charge_efficiency = 0.9 WHERE plate = 'A-1'")
+    # what the detector saw: the same evening in two pieces, without the meter
+    db.execute("INSERT INTO charges (device, start_time, end_time, type, energy_kwh) VALUES "
+               "('dev1', '2026-07-05T18:00:00', '2026-07-05T19:00:00', 'ac', 9.1), "
+               "('dev1', '2026-07-05T21:00:00', '2026-07-05T23:00:00', 'ac', 17.3)")
+    cols = ("vehicle_plate, is_external, session_number, start_time, end_time, total_kwh, avg_kw, "
+            "soc_start, soc_end, location_name, cost_total, note")
+    db.execute(f"INSERT INTO charge_sessions ({cols}) VALUES "
+               "('A-1', 0, '41', '2026-07-05T18:00:00', '2026-07-05T23:00:00', 30.0, 6.0, 40, 78, "
+               "'Zuhause', NULL, 'privat'), "
+               "('A-1', 1, NULL, '2026-07-03T09:00:00', '2026-07-03T09:25:00', 42.0, 100.8, 12, 60, "
+               "'Schnelllader', 24.78, NULL), "
+               "('A-1', 1, NULL, '2026-07-02T09:00:00', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL), "
+               "('A-2', 0, '7', '2026-07-06T18:00:00', '2026-07-06T20:00:00', 11.0, 5.5, 50, 64, "
+               "'Zuhause', NULL, NULL)")
+    db.commit()
+    anon = app_module.app.test_client()
+    items = anon.get("/api/v1/charging", headers=_hdr(tok)).get_json()["data"]["items"]
+    assert [i["start"][:10] for i in items] == ["2026-07-05", "2026-07-03", "2026-07-02"]   # A-1 only
+    last = items[0]
+    assert last["energy"] == 30.0 and last["energy_battery"] == 27.0        # meter / into the battery
+    assert last["dc"] is False and last["at"] == "Zuhause"
+    assert last["soc_start"] == 40 and last["soc_end"] == 78 and last["power_avg"] == 6.0
+    assert last["end"].endswith("Z") and "note" not in last and "power_max" not in last
+    assert items[1]["dc"] is True and items[1]["energy"] == 42.0
+    assert set(items[2]) == {"id", "start"}                                   # nothing known: nothing sent
 
 
 def test_wrong_tokens_are_rate_limited(env):

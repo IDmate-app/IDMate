@@ -31,8 +31,9 @@ from flask import Blueprint, abort, jsonify, redirect, request, session, url_for
 from flask_login import login_user
 
 import detector
-from app import (DisplayUser, _is_rate_limited, _record_attempt, _vehicle_state, admin_required,
-                 get_db, log, qrcode)
+import fahrzeugmodell as fm
+from app import (DisplayUser, _get_charge_efficiency, _is_rate_limited, _record_attempt,
+                 _vehicle_state, admin_required, get_db, log, qrcode)
 
 API_VERSION = 1
 # Poll interval a client should use, seconds (drive / parked).
@@ -301,19 +302,39 @@ def trips():
 
 @readapi_bp.route("/charging")
 def charging():
+    """The vehicle's charges as the charge overview shows them: the charge
+    book (charge_sessions — wallbox meter, receipts, imports, detected
+    external charges). Not the detector's raw table (charges): that one knows
+    no wallbox meter and no receipt, splits a charge at every pause and is
+    shown nowhere in IDmate, so a client read other charges and other
+    energies than the pages do.
+    energy is the grid side (metered or billed, what the overview lists),
+    energy_battery what reached the battery (energy book)."""
     db = get_db()
     v = _vehicle_for_request(db)
     rows = db.execute(
-        "SELECT id, start_time, end_time, address, type, soc_start, soc_end, energy_kwh, "
-        "max_power_kw FROM charges WHERE device = ? ORDER BY start_time DESC LIMIT ?",
-        (v["device"], _limit())).fetchall()
+        "SELECT id, session_number, is_external, start_time, end_time, total_kwh, avg_kw, "
+        "soc_start, soc_end, location_name, cost_total, note FROM charge_sessions "
+        "WHERE vehicle_plate = ? ORDER BY datetime(start_time) DESC LIMIT ?",
+        (v["plate"], _limit())).fetchall()
+    eff_ac = _get_charge_efficiency(db, v["plate"])
+    eff_dc = _get_charge_efficiency(db, v["plate"], dc=True)
     db.close()
-    items = [_clean({
-        "id": r["id"], "start": _utc(r["start_time"]), "end": _utc(r["end_time"]),
-        "at": r["address"], "dc": (r["type"] == "dc") if r["type"] else None,
-        "soc_start": _num(r, "soc_start", 1), "soc_end": _num(r, "soc_end", 1),
-        "energy": _num(r, "energy_kwh", 2), "power_max": _num(r, "max_power_kw", 1),
-    }) for r in rows]
+    items = []
+    for r in rows:
+        s = dict(r)
+        e = fm.session_energy(s, eff_ac, eff_dc) or {}
+        # A wallbox charge is AC; an external one counts as DC by its power,
+        # and without a power nobody knows.
+        dc = False if not s["is_external"] else (fm.is_dc(s) if s["avg_kw"] is not None else None)
+        items.append(_clean({
+            "id": s["id"], "start": _utc(s["start_time"]), "end": _utc(s["end_time"]),
+            "at": s["location_name"], "dc": dc,
+            "soc_start": _num(r, "soc_start", 1), "soc_end": _num(r, "soc_end", 1),
+            "energy": round(e["grid"], 2) if e.get("grid") else None,
+            "energy_battery": round(e["batt"], 2) if e.get("batt") else None,
+            "power_avg": _num(r, "avg_kw", 1),
+        }))
     return jsonify(_telegram(v["device"], "charge", {"items": items}))
 
 

@@ -86,7 +86,14 @@ One envelope for every source a client may have (stick, OBD dongle, backend, car
 
 Trip items: `id`, `start`, `end`, `from`, `to`, `distance` (km), `soc_start`, `soc_end`, `energy` (kWh),
 `consumption` (kWh/100 km). Charge items: `id`, `start`, `end`, `at`, `dc`, `soc_start`, `soc_end`,
-`energy` (kWh), `power_max` (kW). Logbook details (purpose, destination, notes) are not served.
+`energy` (kWh), `energy_battery` (kWh), `power_avg` (kW). Logbook details (purpose, destination, notes)
+are not served.
+
+The charges are those of the charge overview (wallbox meter, receipts, imports, detected external
+charges), newest first; the first item is the last charge. `energy` is the grid side – what the meter
+or the receipt says, the figure the overview lists –, `energy_battery` what reached the battery
+(grid × charging efficiency). `dc` is false for a wallbox charge and, for an external one, follows
+its average power (above 22 kW); it is left out when no power is known.
 
 ## Modules
 
