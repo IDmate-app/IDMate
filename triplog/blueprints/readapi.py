@@ -357,20 +357,35 @@ def display():
 
 # ── Admin ─────────────────────────────────────────────────────────────────────
 
-def _base_url(db):
-    """The address that goes into the QR code: the one entered, else the one
-    this admin page is open at. Behind a reverse proxy that does not pass the
-    protocol on (X-Forwarded-Proto), the server sees http for an https page;
-    the browser knows better, so its Origin / Referer decides when it names
-    this very host."""
-    saved = _setting(db, "read_api_url")
-    if saved:
-        return saved
+def _own_url():
+    """The address this admin page is open at. Behind a reverse proxy that
+    does not pass the protocol on (X-Forwarded-Proto), the server sees http
+    for an https page; the browser knows better, so its Origin / Referer
+    decides when it names this very host."""
     for header in ("Origin", "Referer"):
         u = urlsplit(request.headers.get(header) or "")
         if u.scheme in ("http", "https") and u.netloc == request.host:
             return f"{u.scheme}://{u.netloc}"
     return f"{request.scheme}://{request.host}"
+
+
+def _saved_url(db):
+    """The address somebody entered, "" for none. Up to 1.2.339 the page sent
+    the address it showed along with the on/off switch, so the server's own
+    guess got stored as if entered — behind such a proxy "http://<host>" for a
+    page that is https. That value is nobody's entry: http for this very host
+    while the browser is here over https counts as not entered."""
+    saved = _setting(db, "read_api_url") or ""
+    u = urlsplit(saved)
+    if u.scheme == "http" and u.netloc == request.host and _own_url().startswith("https://"):
+        return ""
+    return saved
+
+
+def _base_url(db):
+    """The address that goes into the QR code: the one entered, else the one
+    this admin page is open at."""
+    return _saved_url(db) or _own_url()
 
 
 def _qr_png_b64(text):
@@ -392,6 +407,7 @@ def admin_get():
     out = {
         "enabled": _enabled(db),
         "url": _base_url(db),
+        "url_saved": _saved_url(db),
         "vehicles": [{
             "id": r["id"], "name": r["name"] or r["plate"], "plate": r["plate"],
             "device": r["device"], "has_key": r["key_id"] is not None,
@@ -414,7 +430,7 @@ def admin_save():
     if "url" in data:
         _set_setting(db, "read_api_url", str(data.get("url") or "").strip().rstrip("/"))
     db.commit()
-    out = {"ok": True, "enabled": _enabled(db), "url": _base_url(db)}
+    out = {"ok": True, "enabled": _enabled(db), "url": _base_url(db), "url_saved": _saved_url(db)}
     db.close()
     return jsonify(out)
 

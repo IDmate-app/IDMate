@@ -1741,7 +1741,11 @@
       } catch (e) { return; }
       document.getElementById('readApiEnabled').checked = !!readApiData.enabled;
       document.getElementById('readApiBody').style.display = readApiData.enabled ? '' : 'none';
-      document.getElementById('readApiUrl').value = readApiData.url || '';
+      // The field holds what somebody entered only; the address in use without
+      // an entry is the placeholder. Filled with it, the switch above stored
+      // the server's guess (http behind a proxy) as if it were entered.
+      document.getElementById('readApiUrl').value = readApiData.url_saved || '';
+      document.getElementById('readApiUrl').placeholder = readApiData.url || 'https://idmate.example';
       const box = document.getElementById('readApiVehicles');
       box.textContent = '';
       (readApiData.vehicles || []).forEach(v => {

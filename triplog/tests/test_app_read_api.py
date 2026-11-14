@@ -342,3 +342,25 @@ def test_address_for_the_qr_code_is_the_one_the_browser_uses(env):
     # an address typed in wins over everything
     adm.post("/api/admin/read-api", json={"url": "https://car.example/"})
     assert seen(Referer="https://localhost/admin") == "https://car.example"
+
+
+def test_stored_http_guess_of_this_host_does_not_reach_the_qr_code(env):
+    """Up to 1.2.339 switching the API on stored the address the page showed —
+    the server's guess, http behind a proxy without X-Forwarded-Proto. From
+    then on every QR code carried http://, which an Android app does not
+    open. Such a value counts as not entered; the page no longer sends it."""
+    app_module, db, adm, vids = env
+    https = {"Origin": "https://localhost"}
+    adm.post("/api/admin/read-api", json={"enabled": True, "url": "http://localhost"})   # the old page
+    got = adm.get("/api/admin/read-api", headers=https).get_json()
+    assert got["url"] == "https://localhost" and got["url_saved"] == ""
+    out = adm.post(f"/api/admin/read-api/{vids[0]}/key", json={}, headers=https).get_json()
+    assert out["url"] == "https://localhost/api/v1"
+    # somebody who is on http has it as before, and another host entered stays
+    assert adm.get("/api/admin/read-api").get_json()["url_saved"] == "http://localhost"
+    adm.post("/api/admin/read-api", json={"url": "http://192.168.0.9:5000"})
+    got = adm.get("/api/admin/read-api", headers=https).get_json()
+    assert got["url"] == got["url_saved"] == "http://192.168.0.9:5000"
+    # the field carries the entry, the placeholder the address in use
+    page = adm.get("/admin").get_data(as_text=True)
+    assert "readApiData.url_saved || ''" in page and ".placeholder = readApiData.url" in page
