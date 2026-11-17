@@ -1937,6 +1937,24 @@ def _range_area_vehicle(db, v):
     return range_area.render_if_due(db, v["device"], lat, lon, kms, dirs=dirs, field_fn=field_fn)
 
 
+def _trip_rain_loop():
+    """Rain on the trips (trip_rain.py, L-003): a few minutes after the start,
+    then once a day — the weather archive is a few days behind."""
+    time.sleep(300)
+    while True:
+        try:
+            import detector
+            import trip_rain
+            db = get_db()
+            try:
+                trip_rain.run(db, detector.LOCAL_TZ)
+            finally:
+                db.close()
+        except Exception as e:
+            log.warning("trip rain: %s", e, exc_info=True)
+        time.sleep(86400)
+
+
 def _trip_temp_backfill():
     """TEST BUILD, once after the start: outside temperature from the
     weather archive for trips the car has no sensor value for (see
@@ -7199,6 +7217,7 @@ if __name__ == "__main__":
     threading.Thread(target=_state_poller, daemon=True).start()
     threading.Thread(target=_range_area_loop, name="range-area-loop", daemon=True).start()
     threading.Thread(target=_trip_temp_backfill, name="trip-temp-backfill", daemon=True).start()
+    threading.Thread(target=_trip_rain_loop, name="trip-rain", daemon=True).start()
     threading.Thread(target=background_mqtt, daemon=True).start()
     # journeys list pictures for anything missing (first run, rendering change)
     try:

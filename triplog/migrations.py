@@ -1081,6 +1081,18 @@ def m082_read_api(db, log):
         log.info("Migration: read_api_keys table created")
 
 
+def m083_trip_rain(db, log):
+    """Rain on a trip (L-003): mean precipitation in mm/h over the hours of the
+    trip at its start and end raster points, and the grade 0–3 (dry, light,
+    moderate, heavy), filled from the weather archive by trip_rain.py."""
+    cols = _cols(db, "trips")
+    if "rain_mmh" not in cols:
+        db.execute("ALTER TABLE trips ADD COLUMN rain_mmh REAL")
+    if "rain_level" not in cols:
+        db.execute("ALTER TABLE trips ADD COLUMN rain_level INTEGER")
+    log.info("Migration: trips.rain_mmh, trips.rain_level added")
+
+
 MIGRATIONS = [
     (1,  "trips_is_gpx",            m001_trips_is_gpx),
     (2,  "trips_odo",              m002_trips_odo),
@@ -1164,6 +1176,7 @@ MIGRATIONS = [
     (80, "bms_trip_context",       m080_bms_trip_context),
     (81, "trip_temp",              m081_trip_temp),
     (82, "read_api",               m082_read_api),
+    (83, "trip_rain",              m083_trip_rain),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

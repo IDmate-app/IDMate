@@ -68,7 +68,7 @@ def _fetch(points):
     q = urllib.parse.urlencode({
         "latitude": ",".join(f"{p[0]:.3f}" for p in points),
         "longitude": ",".join(f"{p[1]:.3f}" for p in points),
-        "hourly": "wind_speed_10m,wind_direction_10m,wind_gusts_10m,temperature_2m",
+        "hourly": "wind_speed_10m,wind_direction_10m,wind_gusts_10m,temperature_2m,precipitation",
         "wind_speed_unit": "kmh", "forecast_hours": HOURS,
         "timeformat": "unixtime", "timezone": "GMT"})
     req = urllib.request.Request(config.WIND_URL + "?" + q, headers={"User-Agent": "IDmate"})
@@ -81,6 +81,7 @@ def _fetch(points):
         out.append({"t": h.get("time") or [], "kmh": h.get("wind_speed_10m") or [],
                     "dir": h.get("wind_direction_10m") or [], "gust": h.get("wind_gusts_10m") or [],
                     "temp": h.get("temperature_2m") or [],
+                    "rain": h.get("precipitation") or [],        # mm in the hour (L-003, not used yet)
                     "elev": d.get("elevation")})          # terrain height of the point (m)
     return out
 
@@ -132,7 +133,8 @@ def at(d, t):
             try:
                 return {"kmh": d["kmh"][i], "dir": d["dir"][i],
                         "gust": d["gust"][i] if i < len(d["gust"]) else None,
-                        "temp": d["temp"][i] if i < len(d["temp"]) else None}
+                        "temp": d["temp"][i] if i < len(d["temp"]) else None,
+                        "rain": d["rain"][i] if i < len(d.get("rain") or []) else None}
             except (IndexError, KeyError):
                 return None
     return None
