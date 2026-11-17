@@ -1661,7 +1661,7 @@
   "dash_map_tools": "Map controls",
   "dash_map_full": "Full screen",
   "dash_map_exit": "Exit full screen",
-  "dash_map_center": "Center",
+  "dash_map_center": "Location (street level)",
   "dash_map_range": "Range on/off",
   "dash_map_wind": "Wind on/off",
   "dash_map_ferries": "Long ferries (search once)",

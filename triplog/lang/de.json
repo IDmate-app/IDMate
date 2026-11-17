@@ -1661,7 +1661,7 @@
   "dash_map_tools": "Kartensteuerung",
   "dash_map_full": "Vollbild",
   "dash_map_exit": "Vollbild beenden",
-  "dash_map_center": "Zentrieren",
+  "dash_map_center": "Standort (Straßenebene)",
   "dash_map_range": "Reichweite ein/aus",
   "dash_map_wind": "Wind ein/aus",
   "dash_map_ferries": "Lange Fähren (einmalig suchen)",
