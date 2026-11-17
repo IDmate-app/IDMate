@@ -32,7 +32,6 @@ src/
 .idea/
 
 # AI assistant / IDE configs
-.claude/
 
 # Python
 __pycache__/
