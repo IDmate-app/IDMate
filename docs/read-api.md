@@ -39,6 +39,7 @@ QR content (JSON):
 | `GET /api/v1/trips?limit=n` | telegram `trip`: the last *n* trips (default 10, at most 100) |
 | `GET /api/v1/charging?limit=n` | telegram `charge`: the last *n* charges |
 | `GET /api/v1/energy-model` | telegram `energy_model`: the vehicle's own consumption by speed |
+| `GET /api/v1/rain` | telegram `rain`: rain around the vehicle's range, an hour back and two hours ahead (see below) |
 
 | `GET /api/v1/display` | opens a **display session** and redirects to the dashboard, which then shows only its map (see below) |
 
@@ -126,6 +127,39 @@ IDmate does not evaluate the charging power by state of charge so far.
           "average": {"days": 28, "distance": 1250.0, "consumption": 19.8, "speed": 55},
           "basis": {"trips": 240, "distance": 15200, "speed_max": 115}}}
 ```
+
+## Rain
+
+`GET /api/v1/rain` gives the rain layer of the dashboard map as data: the same area as the wind arrows
+(the vehicle's range plus 50 km), the same raster the map draws and the range uses. Two radar sources
+are folded into it – the Deutscher Wetterdienst (German composite, every 5 minutes, with a two-hour
+nowcast) and, where that has no data, RainViewer (worldwide, the last two hours, no nowcast). Which source
+a cell came from makes no difference.
+
+| Field | Meaning |
+|---|---|
+| `cell_km` | size of a raster cell in km (5). Rows every `cell_km` in latitude, columns every `cell_km` along each row – fixed on the globe |
+| `radius` | km around the vehicle the raster covers |
+| `levels` | meaning of the grades: `1` light (0.1–1 mm/h), `2` moderate (1–5 mm/h), `3` heavy (over 5 mm/h) |
+| `frames` | one per time step (15 min), oldest first |
+| `frames[].t` | time of the radar picture, UTC |
+| `frames[].kind` | `past`, `now` (the newest measured picture) or `forecast` |
+| `frames[].src` | sources in this frame: `dwd`, `rainviewer` |
+| `frames[].cells` | cells with rain only, as `[lat, lon, level]` (cell centre); dry cells are left out |
+
+`frames` is empty while the rain layer is off on the server, the vehicle has no range area yet, or the
+first raster is still being worked out (a few seconds – ask again). Forecast frames only cover the area
+of the German composite.
+
+```json
+{"v": 1, "src": "backend", "ts": "2026-11-17T23:41:00Z", "seq": 12, "type": "rain",
+ "data": {"cell_km": 5.0, "radius": 350,
+          "levels": {"1": "light, 0.1–1 mm/h", "2": "moderate, 1–5 mm/h", "3": "heavy, over 5 mm/h"},
+          "frames": [{"t": "2026-11-17T23:40:00Z", "kind": "now", "src": ["dwd", "rainviewer"],
+                      "cells": [[53.5162, 9.9848, 1], [53.5612, 10.0606, 2]]}]}}
+```
+
+Radar data: Deutscher Wetterdienst (dwd.de, GeoNutzV), RainViewer (rainviewer.com).
 
 ## Modules
 

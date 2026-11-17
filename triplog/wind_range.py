@@ -33,6 +33,16 @@ KY = 110.57              # km per degree latitude
 KX0 = 111.32             # km per degree longitude at the equator
 
 
+def _rain(lat, lon, t):
+    """Rain grade at a place and time from the radar raster (rain_radar), the
+    same for both sources; None without data."""
+    try:
+        import rain_radar
+        return rain_radar.level_at(lat, lon, t)
+    except Exception:
+        return None
+
+
 def bearings():
     return [i * 360.0 / N_DIRS for i in range(N_DIRS)]
 
@@ -92,6 +102,8 @@ def direction_ranges(remaining_kwh, model, temp_now, v_kmh, lat0, lon0, points, 
                     if w.get("temp") is not None:
                         temp = w["temp"]
             cons = bl.consumption(model, v_kmh, temp, v_air=v_kmh - along)   # tail wind: less air speed
+            if model.get("rain"):
+                cons += bl.rain_extra(model, _rain(*_ll(lat0, lon0, x, y), t))
             need = max(cons, 5.0) * STEP_KM / 100
             h = data.get("elev") if pts else None
             if h is not None and h_prev is not None and h != h_prev:
@@ -529,6 +541,8 @@ def range_along_route(remaining_kwh, model, temp_now, prof, points, now, v_fixed
                 temp = w["temp"]
         t += STEP_KM / max(v, 5.0) * 3600 / 2
         cons = bl.consumption(model, v, temp, v_air=v - along)
+        if model.get("rain"):
+            cons += bl.rain_extra(model, _rain(lat, lon, t))
         need = max(cons, 5.0) * STEP_KM / 100
         h = height(min(mid + STEP_KM / 2, prof["km"]), lat, lon)
         if h is not None and h_prev is not None and h != h_prev:

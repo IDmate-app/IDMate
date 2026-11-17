@@ -1713,6 +1713,11 @@ def _map_boot(device):
     page: both are on the map at once, no waiting for the first fetch."""
     out = {"area": None, "wind": None, "valhalla": bool(config.VALHALLA_URL),
            "ferries": bool(config.VALHALLA_URL) and _ferries_enabled()}
+    try:
+        import rain_radar
+        out["rain"] = rain_radar.enabled()
+    except Exception:
+        out["rain"] = False
     if not config.VALHALLA_URL:
         return out
     try:
@@ -1837,6 +1842,27 @@ def wind_now():
     return jsonify({"status": "ok", "points": pts})
 
 
+@app.route("/api/rain")
+def rain_now():
+    """Rain raster (rain_radar.py) on the area of the wind arrows: frames from
+    an hour ago to two hours ahead. "pending" → ask again in a few seconds."""
+    import range_area
+    import rain_radar
+    if not rain_radar.enabled():
+        return jsonify({"status": "off"})
+    db = get_db()
+    try:
+        rec = range_area.load_last(db, active_device())
+    finally:
+        db.close()
+    if not rec:
+        return jsonify({"status": "none"})
+    res = rain_radar.area(rec["lat"], rec["lon"], max(rec["kms"]))
+    if res is None:
+        return jsonify({"status": "pending"})
+    return jsonify({"status": "ok", **rain_radar.public(res)})
+
+
 @app.route("/api/ferries/start", methods=["POST"])
 def ferries_start():
     """Map button "Fähren": search long ferries once (background), see
@@ -1916,6 +1942,11 @@ def _range_area_vehicle(db, v):
         import wind
         wind.ensure(db, lat, lon, max(kms))
         pts_w = wind.points_near(db, lat, lon, max(kms) * 1.6)
+    try:
+        import rain_radar
+        rain_radar.area(lat, lon, max(kms))      # keeps the rain raster fresh (background) for the range
+    except Exception as e:
+        log.warning("rain: %s", e)
     if cruise and cruise.get("model"):
         guess = wind_range.direction_ranges(cruise["left"], cruise["model"], cruise.get("temp"),
                                             cruise["v_eval"], lat, lon, pts_w, time.time())

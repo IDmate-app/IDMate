@@ -66,6 +66,20 @@
   .wind-ico svg{filter:drop-shadow(0 0 1.2px rgba(0,0,0,.55))}
   .wind-legend .ms{color:var(--text-3)}
   .map-col.map-max .wind-legend{left:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px))}
+  /* Rain legend with the time steps (only while the rain layer is on) */
+  .rain-legend{position:absolute;left:calc(0.8rem + 12px);top:12px;z-index:800;max-width:calc(100% - 0.8rem - 84px);
+    padding:7px 10px;border-radius:12px;border:1px solid var(--border);
+    background:color-mix(in srgb,var(--bg-card) 82%,transparent);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+    box-shadow:0 2px 8px rgba(0,0,0,.25);font-size:0.68rem;line-height:1.5;color:var(--text-2)}
+  .rain-legend b{color:var(--text-1);font-weight:600}
+  .rain-legend .row{display:flex;align-items:center;gap:6px;white-space:nowrap}
+  .rain-legend .sw{width:12px;height:12px;border-radius:3px;flex:0 0 12px}
+  .rain-legend .bar{display:flex;align-items:center;gap:4px;margin-top:4px}
+  .rain-legend .bar button{min-width:26px;height:24px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-1);cursor:pointer;padding:0 4px}
+  .rain-legend .bar input{flex:1;min-width:70px}
+  .rain-legend .when{font-variant-numeric:tabular-nums;color:var(--text-1);min-width:8.5em;text-align:center;white-space:nowrap}
+  .rain-legend .src{color:var(--text-3);font-size:0.62rem}
+  .map-col.map-max .rain-legend{left:12px;top:calc(12px + env(safe-area-inset-top,0px))}
   /* Full screen inside the app (works on iPhone too, no Fullscreen API needed) */
   .map-col.map-max{position:fixed;inset:0;z-index:2000;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0);background:var(--bg)}
   .map-col.map-max #map,.map-col.map-max .leaflet-container{border-radius:0;max-height:none;height:100%}
@@ -189,6 +203,18 @@
         <div class="row"><svg viewBox="-1 -1 22 22" aria-hidden="true"><path d="M10 1 L15.5 10 H12 V19 H8 V10 H4.5 Z" fill="#bc4c00" stroke="#fff" stroke-width="2.2" stroke-linejoin="round" paint-order="stroke"/></svg><span>30–45 km/h <span class="ms">· 8–12 m/s</span></span></div>
         <div class="row"><svg viewBox="-1 -1 22 22" aria-hidden="true"><path d="M10 1 L15.5 10 H12 V19 H8 V10 H4.5 Z" fill="#cf222e" stroke="#fff" stroke-width="2.2" stroke-linejoin="round" paint-order="stroke"/></svg><span>&gt; 45 km/h <span class="ms">· &gt; 12 m/s</span></span></div>
       </div>
+      <div class="rain-legend" id="rainLegend" hidden>
+        <b>{{ t.dash_rain }}</b>
+        <div class="row"><span class="sw" style="background:#9ecae1"></span><span>{{ t.dash_rain_1 }}</span></div>
+        <div class="row"><span class="sw" style="background:#4292c6"></span><span>{{ t.dash_rain_2 }}</span></div>
+        <div class="row"><span class="sw" style="background:#08519c"></span><span>{{ t.dash_rain_3 }}</span></div>
+        <div class="bar">
+          <button type="button" id="rainPlay" aria-label="{{ t.dash_rain_play }}" title="{{ t.dash_rain_play }}">&#9654;</button>
+          <input type="range" id="rainStep" min="0" max="0" value="0" aria-label="{{ t.dash_rain_time }}">
+          <span class="when" id="rainWhen"></span>
+        </div>
+        <div class="src" id="rainSrc"></div>
+      </div>
       <div class="map-ctl" role="toolbar" aria-label="{{ t.dash_map_tools }}">
         <button type="button" id="mapFull" title="{{ t.dash_map_full }}" aria-label="{{ t.dash_map_full }}" aria-pressed="false">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="ico-max" d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/><path class="ico-min" style="display:none" d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3"/></svg>
@@ -201,6 +227,9 @@
         </button>
         <button type="button" id="mapFerry" title="{{ t.dash_map_ferries }}" aria-label="{{ t.dash_map_ferries }}" aria-pressed="false" hidden>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20c1.5 1 3 1 4.5 0s3-1 4.5 0 3 1 4.5 0 3-1 4.5 0"/><path d="M4 17l-1-5h18l-2 5"/><path d="M7 12V8h10v4"/><path d="M12 8V4"/></svg>
+        </button>
+        <button type="button" id="mapRain" title="{{ t.dash_map_rain }}" aria-label="{{ t.dash_map_rain }}" aria-pressed="false" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 15a4 4 0 0 1-.6-7.96A5.5 5.5 0 0 1 17 7.5a3.75 3.75 0 0 1 .5 7.47"/><path d="M8 18l-1 3M12 17l-1.5 4.5M16 18l-1 3"/></svg>
         </button>
         <button type="button" id="mapWind" title="{{ t.dash_map_wind }}" aria-label="{{ t.dash_map_wind }}" aria-pressed="true" hidden>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10a3 3 0 1 0-3-3M3 12h15a3 3 0 1 1-3 3M3 16h7"/></svg>
@@ -740,6 +769,82 @@
     }
     map.on('zoomend', syncWindLayer);
 
+    // ── Rain radar (rain_radar.py): DWD and RainViewer as one raster of grades ──
+    // Same area as the wind arrows; steps of 15 min from an hour ago to two
+    // hours ahead (forecast only where the DWD composite reaches).
+    const RAIN_COLS = ['#9ecae1', '#4292c6', '#08519c'];
+    const RAIN_T = {now: {{ t.dash_rain_now | tojson }}, src: {{ t.dash_rain_src | tojson }},
+                    fc: {{ t.dash_rain_forecast | tojson }}, wait: {{ t.dash_rain_wait | tojson }}};
+    const rainLayer = L.layerGroup(), rainRenderer = L.canvas({padding: 0.3});
+    let rainHidden = !mapPref('rain', false), rainData = null, rainIdx = -1, rainPlay = null, rainPoll = null;
+    const rainStep = document.getElementById('rainStep');
+    function rainNowIdx() {
+      const fr = rainData ? rainData.frames : [];
+      const k = fr.findIndex(f => f.kind === 'now');
+      return k >= 0 ? k : fr.length - 1;
+    }
+    function drawRain() {
+      rainLayer.clearLayers();
+      const fr = rainData ? rainData.frames : [];
+      const when = document.getElementById('rainWhen'), src = document.getElementById('rainSrc');
+      if (!fr.length || rainIdx < 0) { when.textContent = RAIN_T.wait; src.textContent = ''; return; }
+      const f = fr[rainIdx], half = rainData.cell_km / 111.2 / 2;
+      f.cells.forEach(c => {
+        const hl = rainData.cell_km / (111.2 * Math.cos(c[0] * Math.PI / 180)) / 2;
+        L.rectangle([[c[0] - half, c[1] - hl], [c[0] + half, c[1] + hl]],
+          {renderer: rainRenderer, stroke: false, fillColor: RAIN_COLS[c[2] - 1], fillOpacity: 0.45, interactive: false}).addTo(rainLayer);
+      });
+      const m = Math.round((Date.parse(f.t) - Date.parse(fr[rainNowIdx()].t)) / 60000);
+      const hm = new Date(f.t).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+      when.textContent = m === 0 ? `${RAIN_T.now} ${hm}` : `${m > 0 ? '+' : '−'}${Math.abs(m)} min · ${hm}`;
+      src.textContent = RAIN_T.src + ' ' + f.src.map(s => s === 'dwd' ? 'DWD' : 'RainViewer').join(', ')
+        + (f.kind === 'forecast' ? ' · ' + RAIN_T.fc : '');
+      rainStep.value = rainIdx;
+    }
+    function syncRainLayer() {
+      const want = !rainHidden;
+      if (want && !map.hasLayer(rainLayer)) map.addLayer(rainLayer);
+      else if (!want && map.hasLayer(rainLayer)) map.removeLayer(rainLayer);
+      document.getElementById('rainLegend').hidden = !want;
+      document.getElementById('mapRain').setAttribute('aria-pressed', want ? 'true' : 'false');
+    }
+    function stopRainPlay() {
+      clearInterval(rainPlay); rainPlay = null;
+      document.getElementById('rainPlay').innerHTML = '&#9654;';
+    }
+    async function pollRain() {
+      if (rainHidden) return;
+      try {
+        const d = await (await fetch('/api/rain')).json();
+        if (d.status === 'off') { document.getElementById('mapRain').hidden = true; return; }
+        if (d.status === 'pending' || d.status === 'none') { setTimeout(pollRain, 5000); drawRain(); return; }
+        const keep = rainData && rainPlay;
+        rainData = d;
+        rainStep.max = Math.max(0, d.frames.length - 1);
+        if (!keep || rainIdx >= d.frames.length) rainIdx = rainNowIdx();
+        drawRain();
+      } catch (e) {}
+    }
+    document.getElementById('mapRain').addEventListener('click', () => {
+      rainHidden = !rainHidden; setMapPref('rain', !rainHidden); syncRainLayer();
+      if (rainHidden) { stopRainPlay(); clearInterval(rainPoll); rainPoll = null; return; }
+      pollRain();
+      if (!rainPoll) rainPoll = setInterval(pollRain, 60000);
+    });
+    rainStep.addEventListener('input', () => { stopRainPlay(); rainIdx = +rainStep.value; drawRain(); });
+    document.getElementById('rainPlay').addEventListener('click', () => {
+      if (rainPlay) { stopRainPlay(); return; }
+      if (!rainData || !rainData.frames.length) return;
+      document.getElementById('rainPlay').innerHTML = '&#10074;&#10074;';
+      rainPlay = setInterval(() => { rainIdx = (rainIdx + 1) % rainData.frames.length; drawRain(); }, 800);
+    });
+    function rainBoot() {
+      if (!MAP_BOOT.rain) return;
+      document.getElementById('mapRain').hidden = false;
+      syncRainLayer();
+      if (!rainHidden) { pollRain(); rainPoll = setInterval(pollRain, 60000); }
+    }
+
     // ── Map buttons ──
     const btnFull = document.getElementById('mapFull'), btnRange = document.getElementById('mapRange'),
           btnWind = document.getElementById('mapWind'), mapCol = document.querySelector('.map-col');
@@ -936,6 +1041,7 @@
 
     // after the whole script ran (labels T are defined further down)
     setTimeout(() => pollWind(true), 0);
+    setTimeout(rainBoot, 0);
     setInterval(pollWind, 60 * 1000);
     let locMarkers = [];
     let chargeLocMarkers = [];

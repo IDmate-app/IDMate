@@ -402,6 +402,23 @@ def energy_model():
     return jsonify(_telegram(v["device"], "energy_model", data))
 
 
+@readapi_bp.route("/rain")
+def rain():
+    """Rain raster around the vehicle's range (L-005, E-002): the same data as
+    the rain layer on the map — DWD and RainViewer folded into one raster of
+    grades. Empty frames while it is off, has no area yet or is still working."""
+    import range_area
+    import rain_radar
+    db = get_db()
+    v = _vehicle_for_request(db)
+    try:
+        rec = range_area.load_last(db, v["device"]) if rain_radar.enabled() else None
+    finally:
+        db.close()
+    res = rain_radar.area(rec["lat"], rec["lon"], max(rec["kms"])) if rec else None
+    return jsonify(_telegram(v["device"], "rain", rain_radar.public(res)))
+
+
 @readapi_bp.route("/display")
 def display():
     """The dashboard map for a display device: the original page, map only.

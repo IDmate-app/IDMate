@@ -529,6 +529,16 @@ def consumption(model, v, temp, v_air=None):
         + model.get("p", 0.0) * cold * 100.0 / max(v, HEAT_V_MIN)
 
 
+def rain_extra(model, level):
+    """Extra kWh/100 km in rain of a grade (rain_radar: 1 light, 2 moderate,
+    3 heavy), as learned from the trips (model["rain"] = {grade: kWh/100 km}).
+    Zero until the model has learned it (L-003: needs a few hundred trips
+    with trips.rain_level) — so the rain map does not change the range yet."""
+    if not level or not model:
+        return 0.0
+    return float((model.get("rain") or {}).get(level, (model.get("rain") or {}).get(str(level), 0.0)) or 0.0)
+
+
 def warmup_kwh(model, temp, stood_h):
     """Energy the next trip spends once on getting going: the more the
     longer the car stood (stood_h None: long). temp is not used: on the

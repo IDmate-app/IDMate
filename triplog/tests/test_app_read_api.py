@@ -430,3 +430,35 @@ def test_energy_model_is_the_vehicles_own_consumption_by_speed(env, monkeypatch)
     tok2 = _key(adm, vids[1])["token"]
     assert "consumption" not in anon.get("/api/v1/energy-model", headers=_hdr(tok2)).get_json()["data"]
     bms._model_cache.clear()
+
+
+def test_rain_is_the_raster_of_the_map(env, monkeypatch):
+    """/rain (L-005, E-002): the rain raster of the vehicle's range area in the
+    telegram envelope; empty frames while off or without an area."""
+    import config
+    import range_area
+    import rain_radar
+    app_module, db, adm, vids = env
+    adm.post("/api/admin/read-api", json={"enabled": True})
+    tok = _key(adm, vids[0])["token"]
+    anon = app_module.app.test_client()
+    monkeypatch.setattr(config, "RAIN_SOURCE", "")
+    d = anon.get("/api/v1/rain", headers=_hdr(tok)).get_json()
+    assert d["type"] == "rain" and d["data"]["frames"] == [] and d["data"]["cell_km"] == rain_radar.CELL_KM
+    assert anon.get("/api/v1/rain").status_code == 401
+
+    monkeypatch.setattr(config, "RAIN_SOURCE", "dwd")
+    asked = []
+    monkeypatch.setattr(range_area, "load_last",
+                        lambda db, dev: {"lat": 53.5, "lon": 10.0, "kms": [150, 200]} if dev == "dev1" else None)
+    fake = {"cell_km": 5.0, "radius": 250, "levels": rain_radar.LEVEL_TEXT, "_center": (53.5, 10.0),
+            "frames": [{"t": "2026-11-17T23:40:00Z", "kind": "now", "src": ["dwd"],
+                        "cells": [[53.5162, 9.9848, 2]], "_known": {}, "_ts": 0},
+                       {"t": "2026-11-17T23:55:00Z", "kind": "forecast", "src": [], "cells": [],
+                        "_known": {}, "_ts": 0}]}
+    monkeypatch.setattr(rain_radar, "area", lambda la, lo, km, **k: asked.append((la, lo, km)) or fake)
+    d = anon.get("/api/v1/rain", headers=_hdr(tok)).get_json()["data"]
+    assert asked == [(53.5, 10.0, 200)]
+    assert d["frames"] == [{"t": "2026-11-17T23:40:00Z", "kind": "now", "src": ["dwd"],
+                            "cells": [[53.5162, 9.9848, 2]]}]          # frames without data left out
+    assert d["radius"] == 250 and d["levels"]["2"]

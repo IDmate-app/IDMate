@@ -1,6 +1,6 @@
 import os
 
-VERSION = "1.2.343"
+VERSION = "1.2.344"
 # Projektseite, steht in den Fusszeilen der Ausdrucke
 REPO_URL = "github.com/IDmate-app/IDMate"
 # Stick firmware (IDTelemetry): the dashboard says when a newer release exists.
@@ -40,6 +40,12 @@ VALHALLA_URL = os.environ.get("VALHALLA_URL", "").strip().rstrip("/")
 # fixed raster points of the region around the car, never its position.
 WIND_SOURCE = os.environ.get("WIND_SOURCE", "").strip().lower()
 WIND_URL = os.environ.get("WIND_URL", "https://api.open-meteo.com/v1/forecast").strip()
+# Rain radar on the map, for the range and the read API (rain_radar.py): DWD first,
+# RainViewer where the DWD composite has nothing. On with the weather (WIND_SOURCE)
+# unless set; "" switches it off.
+RAIN_SOURCE = os.environ.get("RAIN_SOURCE", "dwd,rainviewer" if WIND_SOURCE else "").strip().lower()
+RAIN_DWD_URL = os.environ.get("RAIN_DWD_URL", "https://maps.dwd.de/geoserver/dwd/wms").strip()
+RAIN_RV_URL = os.environ.get("RAIN_RV_URL", "https://api.rainviewer.com/public/weather-maps.json").strip()
 # Vehicle mass incl. driver for the climb energy of the range per direction.
 VEHICLE_MASS_KG = float(os.environ.get("VEHICLE_MASS_KG", "2200") or 2200)
 # Long ferries on request (map button): OpenStreetMap via Overpass. Only a box
