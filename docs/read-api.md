@@ -142,6 +142,7 @@ a cell came from makes no difference.
 | `cell_km` | size of a raster cell in km (5). Rows every `cell_km` in latitude, columns every `cell_km` along each row – fixed on the globe |
 | `radius` | km around the vehicle the raster covers |
 | `levels` | meaning of the grades: `1` light (0.1–1 mm/h), `2` moderate (1–5 mm/h), `3` heavy (over 5 mm/h) |
+| `complete` | `false` while only the past and now are there and the forecast is still being fetched (a few seconds) – ask again |
 | `frames` | one per time step (15 min), oldest first |
 | `frames[].t` | time of the radar picture, UTC |
 | `frames[].kind` | `past`, `now` (the newest measured picture) or `forecast` |
@@ -157,8 +158,9 @@ of the German composite.
 1. Get the token as for every `/api/v1` route (QR code from *Admin → Interfaces*), send it as
    `Authorization: Bearer <token>`.
 2. Ask `GET /api/v1/rain`. The raster changes at most every 15 minutes: ask every 5 minutes at most
-   (the server keeps the result; asking more often costs nothing but gains nothing). While `frames` is
-   empty, ask again after 30 seconds.
+   (the server keeps the result; asking more often costs nothing but gains nothing). The first answer
+   usually comes at once with the past and now (`complete: false`): show it and ask again after
+   5 seconds for the forecast. While `frames` is empty, ask again after 30 seconds.
 3. Draw each cell as a rectangle around its centre: `cell_km / 111.2` degrees high and
    `cell_km / (111.2 · cos(lat))` degrees wide. Colours used on the IDmate map: grade 1 `#9ecae1`,
    2 `#4292c6`, 3 `#08519c`, about 45 % opaque.
@@ -179,7 +181,7 @@ the same way: "Deutscher Wetterdienst" and "RainViewer".
 
 ```json
 {"v": 1, "src": "backend", "ts": "2026-11-17T23:41:00Z", "seq": 12, "type": "rain",
- "data": {"cell_km": 5.0, "radius": 350,
+ "data": {"cell_km": 5.0, "radius": 350, "complete": true,
           "levels": {"1": "light, 0.1–1 mm/h", "2": "moderate, 1–5 mm/h", "3": "heavy, over 5 mm/h"},
           "frames": [{"t": "2026-11-17T23:40:00Z", "kind": "now", "src": ["dwd", "rainviewer"],
                       "cells": [[53.5162, 9.9848, 1], [53.5612, 10.0606, 2]]}]}}

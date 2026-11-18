@@ -29,14 +29,17 @@ AHEAD_MIN ahead (DWD; the RainViewer cells only for the past and now).
 Load on the services (their terms: DWD open data under GeoNutzV with the
 source named, fair use; RainViewer's free API for personal, non-commercial
 use, tiles to be cached, attribution "RainViewer"):
-- nothing is fetched unless someone looks (map layer on, read API asked) or
-  the range needs it (the model has learned what rain costs);
-- at most one new raster per quarter hour and set of tiles: a car driving
-  on asks again only when its area needs other tiles;
-- a measured picture is fetched once (they do not change), only the
-  forecast frames are asked anew: per quarter hour one new DWD picture plus
-  the eight forecasts, a handful of RainViewer tiles outside Germany;
-- the DWD coverage once a day, the RainViewer frame list at most every 5 min;
+- the DWD is asked for one picture of its whole composite per frame time –
+  the same number of requests as for a small area, but every place in its
+  reach is covered at once, wherever the car is or goes;
+- a measured picture is fetched once and kept for an hour. While rain was
+  asked for in the last KEEP_DAYS days, a keeper fetches the newest one each
+  quarter hour (96 a day), so the map shows the rain of now at once;
+- the eight forecast pictures only when someone asks (map layer on, read
+  API) or the range needs them, at most once per quarter hour;
+- RainViewer only for cells outside the DWD composite, its tiles kept 3 h;
+  its frame list at most every 5 min; the coverage mask once a day from a
+  picture fetched anyway;
 - after an error the source rests FAIL_S.
 """
 
@@ -58,7 +61,6 @@ log = logging.getLogger("triplog.rain")
 CELL_KM = 5.0
 LAT_STEP = CELL_KM / 111.2
 TILE_Z = 7                     # RainViewer serves no finer zoom for free; DWD asked on the same tiles
-TILE_PX = 128                  # DWD pixels per tile (≈ 1.5 km at 50° N, the composite has 1 km)
 FRAME_MIN = 15
 PAST_MIN = 60
 AHEAD_MIN = 120
@@ -103,7 +105,9 @@ _mask = {"t": 0.0, "img": None}
 _down_until = {"dwd": 0.0, "rainviewer": 0.0}
 _rv_meta = {"t": 0.0, "data": None}
 _tiles = {}                    # RainViewer tile cache: url → (time, image); the pictures never change
-_dwd_pics = {}                 # measured DWD pictures: (box, size, time) → image
+_dwd_pics = {}                 # whole-composite DWD pictures: time (measured) or (time, now) → image
+_pics_lock = threading.Lock()
+_used = {"t": 0.0, "keeper": False}   # last time someone asked for rain; the keeper thread runs
 
 
 def sources():
@@ -259,20 +263,24 @@ def _dwd_map(bbox, width, height, when=None):
     return _image(blob)
 
 
-def coverage(now=None):
-    """Where the DWD composite has radar at all: a picture of the whole grid
-    in which "inside" is every pixel not reachable from the edge over empty
-    pixels (the radar area is ringed by grey "no data"). Fetched once a day."""
-    now = now or time.time()
-    if _mask["img"] is not None and now - _mask["t"] < 86400:
-        return _mask
+DWD_PX_M = 2400.0               # metres (EPSG:3857) per pixel of the whole-composite picture ≈ 1.5 km at 50° N
+
+
+def _dwd_frame_box():
+    """The whole composite as one picture: EPSG:3857 box and size."""
     x0, y0 = _merc(DWD_BOX[0], DWD_BOX[1])
     x1, y1 = _merc(DWD_BOX[2], DWD_BOX[3])
-    w = h = 768
-    img = _dwd_map((x0, y0, x1, y1), w, h)
-    if img is None:
-        return _mask
-    px = img.load()
+    return (x0, y0, x1, y1), int((x1 - x0) / DWD_PX_M), int((y1 - y0) / DWD_PX_M)
+
+
+def _mask_from(img, box, now):
+    """Where the DWD composite has radar at all: every pixel not reachable
+    from the edge of the whole-composite picture over empty pixels (the
+    radar area is ringed by grey "no data"). Worked out on a half-size copy
+    of a picture that is fetched anyway, once a day."""
+    small = img.resize((img.width // 2, img.height // 2))
+    w, h = small.size
+    px = small.load()
     outside = bytearray(w * h)
     stack = [(x, y) for x in range(w) for y in (0, h - 1)] + [(x, y) for y in range(h) for x in (0, w - 1)]
     while stack:
@@ -285,8 +293,21 @@ def coverage(now=None):
         if x < w - 1: stack.append((x + 1, y))
         if y > 0: stack.append((x, y - 1))
         if y < h - 1: stack.append((x, y + 1))
-    _mask.update({"t": now, "img": outside, "w": w, "h": h, "box": (x0, y0, x1, y1)})
+    _mask.update({"t": now, "img": outside, "w": w, "h": h, "box": box})
     return _mask
+
+
+def coverage(now=None, dwd_map=None):
+    """The coverage mask (see _mask_from), renewed once a day from the newest
+    measured picture."""
+    now = now or time.time()
+    if _mask["img"] is not None and now - _mask["t"] < 86400:
+        return _mask
+    base, _t = _frame_times(now)
+    img = _dwd_frame(base, base, dwd_map or _dwd_map)
+    if img is None:
+        return _mask
+    return _mask_from(img, _dwd_frame_box()[0], now)
 
 
 def _covered(mask, lat, lon):
@@ -296,9 +317,33 @@ def _covered(mask, lat, lon):
     mx, my = _merc(lat, lon)
     if not (x0 <= mx < x1 and y0 <= my < y1):
         return False
-    px = int((mx - x0) / (x1 - x0) * mask["w"])
-    py = int((y1 - my) / (y1 - y0) * mask["h"])
+    px = min(mask["w"] - 1, int((mx - x0) / (x1 - x0) * mask["w"]))
+    py = min(mask["h"] - 1, int((y1 - my) / (y1 - y0) * mask["h"]))
     return not mask["img"][py * mask["w"] + px]
+
+
+def _dwd_frame(t, base, dwd_map):
+    """Whole-composite picture of one frame time. Measured ones (t ≤ base)
+    are fetched once and kept for the past hour; a forecast once per
+    quarter hour (it changes with every new analysis)."""
+    key = t if t <= base else (t, base)
+    with _pics_lock:
+        if key in _dwd_pics:
+            return _dwd_pics[key]
+    box, w, h = _dwd_frame_box()
+    try:
+        img = dwd_map(box, w, h, datetime.fromtimestamp(t, timezone.utc))
+    except Exception as e:
+        log.warning("rain: DWD picture failed (%s)", e)
+        return None
+    if img is not None:
+        with _pics_lock:
+            _dwd_pics[key] = img
+            for k in list(_dwd_pics):
+                kt, kb = (k, None) if isinstance(k, int) else k
+                if kt < base - PAST_MIN * 60 or (kb is not None and kb != base):
+                    _dwd_pics.pop(k, None)
+    return img
 
 
 def _rv_frames(now):
@@ -325,6 +370,11 @@ def _rv_tile(prefix, x, y, now):
     return img
 
 
+def _rv_tile_kept(prefix, x, y, now):
+    hit = _tiles.get(f"{prefix}/256/{TILE_Z}/{x}/{y}/2/0_0.png")
+    return hit[1] if hit else None
+
+
 # ── the raster per frame ────────────────────────────────────────────────────
 
 def _samples(lat, lon):
@@ -343,10 +393,12 @@ def _frame_times(now):
     return base, times
 
 
-def compute(lat, lon, radius_km, now=None, dwd_map=None, rv_frames=None, rv_tile=None, mask=None):
+def compute(lat, lon, radius_km, now=None, dwd_map=None, rv_frames=None, rv_tile=None, mask=None,
+            measured_only=False):
     """The rain raster for an area: {cell_km, radius, levels, frames: [{t,
-    kind, src, cells: [[lat, lon, level], …]}]}. Fetch functions can be
-    handed in (tests)."""
+    kind, src, cells: [[lat, lon, level], …]}]}. measured_only: only the past
+    and now (from pictures already kept, so it is there at once), without the
+    forecast. Fetch functions can be handed in (tests)."""
     now = now or time.time()
     dwd_map = dwd_map or _dwd_map
     rv_frames = rv_frames or _rv_frames
@@ -354,23 +406,26 @@ def compute(lat, lon, radius_km, now=None, dwd_map=None, rv_frames=None, rv_tile
     srcs = sources()
     radius = radius_km
     grid = cells(lat, lon, radius)
-    x0, y0, x1, y1 = tiles_for(lat, lon, radius)
-    ox0, oy1 = _tile_merc(x0, y0)
-    ox1, oy0 = _tile_merc(x1 + 1, y1 + 1)
-    w, h = (x1 - x0 + 1) * TILE_PX, (y1 - y0 + 1) * TILE_PX
+    (ox0, oy0, ox1, oy1), w, h = _dwd_frame_box()
     base, times = _frame_times(now)
+    if measured_only:
+        times = [t for t in times if t <= base]
 
     in_dwd = {}
     if "dwd" in srcs and now >= _down_until["dwd"]:
         try:
-            m = mask if mask is not None else coverage(now)
+            m = mask if mask is not None else coverage(now, dwd_map)
             in_dwd = {(i, j): _covered(m, la, lo) for i, j, la, lo in grid}
         except Exception as e:
             _down_until["dwd"] = now + FAIL_S
             log.warning("rain: DWD coverage failed (%s)", e)
 
     rv_list = []
-    if "rainviewer" in srcs and now >= _down_until["rainviewer"]:
+    if measured_only:
+        # quick answer: RainViewer only from what is kept, no request
+        rv_list = _rv_meta["data"] or []
+        rv_tile = _rv_tile_kept
+    elif "rainviewer" in srcs and now >= _down_until["rainviewer"] and not all(in_dwd.get((c[0], c[1])) for c in grid):
         try:
             rv_list = rv_frames(now)
         except Exception as e:
@@ -393,24 +448,10 @@ def compute(lat, lon, radius_km, now=None, dwd_map=None, rv_frames=None, rv_tile
         dwd_uv[(i, j)] = uv
         rv_pt[(i, j)] = pt
 
-    # fetch everything at once (a few workers): one DWD picture per frame,
-    # the RainViewer tiles of the cells outside the DWD composite
+    # fetch what is not kept yet (a few workers): the DWD pictures of the
+    # frames, the RainViewer tiles of the cells outside the DWD composite
     from concurrent.futures import ThreadPoolExecutor
-    use_dwd = bool(in_dwd) and any(in_dwd.values())
-    dwd_imgs, rv_imgs = {}, {}
-
-    def one_dwd(t):
-        key = (round(ox0), round(oy0), w, h, t)
-        if t <= base and key in _dwd_pics:          # measured pictures do not change: ask once
-            return _dwd_pics[key]
-        try:
-            img = dwd_map((ox0, oy0, ox1, oy1), w, h, datetime.fromtimestamp(t, timezone.utc))
-            if t <= base and img is not None:
-                _dwd_pics[key] = img
-            return img
-        except Exception as e:
-            log.warning("rain: DWD picture failed (%s)", e)
-            return None
+    use_dwd = any(in_dwd.values())
 
     def near_rv(t):
         if not rv_list or t > base:
@@ -430,12 +471,11 @@ def compute(lat, lon, radius_km, now=None, dwd_map=None, rv_frames=None, rv_tile
         f = near_rv(t)
         if f:
             rv_keys |= {(f[1], tx, ty) for c in outside for tx, ty, _u, _v in rv_pt[(c[0], c[1])]}
+    dwd_imgs, rv_imgs = {}, {}
     with ThreadPoolExecutor(max_workers=6) as ex:
         if use_dwd and now >= _down_until["dwd"]:
-            dwd_imgs = dict(zip(times, ex.map(one_dwd, times)))
+            dwd_imgs = dict(zip(times, ex.map(lambda t: _dwd_frame(t, base, dwd_map), times)))
         rv_imgs = dict(zip(rv_keys, ex.map(one_rv, list(rv_keys))))
-    for k in [k for k in _dwd_pics if k[4] < base - PAST_MIN * 60]:
-        _dwd_pics.pop(k, None)
 
     frames = []
     for t in times:
@@ -444,66 +484,96 @@ def compute(lat, lon, radius_km, now=None, dwd_map=None, rv_frames=None, rv_tile
         got, used = {}, []
         todo = list(grid)
         # 1. DWD
-        if in_dwd and any(in_dwd.values()) and now >= _down_until["dwd"]:
-            img = dwd_imgs.get(t)
-            if img is not None:
-                px = img.load()
-                rest = []
-                for i, j, la, lo in todo:
-                    if not in_dwd.get((i, j)):
-                        rest.append((i, j, la, lo))
-                        continue
-                    best, ok = 0.0, bool(dwd_uv[(i, j)])
-                    for u, v in dwd_uv[(i, j)]:
-                        val = dwd_pixel(tuple(px[u, v]))
-                        if val is None:
-                            ok = False
-                            break
-                        best = max(best, val)
-                    if ok:
-                        got[(i, j)] = level_mmh(best)
-                    else:
-                        rest.append((i, j, la, lo))
-                todo = rest
-                used.append("dwd")
+        img = dwd_imgs.get(t)
+        if img is not None:
+            px = img.load()
+            rest = []
+            for i, j, la, lo in todo:
+                if not in_dwd.get((i, j)):
+                    rest.append((i, j, la, lo))
+                    continue
+                best, ok = 0.0, bool(dwd_uv[(i, j)])
+                for u, v in dwd_uv[(i, j)]:
+                    val = dwd_pixel(tuple(px[u, v]))
+                    if val is None:
+                        ok = False
+                        break
+                    best = max(best, val)
+                if ok:
+                    got[(i, j)] = level_mmh(best)
+                else:
+                    rest.append((i, j, la, lo))
+            todo = rest
+            used.append("dwd")
         # 2. RainViewer for the rest (past and now only)
         near = near_rv(t)
-        if todo and near and now >= _down_until["rainviewer"]:
-            if True:
-                imgs = {(k[1], k[2]): v for k, v in rv_imgs.items() if k[0] == near[1]}
-                n_before = len(got)
-                for i, j, la, lo in todo:
-                    best, seen = 0.0, False
-                    for tx, ty, pu, pv in rv_pt[(i, j)]:
-                        if (tx, ty) not in imgs:
-                            try:
-                                imgs[(tx, ty)] = rv_tile(near[1], tx, ty, now)
-                            except Exception as e:
-                                imgs[(tx, ty)] = None
-                                log.warning("rain: RainViewer tile failed (%s)", e)
-                        img = imgs[(tx, ty)]
-                        if img is None:
-                            continue
-                        seen = True
-                        best = max(best, rv_pixel(tuple(img.getpixel((pu, pv)))))
-                    if seen:
-                        got[(i, j)] = level_mmh(best)
-                if len(got) > n_before:
-                    used.append("rainviewer")
+        if todo and near:
+            imgs = {(k[1], k[2]): v for k, v in rv_imgs.items() if k[0] == near[1]}
+            n_before = len(got)
+            for i, j, la, lo in todo:
+                best, seen = 0.0, False
+                for tx, ty, pu, pv in rv_pt[(i, j)]:
+                    if (tx, ty) not in imgs:
+                        imgs[(tx, ty)] = one_rv((near[1], tx, ty))
+                    img = imgs[(tx, ty)]
+                    if img is None:
+                        continue
+                    seen = True
+                    best = max(best, rv_pixel(tuple(img.getpixel((pu, pv)))))
+                if seen:
+                    got[(i, j)] = level_mmh(best)
+            if len(got) > n_before:
+                used.append("rainviewer")
         rain = [[*cell_centre(i, j), lv] for (i, j), lv in got.items() if lv]
         frames.append({"t": when.strftime("%Y-%m-%dT%H:%M:%SZ"), "kind": kind, "src": used,
                        "cells": sorted(rain), "_known": got, "_ts": t})
     return {"cell_km": CELL_KM, "radius": round(radius), "levels": LEVEL_TEXT, "frames": frames,
-            "_center": (lat, lon), "_base": base}
+            "_center": (lat, lon), "_base": base, "_complete": not measured_only}
 
 
 def public(res):
-    """The result without the internal keys (map, read API)."""
+    """The result without the internal keys (map, read API). complete is
+    false while the forecast is still being fetched (ask again shortly)."""
     if not res:
-        return {"cell_km": CELL_KM, "radius": 0, "levels": LEVEL_TEXT, "frames": []}
+        return {"cell_km": CELL_KM, "radius": 0, "levels": LEVEL_TEXT, "frames": [], "complete": False}
     return {"cell_km": res["cell_km"], "radius": res["radius"], "levels": res["levels"],
+            "complete": res.get("_complete", True),
             "frames": [{k: v for k, v in f.items() if not k.startswith("_")} for f in res["frames"]
                        if f["src"]]}
+
+
+KEEP_DAYS = 3                  # the keeper fetches the newest picture while rain was asked for lately
+KEEP_EVERY_S = 300
+
+
+def _keeper():
+    """Keeps the measured DWD pictures of the past hour ready, so the map
+    shows the rain of now at once: one new whole-composite picture per
+    quarter hour (96 a day), only while someone asked for rain in the last
+    KEEP_DAYS days. The forecast is fetched only when asked for."""
+    while True:
+        now = time.time()
+        if now - _used["t"] > KEEP_DAYS * 86400 or "dwd" not in sources():
+            _used["keeper"] = False
+            return
+        if now >= _down_until["dwd"]:
+            base, times = _frame_times(now)
+            for t in times:
+                if t <= base:
+                    _dwd_frame(t, base, _dwd_map)
+            try:
+                coverage(now)
+            except Exception as e:
+                log.warning("rain: DWD coverage failed (%s)", e)
+        time.sleep(KEEP_EVERY_S)
+
+
+def _start_keeper():
+    with _lock:
+        if _used["keeper"]:
+            return
+        _used["keeper"] = True
+    threading.Thread(target=_keeper, name="rain-keeper", daemon=True).start()
 
 
 _busy = {"on": False}
@@ -511,48 +581,59 @@ _busy = {"on": False}
 
 def area(lat, lon, radius_km, now=None, wait=False):
     """The rain raster for the area around the range: same centre and radius
-    as the wind arrows. Worked out in the background (a few seconds: one DWD
-    picture per frame, some RainViewer tiles); until the new one is there the
-    previous one is returned when it is for the same place, else None.
-    Recomputed with the next DWD step or a new area."""
+    as the wind arrows. The past and now come at once from the pictures the
+    keeper holds (complete false); the forecast follows in the background
+    within seconds (ask again). Recomputed with the next quarter hour or when
+    the area needs other tiles."""
     import wind
     if not enabled():
         return None
     now = now or time.time()
+    _used["t"] = max(_used["t"], now)
+    if not wait:
+        _start_keeper()
     radius = radius_km + wind.GRID_KM
     base, _t = _frame_times(now)
     # same tiles, same quarter hour → same raster: a car driving on does not
     # cause new requests until its area needs other tiles
     key = (tiles_for(lat, lon, radius), base)
 
-    def work():
+    def keep(res):
         global _last
-        try:
-            res = compute(lat, lon, radius, now)
-            with _lock:
-                _cache.clear()
+        with _lock:
+            if res.get("_complete") or key not in _cache:
+                for k in [k for k in _cache if k != key]:
+                    _cache.pop(k, None)
                 _cache[key] = res
                 _last = res
+
+    def work():
+        try:
+            keep(compute(lat, lon, radius, now))
         except Exception as e:
             log.warning("rain: %s", e, exc_info=True)
         finally:
             _busy["on"] = False
     with _lock:
         hit = _cache.get(key)
-        if hit is not None:
+        if hit is not None and (hit.get("_complete") or _busy["on"]):
             return hit
         start = not _busy["on"]
         if start:
             _busy["on"] = True
-        prev = _last
-    if start:
-        if wait:
-            work()
-            return _cache.get(key)
-        threading.Thread(target=work, name="rain-radar", daemon=True).start()
-    if prev and _dist_km(lat, lon, *prev["_center"]) < 0.25 * radius:
-        return prev
-    return None
+    if not start:
+        return _cache.get(key)
+    if wait:
+        work()
+        return _cache.get(key)
+    try:
+        quick = compute(lat, lon, radius, now, measured_only=True)
+        keep(quick)
+    except Exception as e:
+        log.warning("rain: %s", e, exc_info=True)
+        quick = None
+    threading.Thread(target=work, name="rain-radar", daemon=True).start()
+    return quick
 
 
 def level_at(lat, lon, t):

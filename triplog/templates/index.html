@@ -823,10 +823,14 @@
         if (d.status === 'off') { document.getElementById('mapRain').hidden = true; return; }
         if (d.status === 'pending' || d.status === 'none') { setTimeout(pollRain, 5000); drawRain(); return; }
         const keep = rainData && rainPlay;
+        // keep the frame shown when the forecast arrives (same times, more of them)
+        const shown = rainData && rainIdx >= 0 && rainData.frames[rainIdx] ? rainData.frames[rainIdx].t : null;
         rainData = d;
         rainStep.max = Math.max(0, d.frames.length - 1);
-        if (!keep || rainIdx >= d.frames.length) rainIdx = rainNowIdx();
+        const k = shown ? d.frames.findIndex(f => f.t === shown) : -1;
+        if (!keep || rainIdx >= d.frames.length) rainIdx = k >= 0 ? k : rainNowIdx();
         drawRain();
+        if (d.complete === false) setTimeout(pollRain, 4000);   // past and now are there, the forecast follows
       } catch (e) {}
     }
     document.getElementById('mapRain').addEventListener('click', () => {
