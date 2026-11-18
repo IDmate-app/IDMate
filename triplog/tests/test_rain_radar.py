@@ -82,7 +82,8 @@ def test_compute_dwd_and_rainviewer_into_one_raster():
     pub = rr.public(res)
     assert pub["cell_km"] == rr.CELL_KM and pub["levels"]["3"]
     kinds = [f["kind"] for f in pub["frames"]]
-    assert kinds.count("now") == 1 and "past" in kinds and "forecast" in kinds
+    assert kinds.count("now") == 1 and "past" not in kinds and "forecast" in kinds
+    assert kinds[0] == "now"                                # the map starts at now, no past
     now_f = next(f for f in pub["frames"] if f["kind"] == "now")
     assert set(now_f["src"]) == {"dwd", "rainviewer"}
     west = [c for c in now_f["cells"] if c[1] < 9.95]

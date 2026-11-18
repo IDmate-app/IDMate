@@ -785,7 +785,7 @@
     map.on('zoomend', syncWindLayer);
 
     // ── Rain radar (rain_radar.py): DWD and RainViewer as one raster of grades ──
-    // Same area as the wind arrows; steps of 15 min from an hour ago to two
+    // Same area as the wind arrows; steps of 15 min from now to two
     // hours ahead (forecast only where the DWD composite reaches).
     // Three blues; with the wind arrows on, deeper and more opaque, so the
     // rain stands out against the arrows and the coloured map below
@@ -855,7 +855,7 @@
         const k = shown ? d.frames.findIndex(f => f.t === shown) : -1;
         if (!keep || rainIdx >= d.frames.length) rainIdx = k >= 0 ? k : rainNowIdx();
         drawRain();
-        if (d.complete === false) setTimeout(pollRain, 4000);   // past and now are there, the forecast follows
+        if (d.complete === false) setTimeout(pollRain, 4000);   // now is there, the forecast follows
       } catch (e) {}
     }
     document.getElementById('mapRain').addEventListener('click', () => {

@@ -1845,7 +1845,7 @@ def wind_now():
 @app.route("/api/rain")
 def rain_now():
     """Rain raster (rain_radar.py) on the area of the wind arrows: frames from
-    an hour ago to two hours ahead. "pending" → ask again in a few seconds."""
+    now to two hours ahead. "pending" → ask again in a few seconds."""
     import range_area
     import rain_radar
     if not rain_radar.enabled():

@@ -39,7 +39,7 @@ QR content (JSON):
 | `GET /api/v1/trips?limit=n` | telegram `trip`: the last *n* trips (default 10, at most 100) |
 | `GET /api/v1/charging?limit=n` | telegram `charge`: the last *n* charges |
 | `GET /api/v1/energy-model` | telegram `energy_model`: the vehicle's own consumption by speed |
-| `GET /api/v1/rain` | telegram `rain`: rain around the vehicle's range, an hour back and two hours ahead (see below) |
+| `GET /api/v1/rain` | telegram `rain`: rain around the vehicle's range, now and two hours ahead (see below) |
 
 | `GET /api/v1/display` | opens a **display session** and redirects to the dashboard, which then shows only its map (see below) |
 
@@ -142,10 +142,10 @@ a cell came from makes no difference.
 | `cell_km` | size of a raster cell in km (5). Rows every `cell_km` in latitude, columns every `cell_km` along each row – fixed on the globe |
 | `radius` | km around the vehicle the raster covers |
 | `levels` | meaning of the grades: `1` light (0.1–1 mm/h), `2` moderate (1–5 mm/h), `3` heavy (over 5 mm/h) |
-| `complete` | `false` while only the past and now are there and the forecast is still being fetched (a few seconds) – ask again |
+| `complete` | `false` while only now is there and the forecast is still being fetched (a few seconds) – ask again |
 | `frames` | one per time step (15 min), oldest first |
 | `frames[].t` | time of the radar picture, UTC |
-| `frames[].kind` | `past`, `now` (the newest measured picture) or `forecast` |
+| `frames[].kind` | `now` (the newest measured picture, always the first frame) or `forecast` |
 | `frames[].src` | sources in this frame: `dwd`, `rainviewer` |
 | `frames[].cells` | cells with rain only, as `[lat, lon, level]` (cell centre); dry cells are left out |
 
@@ -159,13 +159,13 @@ of the German composite.
    `Authorization: Bearer <token>`.
 2. Ask `GET /api/v1/rain`. The raster changes at most every 15 minutes: ask every 5 minutes at most
    (the server keeps the result; asking more often costs nothing but gains nothing). The first answer
-   usually comes at once with the past and now (`complete: false`): show it and ask again after
+   usually comes at once with now only (`complete: false`): show it and ask again after
    5 seconds for the forecast. While `frames` is empty, ask again after 30 seconds.
 3. Draw each cell as a rectangle around its centre: `cell_km / 111.2` degrees high and
    `cell_km / (111.2 · cos(lat))` degrees wide. Colours used on the IDmate map: grade 1 `#9ecae1`,
    2 `#4292c6`, 3 `#08519c`, about 45 % opaque.
-4. Show the frame with `kind = "now"` by default; the others for a time slider or an animation (past
-   first, then forecast). Name the sources listed in `src` (see below).
+4. Show the frame with `kind = "now"` by default; the forecast frames for a time slider or an
+   animation. Name the sources listed in `src` (see below).
 5. For a range along a route: take the grade of the cell and frame at the place and time the car gets
    there and add the `rain` extra of `GET /api/v1/energy-model` for that grade. Without a learned
    extra, rain does not change the range.

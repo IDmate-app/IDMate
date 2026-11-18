@@ -23,8 +23,8 @@ Area: the same as the wind arrows (the stored range area's centre and radius
 plus one wind raster cell). The services are only asked for fixed web map
 tiles (zoom TILE_Z) that cover that area, never for the car's own position.
 
-Frames every FRAME_MIN minutes, on the quarter hour, from PAST_MIN ago to
-AHEAD_MIN ahead (DWD; the RainViewer cells only for the past and now).
+Frames every FRAME_MIN minutes, on the quarter hour, from now (PAST_MIN = 0) to
+AHEAD_MIN ahead (DWD; the RainViewer cells only for now: it has no forecast).
 
 Load on the services (their terms: DWD open data under GeoNutzV with the
 source named, fair use; RainViewer's free API for personal, non-commercial
@@ -32,7 +32,7 @@ use, tiles to be cached, attribution "RainViewer"):
 - the DWD is asked for one picture of its whole composite per frame time –
   the same number of requests as for a small area, but every place in its
   reach is covered at once, wherever the car is or goes;
-- a measured picture is fetched once and kept for an hour. While rain was
+- the measured picture of now is fetched once per quarter hour. While rain was
   asked for in the last KEEP_DAYS days, a keeper fetches the newest one each
   quarter hour (96 a day), so the map shows the rain of now at once;
 - the eight forecast pictures only when someone asks (map layer on, read
@@ -62,7 +62,7 @@ CELL_KM = 5.0
 LAT_STEP = CELL_KM / 111.2
 TILE_Z = 7                     # RainViewer serves no finer zoom for free; DWD asked on the same tiles
 FRAME_MIN = 15
-PAST_MIN = 60
+PAST_MIN = 0                   # the map shows now and what comes, not what was (18.11.2026)
 AHEAD_MIN = 120
 STEP_MIN = 5                   # DWD composite cadence
 LAG_MIN = 10                   # the newest DWD picture is a few minutes old
@@ -326,7 +326,7 @@ def _covered(mask, lat, lon):
 
 def _dwd_frame(t, base, dwd_map):
     """Whole-composite picture of one frame time. Measured ones (t ≤ base)
-    are fetched once and kept for the past hour; a forecast once per
+    are fetched once and kept until the next quarter hour; a forecast once per
     quarter hour (it changes with every new analysis)."""
     key = t if t <= base else (t, base)
     with _pics_lock:
@@ -398,8 +398,7 @@ def _frame_times(now):
 def compute(lat, lon, radius_km, now=None, dwd_map=None, rv_frames=None, rv_tile=None, mask=None,
             measured_only=False):
     """The rain raster for an area: {cell_km, radius, levels, frames: [{t,
-    kind, src, cells: [[lat, lon, level], …]}]}. measured_only: only the past
-    and now (from pictures already kept, so it is there at once), without the
+    kind, src, cells: [[lat, lon, level], …]}]}. measured_only: only now (from pictures already kept, so it is there at once), without the
     forecast. Fetch functions can be handed in (tests)."""
     now = now or time.time()
     dwd_map = dwd_map or _dwd_map
@@ -507,7 +506,7 @@ def compute(lat, lon, radius_km, now=None, dwd_map=None, rv_frames=None, rv_tile
                     rest.append((i, j, la, lo))
             todo = rest
             used.append("dwd")
-        # 2. RainViewer for the rest (past and now only)
+        # 2. RainViewer for the rest (now only: it has no forecast)
         near = near_rv(t)
         if todo and near:
             imgs = {(k[1], k[2]): v for k, v in rv_imgs.items() if k[0] == near[1]}
@@ -549,7 +548,7 @@ KEEP_EVERY_S = 300
 
 
 def _keeper():
-    """Keeps the measured DWD pictures of the past hour ready, so the map
+    """Keeps the measured DWD picture of now ready, so the map
     shows the rain of now at once: one new whole-composite picture per
     quarter hour (96 a day), only while someone asked for rain in the last
     KEEP_DAYS days. The forecast is fetched only when asked for."""
@@ -583,7 +582,7 @@ _busy = {"on": False}
 
 def area(lat, lon, radius_km, now=None, wait=False):
     """The rain raster for the area around the range: same centre and radius
-    as the wind arrows. The past and now come at once from the pictures the
+    as the wind arrows. Now comes at once from the picture the
     keeper holds (complete false); the forecast follows in the background
     within seconds (ask again). Recomputed with the next quarter hour or when
     the area needs other tiles."""
