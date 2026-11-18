@@ -60,7 +60,13 @@
     padding:7px 10px;border-radius:12px;border:1px solid var(--border);
     background:color-mix(in srgb,var(--bg-card) 82%,transparent);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
     box-shadow:0 2px 8px rgba(0,0,0,.25);font-size:0.68rem;line-height:1.5;color:var(--text-2);pointer-events:none}
-  .wind-legend b{color:var(--text-1);font-weight:600;display:block;margin-bottom:2px}
+  .wind-legend b{color:var(--text-1);font-weight:600}
+  /* Legends fold to their title: › turns down while open */
+  .lg-head{display:flex;align-items:center;gap:5px;background:none;border:0;padding:0;margin:0 0 2px;color:inherit;font:inherit;cursor:pointer;pointer-events:auto}
+  .lg-head .chev{display:inline-block;width:0.9em;font-size:1.45em;line-height:0.8;color:var(--text-2);transition:transform .15s;text-align:center}
+  .lg-head[aria-expanded="true"] .chev{transform:rotate(90deg)}
+  .lg-head[aria-expanded="false"]{margin-bottom:0}
+  .lg-body[hidden]{display:none}
   .wind-legend .row{display:flex;align-items:center;gap:6px;white-space:nowrap}
   .wind-legend svg{width:14px;height:14px;flex:0 0 14px}
   .wind-ico svg{filter:drop-shadow(0 0 1.2px rgba(0,0,0,.55))}
@@ -198,17 +204,21 @@
       <div id="map"></div>
       <script type="application/json" id="mapBoot">{{ map_boot | tojson }}</script>
       <div class="wind-legend" id="windLegend" hidden>
-        <b>{{ t.dash_wind }}</b>
+        <button type="button" class="lg-head" data-lg="wind" aria-expanded="true" aria-controls="windLegendBody"><span class="chev" aria-hidden="true">&#8250;</span><b>{{ t.dash_wind }}</b></button>
+        <div class="lg-body" id="windLegendBody">
         <div class="row"><svg viewBox="-1 -1 22 22" aria-hidden="true"><path d="M10 1 L15.5 10 H12 V19 H8 V10 H4.5 Z" fill="#57606a" stroke="#fff" stroke-width="2.2" stroke-linejoin="round" paint-order="stroke"/></svg><span>&lt; 15 km/h <span class="ms">· &lt; 4 m/s</span></span></div>
         <div class="row"><svg viewBox="-1 -1 22 22" aria-hidden="true"><path d="M10 1 L15.5 10 H12 V19 H8 V10 H4.5 Z" fill="#0969da" stroke="#fff" stroke-width="2.2" stroke-linejoin="round" paint-order="stroke"/></svg><span>15–30 km/h <span class="ms">· 4–8 m/s</span></span></div>
         <div class="row"><svg viewBox="-1 -1 22 22" aria-hidden="true"><path d="M10 1 L15.5 10 H12 V19 H8 V10 H4.5 Z" fill="#bc4c00" stroke="#fff" stroke-width="2.2" stroke-linejoin="round" paint-order="stroke"/></svg><span>30–45 km/h <span class="ms">· 8–12 m/s</span></span></div>
         <div class="row"><svg viewBox="-1 -1 22 22" aria-hidden="true"><path d="M10 1 L15.5 10 H12 V19 H8 V10 H4.5 Z" fill="#cf222e" stroke="#fff" stroke-width="2.2" stroke-linejoin="round" paint-order="stroke"/></svg><span>&gt; 45 km/h <span class="ms">· &gt; 12 m/s</span></span></div>
+        </div>
       </div>
       <div class="rain-legend" id="rainLegend" hidden>
-        <b>{{ t.dash_rain }}</b>
-        <div class="row"><span class="sw" style="background:#9ecae1"></span><span>{{ t.dash_rain_1 }}</span></div>
-        <div class="row"><span class="sw" style="background:#4292c6"></span><span>{{ t.dash_rain_2 }}</span></div>
-        <div class="row"><span class="sw" style="background:#08519c"></span><span>{{ t.dash_rain_3 }}</span></div>
+        <button type="button" class="lg-head" data-lg="rain" aria-expanded="true" aria-controls="rainLegendBody"><span class="chev" aria-hidden="true">&#8250;</span><b>{{ t.dash_rain }}</b></button>
+        <div class="lg-body" id="rainLegendBody">
+          <div class="row"><span class="sw" id="rainSw1"></span><span>{{ t.dash_rain_1 }}</span></div>
+          <div class="row"><span class="sw" id="rainSw2"></span><span>{{ t.dash_rain_2 }}</span></div>
+          <div class="row"><span class="sw" id="rainSw3"></span><span>{{ t.dash_rain_3 }}</span></div>
+        </div>
         <div class="bar">
           <button type="button" id="rainPlay" aria-label="{{ t.dash_rain_play }}" title="{{ t.dash_rain_play }}">&#9654;</button>
           <input type="range" id="rainStep" min="0" max="0" value="0" aria-label="{{ t.dash_rain_time }}">
@@ -738,12 +748,14 @@
     const windLayer = L.layerGroup();
     let windOff = false;
     const WIND_COLS = ['#57606a', '#0969da', '#bc4c00', '#cf222e'];
+    const PHONE = window.matchMedia('(max-width: 600px)');
     function windIcon(p) {
       const k = p.kmh;
       // Dark, saturated colours with a white edge: readable on the light
       // map, on the sea and on the dimmed part out of reach alike.
       const col = k < 15 ? WIND_COLS[0] : k < 30 ? WIND_COLS[1] : k < 45 ? WIND_COLS[2] : WIND_COLS[3];
-      const sz = k < 15 ? 17 : k < 30 ? 21 : 25;
+      // a little smaller on a phone: the map is narrow and the arrows crowd it
+      const sz = Math.round((k < 15 ? 17 : k < 30 ? 21 : 25) * (PHONE.matches ? 0.72 : 1));
       return L.divIcon({className: 'wind-ico', iconSize: [sz, sz], iconAnchor: [sz / 2, sz / 2],
         html: `<svg width="${sz}" height="${sz}" viewBox="-1 -1 22 22" style="transform:rotate(${(p.dir + 180) % 360}deg)">`
           + `<path d="M10 1 L15.5 10 H12 V19 H8 V10 H4.5 Z" fill="${col}" stroke="#fff" stroke-width="2.2" stroke-linejoin="round" paint-order="stroke"/></svg>`});
@@ -753,6 +765,8 @@
       if (want && !map.hasLayer(windLayer)) map.addLayer(windLayer);
       else if (!want && map.hasLayer(windLayer)) map.removeLayer(windLayer);
       document.getElementById('windLegend').hidden = !want;
+      if (want && window.lgUnclash) lgUnclash('rain');
+      try { if (rainData) drawRain(); } catch (e) {}   // rain colours depend on the arrows (rain code may not be set up yet)
     }
     async function pollWind(first) {
       if (windOff) return;
@@ -773,7 +787,16 @@
     // ── Rain radar (rain_radar.py): DWD and RainViewer as one raster of grades ──
     // Same area as the wind arrows; steps of 15 min from an hour ago to two
     // hours ahead (forecast only where the DWD composite reaches).
-    const RAIN_COLS = ['#9ecae1', '#4292c6', '#08519c'];
+    // Three blues; with the wind arrows on, deeper and more opaque, so the
+    // rain stands out against the arrows and the coloured map below
+    const RAIN_COLS = ['#9ecae1', '#4292c6', '#08519c'], RAIN_COLS_WIND = ['#6baed6', '#2171b5', '#08306b'];
+    function rainStyle() {
+      const strong = map.hasLayer(windLayer);
+      return {cols: strong ? RAIN_COLS_WIND : RAIN_COLS, op: strong ? 0.7 : 0.5};
+    }
+    function syncRainSwatches(st) {
+      st.cols.forEach((c, i) => { const el = document.getElementById('rainSw' + (i + 1)); if (el) el.style.background = c; });
+    }
     const RAIN_T = {now: {{ t.dash_rain_now | tojson }}, src: {{ t.dash_rain_src | tojson }},
                     fc: {{ t.dash_rain_forecast | tojson }}, wait: {{ t.dash_rain_wait | tojson }}};
     const rainLayer = L.layerGroup(), rainRenderer = L.canvas({padding: 0.3});
@@ -789,11 +812,12 @@
       const fr = rainData ? rainData.frames : [];
       const when = document.getElementById('rainWhen'), src = document.getElementById('rainSrc');
       if (!fr.length || rainIdx < 0) { when.textContent = RAIN_T.wait; src.textContent = ''; return; }
-      const f = fr[rainIdx], half = rainData.cell_km / 111.2 / 2;
+      const f = fr[rainIdx], half = rainData.cell_km / 111.2 / 2, st = rainStyle();
+      syncRainSwatches(st);
       f.cells.forEach(c => {
         const hl = rainData.cell_km / (111.2 * Math.cos(c[0] * Math.PI / 180)) / 2;
         L.rectangle([[c[0] - half, c[1] - hl], [c[0] + half, c[1] + hl]],
-          {renderer: rainRenderer, stroke: false, fillColor: RAIN_COLS[c[2] - 1], fillOpacity: 0.45, interactive: false}).addTo(rainLayer);
+          {renderer: rainRenderer, stroke: false, fillColor: st.cols[c[2] - 1], fillOpacity: st.op, interactive: false}).addTo(rainLayer);
       });
       const m = Math.round((Date.parse(f.t) - Date.parse(fr[rainNowIdx()].t)) / 60000);
       const hm = new Date(f.t).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
@@ -810,6 +834,7 @@
       if (want && !map.hasLayer(rainLayer)) map.addLayer(rainLayer);
       else if (!want && map.hasLayer(rainLayer)) map.removeLayer(rainLayer);
       document.getElementById('rainLegend').hidden = !want;
+      if (want && window.lgUnclash) lgUnclash('rain');
       document.getElementById('mapRain').setAttribute('aria-pressed', want ? 'true' : 'false');
     }
     function stopRainPlay() {
@@ -846,6 +871,33 @@
       document.getElementById('rainPlay').innerHTML = '&#10074;&#10074;';
       rainPlay = setInterval(() => { rainIdx = (rainIdx + 1) % rainData.frames.length; drawRain(); }, 800);
     });
+    // Legends fold to their title (remembered per browser; folded at first on a phone)
+    const lgSet = (btn, open) => {
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      document.getElementById(btn.getAttribute('aria-controls')).hidden = !open;
+    };
+    // Both open on a low map would lie on top of each other: then the other one folds (not remembered)
+    function lgUnclash(keep) {
+      const a = document.getElementById('rainLegend'), b = document.getElementById('windLegend');
+      if (a.hidden || b.hidden) return;
+      const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+      if (ra.bottom + 4 <= rb.top || rb.bottom + 4 <= ra.top || ra.right <= rb.left || rb.right <= ra.left) return;
+      const other = document.querySelector(`.lg-head[data-lg="${keep === 'wind' ? 'rain' : 'wind'}"]`);
+      const mine = document.querySelector(`.lg-head[data-lg="${keep}"]`);
+      if (other.getAttribute('aria-expanded') === 'true') lgSet(other, false);
+      else if (mine.getAttribute('aria-expanded') === 'true') lgSet(mine, false);
+    }
+    window.lgUnclash = lgUnclash;
+    document.querySelectorAll('.lg-head').forEach(btn => {
+      const k = 'lg_' + btn.dataset.lg;
+      lgSet(btn, mapPref(k, !PHONE.matches));
+      btn.addEventListener('click', () => {
+        const open = btn.getAttribute('aria-expanded') !== 'true';
+        lgSet(btn, open); setMapPref(k, open);
+        if (open) lgUnclash(btn.dataset.lg);
+      });
+    });
+    syncRainSwatches(rainStyle());
     function rainBoot() {
       if (!MAP_BOOT.rain) return;
       document.getElementById('mapRain').hidden = false;
