@@ -84,7 +84,7 @@
   .rain-legend .bar button{min-width:26px;height:24px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-1);cursor:pointer;padding:0 4px}
   .rain-legend .bar input{flex:1;min-width:70px}
   .rain-legend .when{font-variant-numeric:tabular-nums;color:var(--text-1);min-width:8.5em;text-align:center;white-space:nowrap}
-  .rain-legend .src{color:var(--text-3);font-size:0.62rem}
+  .rain-legend .src{color:var(--text-3);font-size:0.62rem;margin-top:2px}
   .rain-legend .src a{color:inherit}
   .map-col.map-max .rain-legend{left:12px;top:calc(12px + env(safe-area-inset-top,0px))}
   /* Full screen inside the app (works on iPhone too, no Fullscreen API needed) */
@@ -218,13 +218,13 @@
           <div class="row"><span class="sw" id="rainSw1"></span><span>{{ t.dash_rain_1 }}</span></div>
           <div class="row"><span class="sw" id="rainSw2"></span><span>{{ t.dash_rain_2 }}</span></div>
           <div class="row"><span class="sw" id="rainSw3"></span><span>{{ t.dash_rain_3 }}</span></div>
+          <div class="src" id="rainSrc"></div>
         </div>
         <div class="bar">
           <button type="button" id="rainPlay" aria-label="{{ t.dash_rain_play }}" title="{{ t.dash_rain_play }}">&#9654;</button>
           <input type="range" id="rainStep" min="0" max="0" value="0" aria-label="{{ t.dash_rain_time }}">
           <span class="when" id="rainWhen"></span>
         </div>
-        <div class="src" id="rainSrc"></div>
       </div>
       <div class="map-ctl" role="toolbar" aria-label="{{ t.dash_map_tools }}">
         <button type="button" id="mapFull" title="{{ t.dash_map_full }}" aria-label="{{ t.dash_map_full }}" aria-pressed="false">
