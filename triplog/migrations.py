@@ -1098,6 +1098,9 @@ def m084_trip_rain_checked(db, log):
     archive (with or without a value) — every trip is asked for only once."""
     if "rain_checked" not in _cols(db, "trips"):
         db.execute("ALTER TABLE trips ADD COLUMN rain_checked INTEGER")
+    # trips that 1.2.343/344 already filled are not asked again
+    db.execute("UPDATE trips SET rain_checked = CAST(strftime('%s', 'now') AS INTEGER) "
+               "WHERE rain_checked IS NULL AND rain_mmh IS NOT NULL")
     log.info("Migration: trips.rain_checked added")
 
 
