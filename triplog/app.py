@@ -1942,11 +1942,13 @@ def _range_area_vehicle(db, v):
         import wind
         wind.ensure(db, lat, lon, max(kms))
         pts_w = wind.points_near(db, lat, lon, max(kms) * 1.6)
-    try:
-        import rain_radar
-        rain_radar.area(lat, lon, max(kms))      # keeps the rain raster fresh (background) for the range
-    except Exception as e:
-        log.warning("rain: %s", e)
+    if cruise and (cruise.get("model") or {}).get("rain"):
+        # the range only needs the radar once the model knows what rain costs
+        try:
+            import rain_radar
+            rain_radar.area(lat, lon, max(kms))      # background, cached per quarter hour
+        except Exception as e:
+            log.warning("rain: %s", e)
     if cruise and cruise.get("model"):
         guess = wind_range.direction_ranges(cruise["left"], cruise["model"], cruise.get("temp"),
                                             cruise["v_eval"], lat, lon, pts_w, time.time())

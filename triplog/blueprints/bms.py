@@ -158,7 +158,7 @@ def _trips(db, device, extra=False):
     more = {f: _hourly(device, f) for f in ("bt", "ct", "hk")} if extra else {}
     out, prev_end = [], None
     # every trip counts for the standing time, only those with energy as points
-    for r in db.execute("SELECT id, start_time, end_time, distance_km, energy_kwh, soc_start, soc_end, temp_c "
+    for r in db.execute("SELECT id, start_time, end_time, distance_km, energy_kwh, soc_start, soc_end, temp_c, rain_level "
                         "FROM trips WHERE device = ? AND start_time >= ? ORDER BY start_time", (device, since)):
         t0, t1 = _utc(r["start_time"]), _utc(r["end_time"])
         stood = round((t0 - prev_end).total_seconds() / 3600, 2) if t0 and prev_end and t0 >= prev_end else None
@@ -174,7 +174,7 @@ def _trips(db, device, extra=False):
              "cons": fm.trip_consumption(r["energy_kwh"], r["distance_km"]),
              "temp": temp if temp is not None else r["temp_c"], "temp_src": src, "stood_h": stood,
              "v": _avg_kmh(r["start_time"], r["end_time"], r["distance_km"]),
-             "soc_start": r["soc_start"], "soc_end": r["soc_end"]}
+             "soc_start": r["soc_start"], "soc_end": r["soc_end"], "rain": r["rain_level"]}
         if extra and t0:
             h = t0.strftime("%Y-%m-%dT%H")
             t.update(bat_temp_start=_r1(more["bt"].get(h)), cabin_temp_start=_r1(more["ct"].get(h)),

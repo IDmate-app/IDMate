@@ -385,6 +385,9 @@ def _energy_model(db, v):
     out["consumption"] = [{"v": s, "kwh100": round(bl.consumption(model, s, temp), 1)} for s in MODEL_SPEEDS]
     if model.get("e_start"):
         out["start"] = round(model["e_start"], 2)
+    if model.get("rain"):            # extra kWh/100 km per rain grade (rain_radar), as learned from the trips
+        out["rain"] = [{"level": int(k), "kwh100": v, "trips": (model.get("rain_n") or {}).get(k)}
+                       for k, v in sorted(model["rain"].items())]
     fast = [t["v"] for t in trips if t.get("v") and t["km"] >= bl.FRESH_TRIP_KM]
     out["basis"] = _clean({"trips": model["n"], "distance": round(model["km"]),
                            "speed_max": round(max(fast)) if fast else None})

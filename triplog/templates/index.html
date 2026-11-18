@@ -79,6 +79,7 @@
   .rain-legend .bar input{flex:1;min-width:70px}
   .rain-legend .when{font-variant-numeric:tabular-nums;color:var(--text-1);min-width:8.5em;text-align:center;white-space:nowrap}
   .rain-legend .src{color:var(--text-3);font-size:0.62rem}
+  .rain-legend .src a{color:inherit}
   .map-col.map-max .rain-legend{left:12px;top:calc(12px + env(safe-area-inset-top,0px))}
   /* Full screen inside the app (works on iPhone too, no Fullscreen API needed) */
   .map-col.map-max{position:fixed;inset:0;z-index:2000;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0);background:var(--bg)}
@@ -797,7 +798,10 @@
       const m = Math.round((Date.parse(f.t) - Date.parse(fr[rainNowIdx()].t)) / 60000);
       const hm = new Date(f.t).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
       when.textContent = m === 0 ? `${RAIN_T.now} ${hm}` : `${m > 0 ? '+' : '−'}${Math.abs(m)} min · ${hm}`;
-      src.textContent = RAIN_T.src + ' ' + f.src.map(s => s === 'dwd' ? 'DWD' : 'RainViewer').join(', ')
+      // sources named as their terms ask: DWD (GeoNutzV), RainViewer (link)
+      const SRC = {dwd: '<a href="https://www.dwd.de" target="_blank" rel="noopener">Deutscher Wetterdienst</a>',
+                   rainviewer: '<a href="https://www.rainviewer.com" target="_blank" rel="noopener">RainViewer</a>'};
+      src.innerHTML = RAIN_T.src + ' ' + f.src.map(s => SRC[s] || '').join(', ')
         + (f.kind === 'forecast' ? ' · ' + RAIN_T.fc : '');
       rainStep.value = rainIdx;
     }

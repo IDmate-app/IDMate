@@ -1093,6 +1093,14 @@ def m083_trip_rain(db, log):
     log.info("Migration: trips.rain_mmh, trips.rain_level added")
 
 
+def m084_trip_rain_checked(db, log):
+    """trips.rain_checked: when trip_rain.py looked the trip up in the weather
+    archive (with or without a value) — every trip is asked for only once."""
+    if "rain_checked" not in _cols(db, "trips"):
+        db.execute("ALTER TABLE trips ADD COLUMN rain_checked INTEGER")
+    log.info("Migration: trips.rain_checked added")
+
+
 MIGRATIONS = [
     (1,  "trips_is_gpx",            m001_trips_is_gpx),
     (2,  "trips_odo",              m002_trips_odo),
@@ -1177,6 +1185,7 @@ MIGRATIONS = [
     (81, "trip_temp",              m081_trip_temp),
     (82, "read_api",               m082_read_api),
     (83, "trip_rain",              m083_trip_rain),
+    (84, "trip_rain_checked",      m084_trip_rain_checked),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

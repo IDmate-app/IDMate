@@ -23,9 +23,21 @@ Area: the same as the wind arrows (the stored range area's centre and radius
 plus one wind raster cell). The services are only asked for fixed web map
 tiles (zoom TILE_Z) that cover that area, never for the car's own position.
 
-Frames every FRAME_MIN minutes from PAST_MIN ago to AHEAD_MIN ahead (DWD; the
-RainViewer cells only for the past and now). A result is kept until the next
-5-minute step of the DWD composite.
+Frames every FRAME_MIN minutes, on the quarter hour, from PAST_MIN ago to
+AHEAD_MIN ahead (DWD; the RainViewer cells only for the past and now).
+
+Load on the services (their terms: DWD open data under GeoNutzV with the
+source named, fair use; RainViewer's free API for personal, non-commercial
+use, tiles to be cached, attribution "RainViewer"):
+- nothing is fetched unless someone looks (map layer on, read API asked) or
+  the range needs it (the model has learned what rain costs);
+- at most one new raster per quarter hour and set of tiles: a car driving
+  on asks again only when its area needs other tiles;
+- a measured picture is fetched once (they do not change), only the
+  forecast frames are asked anew: per quarter hour one new DWD picture plus
+  the eight forecasts, a handful of RainViewer tiles outside Germany;
+- the DWD coverage once a day, the RainViewer frame list at most every 5 min;
+- after an error the source rests FAIL_S.
 """
 
 import io
@@ -90,7 +102,8 @@ _last = None                   # newest result (for the range)
 _mask = {"t": 0.0, "img": None}
 _down_until = {"dwd": 0.0, "rainviewer": 0.0}
 _rv_meta = {"t": 0.0, "data": None}
-_tiles = {}                    # RainViewer tile cache: url → (time, image)
+_tiles = {}                    # RainViewer tile cache: url → (time, image); the pictures never change
+_dwd_pics = {}                 # measured DWD pictures: (box, size, time) → image
 
 
 def sources():
@@ -302,12 +315,12 @@ def _rv_frames(now):
 def _rv_tile(prefix, x, y, now):
     url = f"{prefix}/256/{TILE_Z}/{x}/{y}/2/0_0.png"
     hit = _tiles.get(url)
-    if hit and now - hit[0] < 1800:
+    if hit and now - hit[0] < 3 * 3600:
         return hit[1]
     _ctype, blob = _get(url, timeout=20)
     img = _image(blob)
     _tiles[url] = (now, img)
-    for k in [k for k, v in _tiles.items() if now - v[0] > 1800]:
+    for k in [k for k, v in _tiles.items() if now - v[0] > 3 * 3600]:
         _tiles.pop(k, None)
     return img
 
@@ -322,9 +335,11 @@ def _samples(lat, lon):
 
 
 def _frame_times(now):
-    step = STEP_MIN * 60
-    base = (int(now) - LAG_MIN * 60) // step * step
-    times = [base + k * FRAME_MIN * 60 for k in range(-PAST_MIN // FRAME_MIN, AHEAD_MIN // FRAME_MIN + 1)]
+    """(now frame, all frame times): on the quarter hour, the newest quarter
+    for which the DWD composite is surely there. A new set every 15 min."""
+    slot = FRAME_MIN * 60
+    base = (int(now) - LAG_MIN * 60) // slot * slot
+    times = [base + k * slot for k in range(-PAST_MIN // FRAME_MIN, AHEAD_MIN // FRAME_MIN + 1)]
     return base, times
 
 
@@ -385,8 +400,14 @@ def compute(lat, lon, radius_km, now=None, dwd_map=None, rv_frames=None, rv_tile
     dwd_imgs, rv_imgs = {}, {}
 
     def one_dwd(t):
+        key = (round(ox0), round(oy0), w, h, t)
+        if t <= base and key in _dwd_pics:          # measured pictures do not change: ask once
+            return _dwd_pics[key]
         try:
-            return dwd_map((ox0, oy0, ox1, oy1), w, h, datetime.fromtimestamp(t, timezone.utc))
+            img = dwd_map((ox0, oy0, ox1, oy1), w, h, datetime.fromtimestamp(t, timezone.utc))
+            if t <= base and img is not None:
+                _dwd_pics[key] = img
+            return img
         except Exception as e:
             log.warning("rain: DWD picture failed (%s)", e)
             return None
@@ -413,6 +434,8 @@ def compute(lat, lon, radius_km, now=None, dwd_map=None, rv_frames=None, rv_tile
         if use_dwd and now >= _down_until["dwd"]:
             dwd_imgs = dict(zip(times, ex.map(one_dwd, times)))
         rv_imgs = dict(zip(rv_keys, ex.map(one_rv, list(rv_keys))))
+    for k in [k for k in _dwd_pics if k[4] < base - PAST_MIN * 60]:
+        _dwd_pics.pop(k, None)
 
     frames = []
     for t in times:
@@ -498,7 +521,9 @@ def area(lat, lon, radius_km, now=None, wait=False):
     now = now or time.time()
     radius = radius_km + wind.GRID_KM
     base, _t = _frame_times(now)
-    key = (cell_of(lat, lon), round(radius / 25), base)
+    # same tiles, same quarter hour → same raster: a car driving on does not
+    # cause new requests until its area needs other tiles
+    key = (tiles_for(lat, lon, radius), base)
 
     def work():
         global _last
@@ -525,7 +550,7 @@ def area(lat, lon, radius_km, now=None, wait=False):
             work()
             return _cache.get(key)
         threading.Thread(target=work, name="rain-radar", daemon=True).start()
-    if prev and _dist_km(lat, lon, *prev["_center"]) < 2 * CELL_KM:
+    if prev and _dist_km(lat, lon, *prev["_center"]) < 0.25 * radius:
         return prev
     return None
 

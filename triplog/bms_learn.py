@@ -472,6 +472,42 @@ def _start_energy(trips, model, with_temp):
     return max(0.0, fm.median(extra)), len(extra)
 
 
+RAIN_MIN_TRIPS = 8             # trips per rain grade before its extra consumption counts
+RAIN_MIN_KM = 150
+RAIN_MAX_EXTRA = 12.0          # kWh/100 km: more is not rain but something else
+
+
+def _wmean(pairs):
+    w = sum(k for _v, k in pairs)
+    return sum(v * k for v, k in pairs) / w if w else None
+
+
+def rain_effect(trips, model):
+    """Extra consumption in rain (L-003): for every grade (1 light, 2 moderate,
+    3 heavy, trips.rain_level from the weather archive) the km-weighted mean
+    of how far the trips lie above the model, less the same for the dry
+    trips (grade 0) — so the model's own bias does not count as rain.
+    → ({grade: kWh/100 km}, {grade: trips}); a grade needs RAIN_MIN_TRIPS
+    trips and RAIN_MIN_KM km, else it is left out."""
+    res = {}
+    for t in trips:
+        lv = t.get("rain")
+        if lv is None or not t.get("km") or not t.get("cons") or not t.get("v"):
+            continue
+        res.setdefault(int(lv), []).append((t["cons"] - trip_prediction(model, t), t["km"]))
+    dry = res.get(0) or []
+    if len(dry) < RAIN_MIN_TRIPS:
+        return {}, {k: len(v) for k, v in res.items()}
+    base = _wmean(dry)
+    out = {}
+    for lv in (1, 2, 3):
+        pts = res.get(lv) or []
+        if len(pts) < RAIN_MIN_TRIPS or sum(k for _v, k in pts) < RAIN_MIN_KM:
+            continue
+        out[lv] = round(max(0.0, min(RAIN_MAX_EXTRA, _wmean(pts) - base)), 2)
+    return out, {k: len(v) for k, v in res.items()}
+
+
 def speed_model(trips):
     """trips: [{km, cons, v, temp, stood_h, kwh}] → {"a", "b", "c", "p",
     "e_start", "form", "n", "km", "temp", "cv", "start_n"} or None. form:
@@ -514,10 +550,18 @@ def speed_model(trips):
         if m2:
             m = m2
             e, n_start = _start_energy(trips, m, used is warm)
-    return {"a": round(m["a"], 3), "b": round(m["b"], 3), "c": round(m["c"], 4), "p": round(m["p"], 4),
-            "e_start": round(e, 2), "start_n": n_start, "form": form,
-            "n": len(used), "km": round(sum(t["km"] for t in used)), "temp": used is warm,
-            "cv": {f: round(v, 2) for f, v in cv.items()}}
+    out = {"a": round(m["a"], 3), "b": round(m["b"], 3), "c": round(m["c"], 4), "p": round(m["p"], 4),
+           "e_start": round(e, 2), "start_n": n_start, "form": form,
+           "n": len(used), "km": round(sum(t["km"] for t in used)), "temp": used is warm,
+           "cv": {f: round(v, 2) for f, v in cv.items()}}
+    # rain: what the trips in rain used beyond the model (rain_effect); the
+    # range adds it where the radar shows rain on the way (rain_extra)
+    rain, rain_n = rain_effect(used, {**m, "e_start": e})
+    if rain:
+        out["rain"] = rain
+    if rain_n:
+        out["rain_n"] = rain_n
+    return out
 
 
 def consumption(model, v, temp, v_air=None):

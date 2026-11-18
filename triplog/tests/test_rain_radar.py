@@ -123,3 +123,56 @@ def test_off_without_source(monkeypatch):
 def test_tiles_bounded():
     x0, y0, x1, y1 = rr.tiles_for(53.5, 10.0, 1500)
     assert (x1 - x0 + 1) * (y1 - y0 + 1) <= rr.MAX_TILES
+
+
+def test_model_learns_rain_from_trips():
+    """bms_learn.rain_effect: trips in rain above the model, less the dry trips' bias."""
+    import random
+    random.seed(1)
+    model = {"a": 10.0, "b": 8.0, "c": 0.0, "p": 0.0, "e_start": 0.0}
+    trips = []
+    for k in range(60):
+        lv = k % 4
+        v = 60 + (k * 7) % 60
+        cons = bl.consumption(model, v, 15) + 0.5 + {0: 0.0, 1: 1.0, 2: 2.0, 3: 3.5}[lv] + random.uniform(-0.2, 0.2)
+        trips.append({"km": 40, "v": v, "temp": 15, "cons": cons, "stood_h": 0.1, "rain": lv})
+    rain, n = bl.rain_effect(trips, model)
+    assert n == {0: 15, 1: 15, 2: 15, 3: 15}
+    assert abs(rain[1] - 1.0) < 0.3 and abs(rain[2] - 2.0) < 0.3 and abs(rain[3] - 3.5) < 0.3
+    few = [t for t in trips if t["rain"] in (0, 3)][:20]
+    rain, _n = bl.rain_effect(few, model)
+    assert 1 not in rain and 2 not in rain
+    assert bl.rain_effect([t for t in trips if t["rain"]], model)[0] == {}     # no dry trips: no baseline
+
+
+def test_measured_pictures_are_fetched_once(monkeypatch):
+    """Next quarter hour: only the new measured picture and the forecasts again."""
+    monkeypatch.setattr(rr, "_covered", lambda m, la, lo: True)
+    rr._dwd_pics.clear()
+    calls = []
+
+    def dwd(bbox, w, h, when=None):
+        calls.append(when)
+        return Image.new("RGBA", (w, h), (255, 255, 255, 0))
+    now = 1_794_960_000
+    rr.compute(53.55, 10.0, 30, now=now, dwd_map=dwd, rv_frames=lambda n: [], rv_tile=None, mask={"img": None})
+    first = len(calls)
+    assert first == rr.PAST_MIN // rr.FRAME_MIN + 1 + rr.AHEAD_MIN // rr.FRAME_MIN
+    calls.clear()
+    rr.compute(53.55, 10.0, 30, now=now + 15 * 60, dwd_map=dwd, rv_frames=lambda n: [], rv_tile=None,
+               mask={"img": None})
+    assert len(calls) == 1 + rr.AHEAD_MIN // rr.FRAME_MIN      # the new "now" plus the forecasts
+
+
+def test_area_asks_once_per_quarter_and_tile_set(monkeypatch):
+    n = []
+    monkeypatch.setattr(rr, "compute", lambda la, lo, r, now=None: n.append(1) or
+                        {"_center": (la, lo), "frames": [], "radius": r, "cell_km": 5, "levels": {}})
+    rr._cache.clear()
+    now = 1_794_960_000
+    rr.area(53.55, 10.0, 150, now=now, wait=True)
+    rr.area(53.56, 10.02, 150, now=now + 60, wait=True)        # drove on a little: same tiles
+    rr.area(53.55, 10.0, 150, now=now + 120, wait=True)
+    assert len(n) == 1
+    rr.area(53.55, 10.0, 150, now=now + 16 * 60, wait=True)    # next quarter hour
+    assert len(n) == 2

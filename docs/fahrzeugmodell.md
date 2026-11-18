@@ -210,6 +210,22 @@ Parameter im Diagnose-Export.
 Voraussetzung: erst die Rechnungen vereinheitlichen (Abschnitt 3). Ein Modell
 auf widersprüchlichen Zielwerten lernt die Widersprüche mit.
 
+### Regen (1.2.343–1.2.345)
+
+- Jede Fahrt bekommt aus dem Open-Meteo-Archiv den mittleren Niederschlag
+  (mm/h) an Start- und Zielpunkt des 50-km-Rasters und eine Stufe: 0 trocken,
+  1 leicht (< 1), 2 mittel (1–5), 3 stark (> 5 mm/h) (`trip_rain.py`,
+  `trips.rain_mmh`, `rain_level`). Beim ersten Lauf werden einmalig alle Fahrten
+  der letzten `RAIN_BACKFILL_DAYS` Tage (Standard 365) nachgetragen; jede Fahrt
+  wird nur einmal abgefragt (`trips.rain_checked`), danach nur noch neue.
+- `bms_learn.rain_effect()`: Mehrverbrauch je Stufe = km-gewichteter Mittelwert,
+  wie weit die Fahrten dieser Stufe über dem Modell liegen, minus derselbe Wert
+  der trockenen Fahrten. Eine Stufe zählt ab 8 Fahrten und 150 km. Ergebnis im
+  Modell als `rain`, an der Lese-API in `/energy-model`.
+- Die Reichweite (`wind_range`) rechnet den Mehrverbrauch dort ein, wo das
+  Regenradar (`rain_radar.py`, DWD und RainViewer in einem Raster) zur
+  erwarteten Ankunftszeit Regen zeigt.
+
 ## 5. Fahrzeug-Analyse und Zertifikat
 
 Umgesetzt in 1.2.209 als Tab „Fahrzeug“ der Analyse (`/api/vehicle-report`,

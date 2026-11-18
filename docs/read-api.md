@@ -113,6 +113,7 @@ know are left out; while the car has fewer than 20 usable trips there is no `con
 | `recent` | `{"hours", "distance" km, "consumption" kWh/100 km, "speed" km/h}` | what the trips ended in the last 6 hours add up to; speed over the time driven |
 | `average` | same, with `"days"` | the same over the last 28 days |
 | `basis` | `{"trips", "distance" km, "speed_max" km/h}` | what the model rests on; `speed_max` is the fastest trip average measured, above it the curve is extrapolated |
+| `rain` | list of `{"level", "kwh100", "trips"}` | extra consumption in rain per grade of the rain raster (below), learned from the vehicle's own trips in rain against its dry trips; a grade appears once at least 8 trips (150 km) were driven in it. Add `kwh100` to `consumption` where `/rain` shows that grade on the way |
 
 `v` is the average speed actually driven over a stretch, not the figure on the cruise control: the model
 learns from trip averages, and a motorway trip at 130 averages about 110. `recent` and `average` come from
@@ -150,6 +151,31 @@ a cell came from makes no difference.
 `frames` is empty while the rain layer is off on the server, the vehicle has no range area yet, or the
 first raster is still being worked out (a few seconds – ask again). Forecast frames only cover the area
 of the German composite.
+
+**How to use it in an app**
+
+1. Get the token as for every `/api/v1` route (QR code from *Admin → Interfaces*), send it as
+   `Authorization: Bearer <token>`.
+2. Ask `GET /api/v1/rain`. The raster changes at most every 15 minutes: ask every 5 minutes at most
+   (the server keeps the result; asking more often costs nothing but gains nothing). While `frames` is
+   empty, ask again after 30 seconds.
+3. Draw each cell as a rectangle around its centre: `cell_km / 111.2` degrees high and
+   `cell_km / (111.2 · cos(lat))` degrees wide. Colours used on the IDmate map: grade 1 `#9ecae1`,
+   2 `#4292c6`, 3 `#08519c`, about 45 % opaque.
+4. Show the frame with `kind = "now"` by default; the others for a time slider or an animation (past
+   first, then forecast). Name the sources listed in `src` (see below).
+5. For a range along a route: take the grade of the cell and frame at the place and time the car gets
+   there and add the `rain` extra of `GET /api/v1/energy-model` for that grade. Without a learned
+   extra, rain does not change the range.
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" https://idmate.example/api/v1/rain
+```
+
+The server asks the radar services itself; an app never talks to them. Terms the server keeps: the
+Deutscher Wetterdienst's open data (GeoNutzV, source named), RainViewer's free API (personal,
+non-commercial, attribution, cached tiles). A client that shows the data has to name the sources
+the same way: "Deutscher Wetterdienst" and "RainViewer".
 
 ```json
 {"v": 1, "src": "backend", "ts": "2026-11-17T23:41:00Z", "seq": 12, "type": "rain",
