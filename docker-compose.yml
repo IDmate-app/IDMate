@@ -76,6 +76,15 @@ services:
       - MQTT_TLS=0
       - MQTT_AES_KEY=${MQTT_AES_KEY}
       - MQTT_DATA_TOPIC=${MQTT_DATA_TOPIC:-tele/+/data}
+      # Optional: weather from Open-Meteo – wind arrows on the map, outside temperature and
+      # rain per trip (for the consumption model). Any non-empty value switches it on.
+      - WIND_SOURCE=${WIND_SOURCE:-}
+      # With the weather on, the rain radar is on too: Deutscher Wetterdienst first,
+      # RainViewer where the DWD has no data. Uncomment to change it:
+      #   RAIN_SOURCE=dwd               only the DWD;  RAIN_SOURCE=  rain radar off
+      # - RAIN_SOURCE=dwd,rainviewer
+      # One-off fill of the rain on past trips: this many days back (default 365).
+      # - RAIN_BACKFILL_DAYS=365
     depends_on:
       influxdb:
         condition: service_healthy
