@@ -72,6 +72,9 @@ def _fetch(point, day0, day1):
         "start_date": day0, "end_date": day1, "hourly": "precipitation",
         "timeformat": "unixtime", "timezone": "GMT"})
     req = urllib.request.Request(ARCHIVE_URL + "?" + q, headers={"User-Agent": "IDmate"})
+    import api_usage
+    days = (datetime.fromisoformat(day1) - datetime.fromisoformat(day0)).days + 1
+    api_usage.count("open-meteo", 1, units=max(1, -(-days // 14)))   # every two weeks count as one call
     with urllib.request.urlopen(req, timeout=60) as r:
         h = (json.loads(r.read().decode("utf-8")).get("hourly") or {})
     return {datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H"): v

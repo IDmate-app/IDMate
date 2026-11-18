@@ -1104,6 +1104,18 @@ def m084_trip_rain_checked(db, log):
     log.info("Migration: trips.rain_checked added")
 
 
+def m085_api_usage(db, log):
+    """Requests to outside services per provider and day (api_usage.py)."""
+    if "api_usage" not in _tables(db):
+        db.execute("""CREATE TABLE api_usage (
+            provider TEXT NOT NULL,
+            day      TEXT NOT NULL,
+            requests INTEGER NOT NULL DEFAULT 0,
+            units    INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (provider, day))""")
+    log.info("Migration: api_usage added")
+
+
 MIGRATIONS = [
     (1,  "trips_is_gpx",            m001_trips_is_gpx),
     (2,  "trips_odo",              m002_trips_odo),
@@ -1189,6 +1201,7 @@ MIGRATIONS = [
     (82, "read_api",               m082_read_api),
     (83, "trip_rain",              m083_trip_rain),
     (84, "trip_rain_checked",      m084_trip_rain_checked),
+    (85, "api_usage",              m085_api_usage),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

@@ -160,6 +160,9 @@ def _overpass(box, opener=None):
     errors = []
     for url in _urls():
         req = urllib.request.Request(url, data=body, headers={"User-Agent": "IDmate"})
+        if opener is urllib.request.urlopen:
+            import api_usage
+            api_usage.count("overpass")
         try:
             with opener(req, timeout=90) as r:
                 return json.loads(r.read().decode("utf-8"))

@@ -66,7 +66,9 @@ def admin_page():
                            gap_limits={k: getattr(trip_check, k) for k in (
                                "SPEED_MIN_KMH", "SPEED_MAX_KMH", "SLOW_CHECK_MIN_KM",
                                "CONS_MIN", "CONS_MAX", "CONS_MIN_KM", "SOC_STEP_MAX")},
-                           teslamate_configured=teslamate_import.is_configured())
+                           teslamate_configured=teslamate_import.is_configured(),
+                           mdl_t={k[4:]: v for k, v in _translations.get(get_language(), _translations["DE"]).items()
+                                  if k.startswith("mdl_")})
 
 
 @admin_bp.route("/api/admin/values")

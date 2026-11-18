@@ -239,6 +239,8 @@ def _tile_merc(x, y, z=TILE_Z):
 # ── fetching ────────────────────────────────────────────────────────────────
 
 def _get(url, data=None, timeout=30):
+    import api_usage
+    api_usage.count("dwd" if "dwd.de" in url or url.startswith(config.RAIN_DWD_URL) else "rainviewer")
     req = urllib.request.Request(url, data=data, headers=UA)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.headers.get("Content-Type", ""), r.read()

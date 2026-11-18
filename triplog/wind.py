@@ -72,6 +72,8 @@ def _fetch(points):
         "wind_speed_unit": "kmh", "forecast_hours": HOURS,
         "timeformat": "unixtime", "timezone": "GMT"})
     req = urllib.request.Request(config.WIND_URL + "?" + q, headers={"User-Agent": "IDmate"})
+    import api_usage
+    api_usage.count("open-meteo", 1, units=len(points))      # every location counts as one call
     with urllib.request.urlopen(req, timeout=30) as r:
         data = json.loads(r.read().decode("utf-8"))
     data = data if isinstance(data, list) else [data]

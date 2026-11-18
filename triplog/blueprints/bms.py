@@ -415,9 +415,14 @@ def bms_export():
     how they learn: all learning points, the fitted models with the error of
     every form, and the trips of the last year with what the model expects
     for each. No positions, addresses, plate or device name."""
+    from flask_login import current_user
     db = get_db()
     try:
         v = active_vehicle(db)
+        vid = request.args.get("vehicle", type=int)
+        if vid and current_user.is_authenticated and current_user.is_admin:   # admin page: any vehicle
+            row = db.execute("SELECT * FROM vehicles WHERE id = ?", (vid,)).fetchone()
+            v = dict(row) if row else None
         if not v:
             return jsonify({"error": _t()["err_not_found"]}), 404
         st = _state(db, v)
@@ -449,6 +454,10 @@ def bms_export():
                          "power of the hours the trip touches",
                 "can_range_daily": "lowest and highest range the stick read from the car per UTC day (last 120 days); "
                                    "can_capacity_daily: the same for the capacity it read",
+                "rain": "trips[].rain = rain grade during the trip from the weather archive (0 dry, 1 light < 1 mm/h, "
+                        "2 moderate 1-5, 3 heavy > 5) at the start and end 50-km raster points; speed_model.rain = "
+                        "extra kWh/100 km per grade: km-weighted mean of (cons - model_cons) of the trips of that grade "
+                        "minus the same of the dry trips, from 8 trips and 150 km; rain_n = trips per grade",
                 "points": "disp_* typed from the car's display, the rest read from the CAN bus at that moment; "
                           "trip_km/trip_min = since the trip began, stood_h = standing time before it",
             },
@@ -465,6 +474,123 @@ def bms_export():
         }
     finally:
         db.close()
-    name = "idmate-bms-%s.json" % datetime.now().strftime("%Y-%m-%d")
+    name = "idmate-model-%s-%s.json" % (v["id"], datetime.now().strftime("%Y-%m-%d"))
     return Response(json.dumps(data, ensure_ascii=False, indent=1), mimetype="application/json",
                     headers={"Content-Disposition": 'attachment; filename="%s"' % name})
+
+
+# ── Admin → Interfaces: the consumption model per vehicle ────────────────────
+
+MODEL_VIEW_SPEEDS = list(range(30, 161, 10))
+MODEL_VIEW_TEMPS = list(range(-15, 36, 5))
+MODEL_VIEW_WIND = list(range(-40, 41, 10))     # km/h along the car: + head wind, − tail wind
+
+
+def _usable(t):
+    return bool((t.get("km") or 0) >= fm.MIN_CONS_KM and t.get("cons") and t.get("v")
+                and 25 <= t["v"] <= 125 and 5 <= t["cons"] <= 60)
+
+
+def model_view(db, v):
+    """How far the consumption model of a vehicle is, what it says, and the
+    trips it rests on (for the charts on the admin page)."""
+    device = v["device"]
+    trips = _trips(db, device) if device else []
+    model = _model(device, trips) if device else None
+    ok = [t for t in trips if _usable(t)]
+    warm = [t for t in ok if t.get("temp") is not None]
+    have = {"trips": len(ok), "km": round(sum(t["km"] for t in ok)),
+            "fast_km": round(sum(t["km"] for t in ok if t["v"] >= 80)),
+            "with_temp": len(warm), "with_rain": sum(1 for t in ok if t.get("rain") is not None)}
+    need = {"trips": bl.FIT_MIN_TRIPS, "km": bl.FIT_MIN_KM, "fast_km": bl.FIT_MIN_FAST_KM,
+            "rain_trips": bl.RAIN_MIN_TRIPS, "rain_km": bl.RAIN_MIN_KM}
+    rain_n = {}
+    for t in ok:
+        if t.get("rain") is not None:
+            rain_n.setdefault(int(t["rain"]), [0, 0.0])
+            rain_n[int(t["rain"])][0] += 1
+            rain_n[int(t["rain"])][1] += t["km"]
+    out = {"vehicle": {"id": v["id"], "name": v["name"], "plate": v["plate"]},
+           "have": have, "need": need,
+           "rain_trips": {str(k): {"trips": n, "km": round(km)} for k, (n, km) in sorted(rain_n.items())},
+           "model": model}
+    if model:
+        t_ref = 20.0
+        out["says"] = {
+            "speed": [{"v": s, "warm": round(bl.consumption(model, s, t_ref), 1),
+                       "cold": round(bl.consumption(model, s, 0.0), 1)} for s in MODEL_VIEW_SPEEDS],
+            "temp": [{"t": x, "kwh100": round(bl.consumption(model, 100, x), 1)} for x in MODEL_VIEW_TEMPS],
+            "wind": [{"w": w, "kwh100": round(bl.consumption(model, 100, t_ref, v_air=100 + w), 1)}
+                     for w in MODEL_VIEW_WIND],
+            "rain": [{"level": int(k), "kwh100": val, "trips": (model.get("rain_n") or {}).get(k)}
+                     for k, val in sorted((model.get("rain") or {}).items())],
+            "start_kwh": model.get("e_start"),
+        }
+    out["trips"] = [{"v": t["v"], "cons": t["cons"], "km": round(t["km"], 1), "temp": t.get("temp"),
+                     "rain": t.get("rain"), "start": t["start"],
+                     "model": round(bl.trip_prediction(model, t), 1) if model and t.get("temp") is not None
+                     or (model and not model.get("temp")) else None}
+                    for t in ok]
+    return out
+
+
+def _admin_only(f):
+    from functools import wraps
+    from flask_login import current_user
+
+    @wraps(f)
+    def wrapped(*a, **k):
+        if not current_user.is_authenticated or not current_user.is_admin:
+            return jsonify({"error": _t()["err_admin_required"]}), 403
+        return f(*a, **k)
+    return wrapped
+
+
+@bms_bp.route("/api/admin/consumption-model")
+@_admin_only
+def model_vehicles():
+    """Vehicles with a device (trips with energy), for the selector."""
+    db = get_db()
+    try:
+        rows = db.execute("SELECT id, name, plate FROM vehicles WHERE device IS NOT NULL AND device != '' "
+                          "ORDER BY name").fetchall()
+        return jsonify([{"id": r["id"], "name": r["name"], "plate": r["plate"]} for r in rows])
+    finally:
+        db.close()
+
+
+@bms_bp.route("/api/admin/consumption-model/<int:vid>")
+@_admin_only
+def model_detail(vid):
+    db = get_db()
+    try:
+        v = db.execute("SELECT id, name, plate, device FROM vehicles WHERE id = ?", (vid,)).fetchone()
+        if not v:
+            return jsonify({"error": _t()["err_not_found"]}), 404
+        return jsonify(model_view(db, v))
+    finally:
+        db.close()
+
+
+@bms_bp.route("/api/admin/api-usage")
+@_admin_only
+def api_usage_summary():
+    import api_usage
+    db = get_db()
+    try:
+        return jsonify(api_usage.summary(db))
+    finally:
+        db.close()
+
+
+@bms_bp.route("/api/admin/api-usage/<provider>")
+@_admin_only
+def api_usage_history(provider):
+    import api_usage
+    if provider not in api_usage.PROVIDERS:
+        return jsonify({"error": _t()["err_not_found"]}), 404
+    db = get_db()
+    try:
+        return jsonify(api_usage.history(db, provider, days=60))
+    finally:
+        db.close()

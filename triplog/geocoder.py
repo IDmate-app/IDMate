@@ -94,6 +94,9 @@ def reverse_geocode(lat, lon):
         f"?lat={lat}&lon={lon}&format=json&zoom=18&addressdetails=1"
     )
     req = urllib.request.Request(url, headers={"User-Agent": config.GEOCODE_USER_AGENT})
+    if "openstreetmap.org" in config.GEOCODE_URL:           # the public server has a limit, an own one not
+        import api_usage
+        api_usage.count("nominatim")
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read())

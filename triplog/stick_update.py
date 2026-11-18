@@ -53,6 +53,8 @@ def parse_releases(items):
 def _fetch():
     url = f"https://api.github.com/repos/{config.STICK_FW_REPO}/releases?per_page=10"
     req = urllib.request.Request(url, headers={"User-Agent": "IDmate", "Accept": "application/vnd.github+json"})
+    import api_usage
+    api_usage.count("github")
     with urllib.request.urlopen(req, timeout=10) as r:
         return parse_releases(json.loads(r.read().decode("utf-8")))
 

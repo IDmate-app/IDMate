@@ -1078,6 +1078,206 @@
         <p style="font-size:0.75rem;color:var(--text-2);line-height:1.4">{{ t.read_api_once }}</p>
       </div>
     </div>
+
+    <!-- Consumption model per vehicle (blueprints/bms.py model_view) -->
+    <hr style="border:0;border-top:1px solid var(--border-soft);margin:1.6rem 0 1.2rem">
+    <h3 class="h-sec2">{{ t.mdl_title }}</h3>
+    <p style="font-size:0.8rem;color:var(--text-2);margin-bottom:0.6rem;line-height:1.45">{{ t.mdl_desc }}</p>
+    <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:0.6rem">
+      <select id="mdlVehicle" data-onchange="loadModelView" style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:0.3rem 0.4rem;color:var(--text-1);font-size:0.82rem"></select>
+      <a id="mdlExport" class="btn-sm" href="#" download>{{ t.mdl_export }}</a>
+    </div>
+    <div id="mdlBody" class="mdl"></div>
+
+    <!-- Outside services: requests per day and month (api_usage.py) -->
+    <hr style="border:0;border-top:1px solid var(--border-soft);margin:1.6rem 0 1.2rem">
+    <h3 class="h-sec2">{{ t.apiu_title }}</h3>
+    <p style="font-size:0.8rem;color:var(--text-2);margin-bottom:0.6rem;line-height:1.45">{{ t.apiu_desc }}</p>
+    <div id="apiuList" class="mdl"></div>
+    <style nonce="{{ csp_nonce }}">
+      .mdl details{border:1px solid var(--border-soft);border-radius:6px;margin:0.4rem 0;background:var(--bg-card)}
+      .mdl summary{cursor:pointer;padding:0.5rem 0.7rem;font-size:0.85rem;color:var(--text-1);list-style:none;display:flex;gap:0.6rem;align-items:baseline;flex-wrap:wrap}
+      .mdl summary::-webkit-details-marker{display:none}
+      .mdl summary::before{content:"\203A";display:inline-block;width:0.8em;color:var(--text-2);transition:transform .15s}
+      .mdl details[open]>summary::before{transform:rotate(90deg)}
+      .mdl summary .sub{color:var(--text-2);font-size:0.78rem}
+      .mdl .in{padding:0 0.8rem 0.7rem;font-size:0.8rem;color:var(--text-2);line-height:1.5}
+      .mdl table{border-collapse:collapse;font-size:0.8rem}
+      .mdl td{padding:0.15rem 0.8rem 0.15rem 0;color:var(--text-1)}
+      .mdl td:first-child{color:var(--text-2)}
+      .mdl .bar{height:8px;border-radius:4px;background:var(--bg-hover);overflow:hidden;width:220px;display:inline-block;vertical-align:middle;margin-right:0.5rem}
+      .mdl .bar i{display:block;height:100%;background:var(--accent)}
+      .mdl .bar i.done{background:var(--success, #2da44e)}
+      .mdl svg{width:100%;max-width:640px;height:auto;display:block;margin-top:0.3rem}
+      .mdl svg text{fill:var(--text-2);font-size:11px}
+      .mdl .lg{display:flex;gap:1rem;flex-wrap:wrap;font-size:0.75rem;margin-top:0.2rem}
+      .mdl .lg span::before{content:"";display:inline-block;width:10px;height:3px;margin-right:4px;vertical-align:middle;background:var(--c)}
+      .mdl .warn{color:var(--warn, #bf8700)}
+    </style>
+    <script nonce="{{ csp_nonce }}">
+    const MDL_T = {{ mdl_t | tojson }};
+    const fmtN = (x, d) => x == null ? '–' : Number(x).toLocaleString(undefined, {maximumFractionDigits: d == null ? 0 : d, minimumFractionDigits: d || 0});
+    const escH = s => String(s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+
+    // ── small SVG charts ──
+    // lines: [{pts: [[x, y]], color, dash}], dots: [[x, y, color]]
+    function lineChart(o) {
+      const W = 560, H = 220, L = 44, R = 12, Tp = 10, B = 30;
+      const xs = [].concat(...o.lines.map(l => l.pts.map(p => p[0])), (o.dots || []).map(d => d[0]));
+      const ys = [].concat(...o.lines.map(l => l.pts.map(p => p[1])), (o.dots || []).map(d => d[1]));
+      const x0 = o.xmin != null ? o.xmin : Math.min(...xs), x1 = o.xmax != null ? o.xmax : Math.max(...xs);
+      let y0 = Math.min(...ys), y1 = Math.max(...ys);
+      if (o.y0 != null) y0 = Math.min(y0, o.y0);
+      const pad = (y1 - y0) * 0.08 || 1; y0 = Math.floor(y0 - pad); y1 = Math.ceil(y1 + pad);
+      const X = x => L + (x - x0) / ((x1 - x0) || 1) * (W - L - R), Y = y => H - B - (y - y0) / ((y1 - y0) || 1) * (H - Tp - B);
+      let g = '';
+      const ny = 4;
+      for (let k = 0; k <= ny; k++) {
+        const v = y0 + (y1 - y0) * k / ny, y = Y(v);
+        g += `<line x1="${L}" x2="${W - R}" y1="${y}" y2="${y}" stroke="currentColor" stroke-opacity=".12"/><text x="${L - 6}" y="${y + 4}" text-anchor="end">${fmtN(v, (y1 - y0) < 8 ? 1 : 0)}</text>`;
+      }
+      (o.xticks || []).forEach(v => { g += `<text x="${X(v)}" y="${H - B + 16}" text-anchor="middle">${v}</text>`; });
+      if (o.xlab) g += `<text x="${(L + W - R) / 2}" y="${H - 2}" text-anchor="middle">${escH(o.xlab)}</text>`;
+      if (o.ylab) g += `<text x="${L}" y="${Tp - 1}" text-anchor="start">${escH(o.ylab)}</text>`;
+      if (o.zero != null && o.zero >= x0 && o.zero <= x1) g += `<line x1="${X(o.zero)}" x2="${X(o.zero)}" y1="${Tp}" y2="${H - B}" stroke="currentColor" stroke-opacity=".3" stroke-dasharray="3 3"/>`;
+      (o.dots || []).forEach(d => { g += `<circle cx="${X(d[0]).toFixed(1)}" cy="${Y(d[1]).toFixed(1)}" r="2.2" fill="${d[2] || '#8b949e'}" fill-opacity=".55"/>`; });
+      o.lines.forEach(l => {
+        g += `<polyline fill="none" stroke="${l.color}" stroke-width="2.2" ${l.dash ? 'stroke-dasharray="6 4"' : ''} points="${l.pts.map(p => X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1)).join(' ')}"/>`;
+      });
+      return `<svg viewBox="0 0 ${W} ${H}" style="color:var(--text-2)" role="img" aria-label="${escH(o.label || '')}">${g}</svg>`;
+    }
+    // bars: [{label, value, color, title}]; limit: horizontal line
+    function barChart(bars, o) {
+      o = o || {};
+      const W = 560, H = 180, L = 44, R = 8, Tp = 10, B = 26;
+      const top = Math.max(1, ...bars.map(b => b.value), o.limit && o.showLimit ? o.limit : 0) * 1.08;
+      const bw = (W - L - R) / bars.length;
+      let g = '';
+      for (let k = 0; k <= 3; k++) {
+        const v = top * k / 3, y = H - B - v / top * (H - Tp - B);
+        g += `<line x1="${L}" x2="${W - R}" y1="${y}" y2="${y}" stroke="currentColor" stroke-opacity=".12"/><text x="${L - 6}" y="${y + 4}" text-anchor="end">${fmtN(v)}</text>`;
+      }
+      bars.forEach((b, i) => {
+        const h = b.value / top * (H - Tp - B), x = L + i * bw;
+        g += `<rect x="${(x + bw * 0.12).toFixed(1)}" y="${(H - B - h).toFixed(1)}" width="${Math.max(1, bw * 0.76).toFixed(1)}" height="${h.toFixed(1)}" fill="${b.color || 'var(--accent)'}"><title>${escH(b.title || (b.label + ': ' + fmtN(b.value)))}</title></rect>`;
+        if (b.label && (!o.every || i % o.every === 0)) g += `<text x="${(x + bw / 2).toFixed(1)}" y="${H - B + 15}" text-anchor="middle">${escH(b.label)}</text>`;
+      });
+      if (o.limit && o.showLimit) {
+        const y = H - B - o.limit / top * (H - Tp - B);
+        g += `<line x1="${L}" x2="${W - R}" y1="${y}" y2="${y}" stroke="#cf222e" stroke-dasharray="5 4"/><text x="${W - R}" y="${y - 4}" text-anchor="end" style="fill:#cf222e">${escH(MDL_T.limit)} ${fmtN(o.limit)}</text>`;
+      }
+      return `<svg viewBox="0 0 ${W} ${H}" style="color:var(--text-2)" role="img">${g}</svg>`;
+    }
+
+    // ── consumption model ──
+    async function loadModelVehicles() {
+      const sel = document.getElementById('mdlVehicle');
+      if (sel.options.length) { loadModelView(); return; }
+      try {
+        const vs = await (await fetch('/api/admin/consumption-model')).json();
+        sel.innerHTML = vs.map(v => `<option value="${v.id}">${escH(v.name || v.plate)}</option>`).join('');
+        if (!vs.length) { document.getElementById('mdlBody').textContent = MDL_T.no_vehicle; return; }
+        loadModelView();
+      } catch (e) {}
+    }
+    function prog(have, need, unit) {
+      const p = Math.min(100, Math.round(have / need * 100));
+      return `<span class="bar"><i class="${p >= 100 ? 'done' : ''}" style="width:${p}%"></i></span>${fmtN(have)} / ${fmtN(need)} ${unit || ''}`;
+    }
+    const RAIN_NAMES = () => [MDL_T.rain0, MDL_T.rain1, MDL_T.rain2, MDL_T.rain3];
+    async function loadModelView() {
+      const id = document.getElementById('mdlVehicle').value, body = document.getElementById('mdlBody');
+      if (!id) return;
+      document.getElementById('mdlExport').href = '/api/bms-learn/export?vehicle=' + id;
+      body.textContent = MDL_T.loading;
+      let d;
+      try { d = await (await fetch('/api/admin/consumption-model/' + id)).json(); } catch (e) { body.textContent = MDL_T.error; return; }
+      const m = d.model, h = d.have, n = d.need, s = d.says;
+      // 1. how far
+      let st = `<table>
+        <tr><td>${MDL_T.st_trips}</td><td>${prog(h.trips, n.trips)}</td></tr>
+        <tr><td>${MDL_T.st_km}</td><td>${prog(h.km, n.km, 'km')}</td></tr>
+        <tr><td>${MDL_T.st_fast}</td><td>${prog(h.fast_km, n.fast_km, 'km')}</td></tr>
+        <tr><td>${MDL_T.st_temp}</td><td>${fmtN(h.with_temp)} / ${fmtN(h.trips)}</td></tr>
+        <tr><td>${MDL_T.st_rain}</td><td>${fmtN(h.with_rain)} / ${fmtN(h.trips)}</td></tr>`;
+      [1, 2, 3].forEach(k => {
+        const r = d.rain_trips[k] || {trips: 0, km: 0};
+        st += `<tr><td>${MDL_T.st_rain_lv} ${RAIN_NAMES()[k]}</td><td>${prog(r.trips, n.rain_trips, MDL_T.trips)} · ${fmtN(r.km)} / ${fmtN(n.rain_km)} km</td></tr>`;
+      });
+      const dry = d.rain_trips[0] || {trips: 0};
+      st += `<tr><td>${MDL_T.st_rain_lv} ${RAIN_NAMES()[0]}</td><td>${prog(dry.trips, n.rain_trips, MDL_T.trips)}</td></tr></table>`;
+      st += m ? `<p>${MDL_T.st_ready}</p>` : `<p class="warn">${MDL_T.st_not_ready}</p>`;
+      let html = `<details open><summary>${MDL_T.sec_status}<span class="sub">${m ? MDL_T.st_ok.replace('{0}', fmtN(m.n)).replace('{1}', fmtN(m.km)) : MDL_T.st_not_ready}</span></summary><div class="in">${st}</div></details>`;
+      if (m) {
+        // 2. facts
+        const sp = v => (s.speed.find(x => x.v === v) || {});
+        let f = `<table>
+          <tr><td>${MDL_T.f_form}</td><td>${m.form === 'flat' ? MDL_T.f_form_flat : m.form === 'hour' ? MDL_T.f_form_hour : MDL_T.f_form_km}</td></tr>
+          <tr><td>${MDL_T.f_v}</td><td>50 km/h: ${fmtN(sp(50).warm, 1)} · 100 km/h: ${fmtN(sp(100).warm, 1)} · 130 km/h: ${fmtN(sp(130).warm, 1)} kWh/100 km (20 °C)</td></tr>
+          <tr><td>${MDL_T.f_cold}</td><td>100 km/h: ${fmtN(sp(100).cold, 1)} kWh/100 km (0 °C)</td></tr>
+          <tr><td>${MDL_T.f_start}</td><td>${fmtN(m.e_start, 2)} kWh (${fmtN(m.start_n)} ${MDL_T.trips})</td></tr>`;
+        const w = s.wind, wHead = w.find(x => x.w === 20), wTail = w.find(x => x.w === -20), w0 = w.find(x => x.w === 0);
+        f += `<tr><td>${MDL_T.f_wind}</td><td>+${fmtN(wHead.kwh100 - w0.kwh100, 1)} / ${fmtN(wTail.kwh100 - w0.kwh100, 1)} kWh/100 km (20 km/h ${MDL_T.f_wind_ht})</td></tr>`;
+        f += `<tr><td>${MDL_T.f_rain}</td><td>${s.rain.length ? s.rain.map(r => `${RAIN_NAMES()[r.level]} +${fmtN(r.kwh100, 1)} (${fmtN(r.trips)} ${MDL_T.trips})`).join(' · ') : MDL_T.f_rain_none}</td></tr>`;
+        if (m.cv && Object.keys(m.cv).length) f += `<tr><td>${MDL_T.f_cv}</td><td>${Object.entries(m.cv).map(([k, v]) => `${k}: ${fmtN(v, 2)}`).join(' · ')} kWh/100 km</td></tr>`;
+        f += `</table><p>${MDL_T.f_formula}</p>`;
+        html += `<details><summary>${MDL_T.sec_facts}</summary><div class="in">${f}</div></details>`;
+        // 3. speed
+        const dots = d.trips.map(t => [t.v, t.cons, t.rain >= 1 ? '#2171b5' : (t.temp != null && t.temp < 5 ? '#79c0ff' : '#8b949e')]);
+        html += `<details><summary>${MDL_T.sec_v}</summary><div class="in">${lineChart({
+          lines: [{pts: s.speed.map(x => [x.v, x.warm]), color: '#d29922'}, {pts: s.speed.map(x => [x.v, x.cold]), color: '#2f81f7', dash: true}],
+          dots, xticks: [30, 50, 70, 90, 110, 130, 150], xlab: MDL_T.x_v, ylab: 'kWh/100 km', label: MDL_T.sec_v})}
+          <div class="lg"><span style="--c:#d29922">${MDL_T.lg_warm}</span><span style="--c:#2f81f7">${MDL_T.lg_cold}</span><span style="--c:#8b949e">${MDL_T.lg_trips}</span></div></div></details>`;
+        // 4. temperature: trips at 80–120 km/h against the curve at 100 km/h
+        const tdots = d.trips.filter(t => t.temp != null && t.v >= 80 && t.v <= 120).map(t => [t.temp, t.cons, '#8b949e']);
+        html += `<details><summary>${MDL_T.sec_t}</summary><div class="in">${lineChart({
+          lines: [{pts: s.temp.map(x => [x.t, x.kwh100]), color: '#2f81f7'}], dots: tdots, xmin: -15, xmax: 35,
+          xticks: [-15, -5, 5, 15, 25, 35], xlab: MDL_T.x_t, ylab: 'kWh/100 km', label: MDL_T.sec_t})}
+          <div class="lg"><span style="--c:#2f81f7">${MDL_T.lg_t}</span><span style="--c:#8b949e">${MDL_T.lg_trips_fast}</span></div></div></details>`;
+        // 5. wind
+        html += `<details><summary>${MDL_T.sec_w}</summary><div class="in">${lineChart({
+          lines: [{pts: s.wind.map(x => [x.w, x.kwh100]), color: '#0969da'}], zero: 0,
+          xticks: [-40, -20, 0, 20, 40], xlab: MDL_T.x_w, ylab: 'kWh/100 km', label: MDL_T.sec_w})}
+          <p>${MDL_T.w_note}</p></div></details>`;
+        // 6. rain
+        const rb = [0, 1, 2, 3].map(k => {
+          const r = s.rain.find(x => x.level === k);
+          return {label: RAIN_NAMES()[k], value: k === 0 ? 0 : (r ? r.kwh100 : 0), color: ['#8b949e', '#6baed6', '#2171b5', '#08306b'][k],
+                  title: k === 0 ? MDL_T.rain_base : (r ? `+${fmtN(r.kwh100, 1)} kWh/100 km, ${fmtN(r.trips)} ${MDL_T.trips}` : MDL_T.f_rain_none)};
+        });
+        html += `<details><summary>${MDL_T.sec_r}</summary><div class="in">${s.rain.length ? barChart(rb) : ''}<p>${s.rain.length ? MDL_T.r_note : MDL_T.r_wait}</p></div></details>`;
+      }
+      body.innerHTML = html;
+    }
+
+    // ── outside services ──
+    async function loadApiUsage() {
+      const box = document.getElementById('apiuList');
+      let list;
+      try { list = await (await fetch('/api/admin/api-usage')).json(); } catch (e) { return; }
+      box.innerHTML = list.map(p => {
+        const u = p.provider === 'open-meteo';
+        const day = u ? p.units_day : p.requests_day, mon = u ? p.units_month : p.requests_month;
+        const lim = (v, l) => fmtN(v) + (l ? ' / ' + fmtN(l) : '');
+        const share = p.limit_day ? day / p.limit_day : 0;
+        const nm = MDL_T['p_' + p.provider + '_name'] || p.name, nt = MDL_T['p_' + p.provider + '_note'] || p.note;
+        return `<details data-prov="${p.provider}"><summary>${escH(nm)}<span class="sub ${share > 0.5 ? 'warn' : ''}">${MDL_T.today} ${lim(day, p.limit_day)} · ${MDL_T.month} ${lim(mon, p.limit_month)}${u ? ' ' + MDL_T.units : ''}</span></summary><div class="in"><p>${escH(nt)}</p><div class="apiu-chart">${MDL_T.loading}</div></div></details>`;
+      }).join('');
+      box.querySelectorAll('details').forEach(el => el.addEventListener('toggle', async () => {
+        if (!el.open || el.dataset.done) return;
+        el.dataset.done = '1';
+        const prov = el.dataset.prov, p = list.find(x => x.provider === prov), u = prov === 'open-meteo';
+        try {
+          const hist = await (await fetch('/api/admin/api-usage/' + prov)).json();
+          el.querySelector('.apiu-chart').innerHTML = barChart(hist.map(x => ({
+            label: x.day.slice(8, 10) + '.' + x.day.slice(5, 7), value: u ? x.units : x.requests,
+            title: `${x.day}: ${fmtN(x.requests)} ${MDL_T.requests}` + (u ? `, ${fmtN(x.units)} ${MDL_T.units}` : '')})),
+            {limit: p.limit_day, showLimit: !!p.limit_day && Math.max(...hist.map(x => u ? x.units : x.requests)) > p.limit_day * 0.25, every: 7})
+            + `<p>${MDL_T.chart_days}</p>`;
+        } catch (e) { el.querySelector('.apiu-chart').textContent = MDL_T.error; }
+      }));
+    }
+    </script>
   </div>
 
   <div class="tab-content" id="tab-database">
@@ -1666,7 +1866,7 @@
       if (name === 'users') loadUsers();
       if (name === 'database' && !document.getElementById('dbSqlite').dataset.loaded) loadDbStats();
       if (name === 'telemetry') { loadStickBattery(); loadDataVolume(); loadCarrierAll(); }
-      if (name === 'homeassistant') { loadHaExport(); loadReadApi(); }
+      if (name === 'homeassistant') { loadHaExport(); loadReadApi(); loadModelVehicles(); loadApiUsage(); }
       if (name === 'diagnostics') initDiagTab();
       if (name === 'gaps') initGapsTab();
     }
