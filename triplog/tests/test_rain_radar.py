@@ -216,3 +216,24 @@ def test_area_answers_at_once_then_completes(monkeypatch):
         time.sleep(0.05)
     final = rr.area(53.55, 10.0, 150, now=now + 4)
     assert final["_complete"] is True and calls == [True, False]
+
+
+def test_keeper_comes_back_after_restart(monkeypatch, tmp_path):
+    """Last use is kept in the settings: after a restart the keeper starts by itself."""
+    import sqlite3
+    db = tmp_path / "s.db"
+    c = sqlite3.connect(db)
+    c.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)")
+    c.commit(); c.close()
+    monkeypatch.setattr(config, "DB_PATH", str(db))
+    started = []
+    monkeypatch.setattr(rr, "_start_keeper", lambda: started.append(1))
+    rr._used.update({"t": 0.0, "keeper": False, "stored": 0})
+    rr._used_store(time.time() - 3600)
+    rr.start((53.5, 10.0, 200))
+    assert started == [1] and rr._used["args"] == (53.5, 10.0, 200)
+    started.clear()
+    rr._used_store(time.time() - 5 * 86400)                 # not used for days: stays off
+    rr._used["t"] = 0.0
+    rr.start()
+    assert started == []

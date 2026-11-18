@@ -33,10 +33,12 @@ use, tiles to be cached, attribution "RainViewer"):
   the same number of requests as for a small area, but every place in its
   reach is covered at once, wherever the car is or goes;
 - the measured picture of now is fetched once per quarter hour. While rain was
-  asked for in the last KEEP_DAYS days, a keeper fetches the newest one each
-  quarter hour (96 a day), so the map shows the rain of now at once;
-- the eight forecast pictures only when someone asks (map layer on, read
-  API) or the range needs them, at most once per quarter hour;
+  asked for in the last KEEP_DAYS days, a keeper fetches it (96 a day), so
+  the map shows the rain of now at once; it comes back by itself after a
+  restart (last use kept in the settings);
+- the eight forecast pictures only while someone looked in the last two
+  hours (then the keeper has the whole raster ready) or when asked for, at
+  most once per quarter hour;
 - RainViewer only for cells outside the DWD composite, its tiles kept 3 h;
   its frame list at most every 5 min; the coverage mask once a day from a
   picture fetched anyway;
@@ -543,29 +545,55 @@ def public(res):
                        if f["src"]]}
 
 
-KEEP_DAYS = 3                  # the keeper fetches the newest picture while rain was asked for lately
-KEEP_EVERY_S = 300
+KEEP_DAYS = 3                  # the keeper fetches the picture of now while rain was asked for lately
+ACTIVE_S = 2 * 3600            # … and the whole raster with the forecast while someone looked in the last 2 h
+KEEP_EVERY_S = 60              # look once a minute whether a new quarter hour is there (asks only then)
+
+
+def _used_store(t=None):
+    """When rain was last asked for, kept in the settings table so the
+    keeper comes back by itself after a restart (an update via Watchtower
+    restarts the container). Written at most every 10 minutes."""
+    try:
+        import sqlite3
+        db = sqlite3.connect(config.DB_PATH, timeout=5)
+        try:
+            if t is None:
+                row = db.execute("SELECT value FROM settings WHERE key = 'rain_last_used'").fetchone()
+                return float(row[0]) if row and row[0] else 0.0
+            db.execute("INSERT INTO settings (key, value) VALUES ('rain_last_used', ?) "
+                       "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (str(int(t)),))
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        log.debug("rain: last use not stored: %s", e)
+    return 0.0
 
 
 def _keeper():
-    """Keeps the measured DWD picture of now ready, so the map
-    shows the rain of now at once: one new whole-composite picture per
-    quarter hour (96 a day), only while someone asked for rain in the last
-    KEEP_DAYS days. The forecast is fetched only when asked for."""
+    """Keeps the rain ready, so the map shows it at once:
+    - while rain was asked for in the last KEEP_DAYS days: the measured DWD
+      picture of now, one per quarter hour (96 a day), and the coverage;
+    - while someone looked in the last ACTIVE_S: also the whole raster of the
+      last area with the forecast (8 more pictures per quarter hour), so even
+      the forecast is there when the map opens.
+    Looks once a minute; a picture already kept is not asked for again."""
     while True:
         now = time.time()
-        if now - _used["t"] > KEEP_DAYS * 86400 or "dwd" not in sources():
+        if now - _used["t"] > KEEP_DAYS * 86400 or not enabled():
             _used["keeper"] = False
             return
-        if now >= _down_until["dwd"]:
-            base, times = _frame_times(now)
-            for t in times:
-                if t <= base:
-                    _dwd_frame(t, base, _dwd_map)
-            try:
+        try:
+            if "dwd" in sources() and now >= _down_until["dwd"]:
+                base, _times = _frame_times(now)
+                _dwd_frame(base, base, _dwd_map)
                 coverage(now)
-            except Exception as e:
-                log.warning("rain: DWD coverage failed (%s)", e)
+            args = _used.get("args")
+            if args and now - _used["t"] < ACTIVE_S:
+                area(*args, now=now, wait=True, touch=False)
+        except Exception as e:
+            log.warning("rain: keeper: %s", e)
         time.sleep(KEEP_EVERY_S)
 
 
@@ -577,10 +605,23 @@ def _start_keeper():
     threading.Thread(target=_keeper, name="rain-keeper", daemon=True).start()
 
 
+def start(args=None):
+    """At server start: the keeper comes back if rain was asked for in the
+    last KEEP_DAYS days (args: the last area, if known)."""
+    if not enabled():
+        return
+    t = _used_store()
+    if t and time.time() - t < KEEP_DAYS * 86400:
+        _used["t"] = t
+        if args:
+            _used["args"] = args
+        _start_keeper()
+
+
 _busy = {"on": False}
 
 
-def area(lat, lon, radius_km, now=None, wait=False):
+def area(lat, lon, radius_km, now=None, wait=False, touch=True):
     """The rain raster for the area around the range: same centre and radius
     as the wind arrows. Now comes at once from the picture the
     keeper holds (complete false); the forecast follows in the background
@@ -590,9 +631,14 @@ def area(lat, lon, radius_km, now=None, wait=False):
     if not enabled():
         return None
     now = now or time.time()
-    _used["t"] = max(_used["t"], now)
-    if not wait:
-        _start_keeper()
+    if touch:                          # someone asked (map, read API, range): remember for the keeper
+        if now - _used.get("stored", 0) > 600:
+            _used["stored"] = now
+            _used_store(now)
+        _used["t"] = max(_used["t"], now)
+        _used["args"] = (lat, lon, radius_km)
+        if not wait:
+            _start_keeper()
     radius = radius_km + wind.GRID_KM
     base, _t = _frame_times(now)
     # same tiles, same quarter hour → same raster: a car driving on does not

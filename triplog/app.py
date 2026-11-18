@@ -1970,6 +1970,28 @@ def _range_area_vehicle(db, v):
     return range_area.render_if_due(db, v["device"], lat, lon, kms, dirs=dirs, field_fn=field_fn)
 
 
+def _rain_keeper_boot():
+    """After a restart (e.g. an update): the rain keeper comes back at once
+    if rain was asked for lately, for the active vehicle's area."""
+    time.sleep(20)
+    try:
+        import range_area
+        import rain_radar
+        args = None
+        db = get_db()
+        try:
+            for v in db.execute("SELECT device FROM vehicles WHERE device IS NOT NULL AND device != ''"):
+                rec = range_area.load_last(db, v["device"])
+                if rec:
+                    args = (rec["lat"], rec["lon"], max(rec["kms"]))
+                    break
+        finally:
+            db.close()
+        rain_radar.start(args)
+    except Exception as e:
+        log.warning("rain: keeper start: %s", e)
+
+
 def _trip_rain_loop():
     """Rain on the trips (trip_rain.py, L-003): a few minutes after the start,
     then once a day — the weather archive is a few days behind."""
@@ -7251,6 +7273,7 @@ if __name__ == "__main__":
     threading.Thread(target=_range_area_loop, name="range-area-loop", daemon=True).start()
     threading.Thread(target=_trip_temp_backfill, name="trip-temp-backfill", daemon=True).start()
     threading.Thread(target=_trip_rain_loop, name="trip-rain", daemon=True).start()
+    threading.Thread(target=_rain_keeper_boot, name="rain-boot", daemon=True).start()
     threading.Thread(target=background_mqtt, daemon=True).start()
     # journeys list pictures for anything missing (first run, rendering change)
     try:
