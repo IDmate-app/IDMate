@@ -187,6 +187,25 @@ def _quality(db, v):
             "open_gaps": len(gaps), "open_gap_km": round(sum(g["km"] for g in gaps))}
 
 
+def _model_summary(db, v):
+    """What the consumption model says (L-008): curves for speed (20 °C and
+    0 °C), outside temperature, wind and the rain surcharge per level, plus
+    how many trips it rests on. No single trips. None without a model."""
+    try:
+        from blueprints.bms import model_view
+        mv = model_view(db, {"id": v.get("id"), "name": v.get("name"), "plate": v.get("plate"),
+                             "device": v.get("device")})
+    except Exception:
+        log.exception("vehicle report: consumption model failed")
+        return None
+    if not mv.get("model") or not mv.get("says"):
+        return None
+    says = mv["says"]
+    return {"trips": mv["have"]["trips"], "km": mv["have"]["km"],
+            "speed": says["speed"], "temp": says["temp"], "wind": says["wind"],
+            "rain": [{"level": r["level"], "kwh100": r["kwh100"]} for r in says["rain"]]}
+
+
 @report_bp.route("/api/vehicle-report")
 @login_required
 def vehicle_report():
@@ -203,6 +222,7 @@ def vehicle_report():
             "charging": _charging(db, v),
             "mileage": _mileage(db, v),
             "quality": _quality(db, v),
+            "model": _model_summary(db, v),
         }
     finally:
         db.close()
@@ -212,7 +232,7 @@ def vehicle_report():
                                      q.get("open_gap_km"), m.get("km_recorded"), q.get("errors"), q.get("warnings"))
     rep["meta"] = {"created": datetime.now().strftime("%Y-%m-%d %H:%M"), "version": config.VERSION, "repo": config.REPO_URL}
     # Fingerprint of the content: the same data gives the same code.
-    body = json.dumps({k: rep[k] for k in ("vehicle", "battery", "consumption", "charging", "mileage", "quality")},
+    body = json.dumps({k: rep[k] for k in ("vehicle", "battery", "consumption", "charging", "mileage", "quality", "model")},
                       sort_keys=True, default=str)
     rep["meta"]["fingerprint"] = hashlib.sha256(body.encode()).hexdigest()[:12].upper()
     return jsonify(rep)

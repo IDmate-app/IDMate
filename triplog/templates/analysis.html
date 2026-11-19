@@ -61,6 +61,8 @@
     .vr-cert{max-width:860px;margin:0 auto 2rem;background:#fff;color:#1f2328;border-radius:10px;padding:1.6rem 1.8rem;box-shadow:0 2px 14px rgba(0,0,0,.25);font-size:0.86rem;line-height:1.45}
     html.pdf-rendering .vr-cert{box-shadow:none;border-radius:0;padding:0;max-width:none;margin:0;font-size:0.8rem;line-height:1.35}
     html.pdf-rendering .vr-chart{height:96px;margin-top:0.3rem}
+    html.pdf-rendering .vr-mchart{height:82px}
+    html.pdf-rendering .vr-mgrid{gap:0.2rem 0.8rem;margin-top:0.2rem}
     html.pdf-rendering .vr-foot{margin-top:0.6rem;padding-top:0.35rem;font-size:0.6rem;gap:0.15rem 1rem;line-height:1.3}
     html.pdf-rendering .vr-grid{gap:0.7rem 1.4rem}
     html.pdf-rendering .vr-head{margin-bottom:0.7rem}
@@ -97,7 +99,11 @@
     .vr-seasons b{display:block;font-size:0.9rem;line-height:1.1}
     .vr-seasons small{display:block;font-size:0.66rem;color:#57606a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .vr-warn{font-size:0.78rem;color:#9a6700;background:#fff8c5;border:1px solid #d4a72c;border-radius:6px;padding:0.35rem 0.55rem;margin-top:0.45rem}
-    .vr-chart{height:190px;margin-top:0.6rem;overflow:hidden}  /* PDF: the canvas behind its image swap must not spill */
+    .vr-chart{height:190px;margin-top:0.6rem;overflow:hidden}
+    .vr-mgrid{display:grid;grid-template-columns:1fr 1fr;gap:0.5rem 1rem;margin-top:0.4rem}
+    .vr-mgrid h3{font-size:0.72rem;color:#57606a;font-weight:500;margin:0 0 0.1rem}
+    .vr-mchart{height:140px;overflow:hidden}
+    .vr-mchart.none{height:auto;font-size:0.72rem;color:#57606a;padding-top:0.3rem}  /* PDF: the canvas behind its image swap must not spill */
     .vr-foot{margin-top:1.2rem;padding-top:0.6rem;border-top:1px solid #d0d7de;font-size:0.72rem;color:#57606a;display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap}
     .vr-soh-detail{flex:1;min-width:240px}
     @media (max-width:700px){.vr-grid{grid-template-columns:minmax(0,1fr)}.vr-cert{padding:1rem;border-radius:0;overflow:hidden}.vr-head{flex-direction:column}.vr-head .vr-odo{text-align:left}.vr-soh{flex-direction:column;align-items:stretch;gap:0.6rem}.vr-soh-detail{flex:none;min-width:0;width:100%}.vr-kv{gap:0.1rem 0.6rem}}
@@ -1537,7 +1543,7 @@
 
     // ── Vehicle report ("Fahrzeug" tab) ──
     const VR = {
-      {% for k in ['vr_title','vr_battery','vr_soh','vr_capacity','vr_of_nominal','vr_spread','vr_trend','vr_trend_flat','vr_measured','vr_src_counter','vr_src_charges','vr_bms','vr_bms_none','vr_bms_resets','vr_buffer','vr_buffer_top','vr_buffer_bottom','vr_buffer_released','vr_buffer_none','vr_buffer_open','vr_swap','vr_swap_suspect','vr_consumption','vr_batt_side','vr_grid_side','vr_all','vr_12m','vr_trips_sum','vr_seasons','vr_monthly','vr_monthly_hint','vr_monthly_hint_notemp','vr_at_ref','vr_per_10c','vr_winter','vr_spring','vr_summer','vr_autumn','vr_recup','vr_recup_val','vr_charging','vr_charges','vr_energy','vr_home_ext','vr_ac_dc','vr_eff','vr_eff_measured','vr_eff_fixed','vr_eff_global','vr_eff_ac','vr_soc_window','vr_full','vr_cost','vr_mileage','vr_since','vr_odo','vr_km_year','vr_trips','vr_avg_trip','vr_quality','vr_energy_cov','vr_gaps','vr_findings','vr_accuracy','vr_acc_energy','vr_acc_gaps','vr_acc_findings','vr_stamp_title','vr_footer','vr_fingerprint','vr_disclaimer','vr_none','vr_km_basis'] %}
+      {% for k in ['vr_title','vr_battery','vr_soh','vr_capacity','vr_of_nominal','vr_spread','vr_trend','vr_trend_flat','vr_measured','vr_src_counter','vr_src_charges','vr_bms','vr_bms_none','vr_bms_resets','vr_buffer','vr_buffer_top','vr_buffer_bottom','vr_buffer_released','vr_buffer_none','vr_buffer_open','vr_swap','vr_swap_suspect','vr_consumption','vr_batt_side','vr_grid_side','vr_all','vr_12m','vr_trips_sum','vr_seasons','vr_monthly','vr_monthly_hint','vr_monthly_hint_notemp','vr_at_ref','vr_per_10c','vr_winter','vr_spring','vr_summer','vr_autumn','vr_recup','vr_recup_val','vr_charging','vr_charges','vr_energy','vr_home_ext','vr_ac_dc','vr_eff','vr_eff_measured','vr_eff_fixed','vr_eff_global','vr_eff_ac','vr_soc_window','vr_full','vr_cost','vr_mileage','vr_since','vr_odo','vr_km_year','vr_trips','vr_avg_trip','vr_quality','vr_energy_cov','vr_gaps','vr_findings','vr_accuracy','vr_acc_energy','vr_acc_gaps','vr_acc_findings','vr_stamp_title','vr_footer','vr_fingerprint','vr_disclaimer','vr_none','vr_km_basis','vr_model','vr_model_hint','vr_model_speed','vr_model_temp','vr_model_wind','vr_model_rain','vr_model_rain_none','vr_rain_1','vr_rain_2','vr_rain_3','vr_warm','vr_cold'] %}
       {{ k[3:] | tojson }}: {{ t[k] | tojson }},{% endfor %}
     };
     let _vrLoaded = false, _vrData = null;
@@ -1638,6 +1644,14 @@
           ${(c.monthly || []).length >= 2 ? `<div class="vr-sec full"><h2>${esc(VR.monthly)}</h2>
             <div class="vr-chart"><canvas id="vrConsChart"></canvas></div>
             <div class="vr-note">${esc(c.monthly.some(m => m.temp != null) ? VR.monthly_hint : VR.monthly_hint_notemp)}</div></div>` : ''}
+          ${d.model ? `<div class="vr-sec full"><h2>${esc(VR.model)}</h2>
+            <div class="vr-note">${esc(vrF(VR.model_hint, fmtNum(d.model.trips, 0), fmtNum(d.model.km, 0)))}</div>
+            <div class="vr-mgrid">
+              <div><h3>${esc(VR.model_speed)}</h3><div class="vr-mchart"><canvas id="vrModSpeed"></canvas></div></div>
+              <div><h3>${esc(VR.model_temp)}</h3><div class="vr-mchart"><canvas id="vrModTemp"></canvas></div></div>
+              <div><h3>${esc(VR.model_wind)}</h3><div class="vr-mchart"><canvas id="vrModWind"></canvas></div></div>
+              <div><h3>${esc(VR.model_rain)}</h3>${(d.model.rain || []).length ? '<div class="vr-mchart"><canvas id="vrModRain"></canvas></div>' : `<div class="vr-mchart none">${esc(VR.model_rain_none)}</div>`}</div>
+            </div></div>` : ''}
           <div class="vr-sec"><h2>${esc(VR.mileage)}</h2>
             <dl class="vr-kv">
               <dt>${esc(VR.km_year)}</dt><dd>${m.km_per_year != null ? fmtNum(m.km_per_year, 0) + ' km' : '–'}</dd>
@@ -1661,6 +1675,34 @@
         <div class="vr-foot"><span>${esc(vrF(VR.footer, vrD(d.meta.created.slice(0, 10)) + ' ' + d.meta.created.slice(11), d.meta.version))} · ${esc(d.meta.repo || '')} · ${esc(VR.fingerprint)} ${esc(d.meta.fingerprint)}</span><span>${esc(VR.disclaimer)}</span></div>`;
       _vrChart(b.chart);
       _vrConsChart(c.monthly || []);
+      _vrModelCharts(d.model);
+    }
+    // L-008: what the consumption model says — speed (20 °C / 0 °C),
+    // outside temperature and wind at 100 km/h, rain surcharge per level.
+    let _vrModInst = [];
+    function _vrModelCharts(m) {
+      _vrModInst.forEach(c => c.destroy()); _vrModInst = [];
+      if (!m) return;
+      const grid = '#eaeef2', txt = '#57606a', blue = '#0969da', red = '#bc4c00';
+      const sc = (title) => ({ ticks: { color: txt, font: { size: 8 } }, grid: { color: grid },
+                               title: { display: !!title, text: title, color: txt, font: { size: 8 } } });
+      const opts = (xTitle, legend) => ({ responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: !!legend, labels: { color: txt, font: { size: 8 }, boxWidth: 8 } } },
+        scales: { x: sc(xTitle), y: sc('kWh/100 km') } });
+      const line = (label, data, color) => ({ type: 'line', label, data, borderColor: color, backgroundColor: color, borderWidth: 1.8, pointRadius: 1.5, tension: 0.3 });
+      const mk = (id, cfg) => { const cv = document.getElementById(id); if (cv) _vrModInst.push(new Chart(cv, cfg)); };
+      mk('vrModSpeed', { data: { labels: m.speed.map(p => p.v), datasets: [
+          line(VR.warm, m.speed.map(p => p.warm), blue), line(VR.cold, m.speed.map(p => p.cold), red)] },
+        options: opts('km/h', true) });
+      mk('vrModTemp', { data: { labels: m.temp.map(p => p.t), datasets: [line('kWh/100 km', m.temp.map(p => p.kwh100), red)] },
+        options: opts('°C') });
+      mk('vrModWind', { data: { labels: m.wind.map(p => (p.w > 0 ? '+' : '') + p.w), datasets: [line('kWh/100 km', m.wind.map(p => p.kwh100), blue)] },
+        options: opts('km/h') });
+      if ((m.rain || []).length) {
+        mk('vrModRain', { data: { labels: m.rain.map(r => VR['rain_' + r.level] || r.level), datasets: [
+            { type: 'bar', label: '+ kWh/100 km', data: m.rain.map(r => r.kwh100), backgroundColor: 'rgba(9,105,218,0.7)' }] },
+          options: Object.assign(opts(''), { scales: { x: sc(''), y: Object.assign(sc('+ kWh/100 km'), { beginAtZero: true }) } }) });
+      }
     }
     // Consumption per month (bars, battery side) and outside temperature
     // (line): shows how much of the consumption is the weather.

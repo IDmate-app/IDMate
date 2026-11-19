@@ -149,3 +149,30 @@ def test_model_and_report_carry_the_buffer_watch(app_module, client, monkeypatch
     assert d["buffer"]["top"]["hint"] == "none"
     assert client.get("/api/vehicle-report").get_json()["battery"]["buffer"]["bottom"]["center"] == 30.0
     model._buffer_cache.clear()
+
+
+def test_report_carries_the_consumption_model(app_module, client, monkeypatch):
+    """L-008: the certificate shows what the consumption model says, without single trips."""
+    from blueprints import bms
+    fake = {"model": {"k": 1}, "have": {"trips": 140, "km": 6100},
+            "says": {"speed": [{"v": 30, "warm": 14.0, "cold": 18.0}, {"v": 130, "warm": 24.0, "cold": 29.0}],
+                     "temp": [{"t": -10, "kwh100": 26.0}, {"t": 20, "kwh100": 19.0}],
+                     "wind": [{"w": -20, "kwh100": 17.0}, {"w": 20, "kwh100": 21.5}],
+                     "rain": [{"level": 1, "kwh100": 0.8, "trips": 12}, {"level": 2, "kwh100": 1.9, "trips": 9}],
+                     "start_kwh": 0.4},
+            "trips": [{"v": 80, "cons": 20}]}
+    monkeypatch.setattr(bms, "model_view", lambda db, v: fake)
+    app_module._trend_cache.clear(); app_module._eff_cache.clear()
+    d = client.get("/api/vehicle-report").get_json()
+    m = d["model"]
+    assert m["trips"] == 140 and m["km"] == 6100
+    assert m["speed"][1]["cold"] == 29.0 and m["wind"][0]["w"] == -20
+    assert m["rain"] == [{"level": 1, "kwh100": 0.8}, {"level": 2, "kwh100": 1.9}]
+    assert "trips" not in m or isinstance(m["trips"], int)
+
+
+def test_report_without_model(app_module, client, monkeypatch):
+    from blueprints import bms
+    monkeypatch.setattr(bms, "model_view", lambda db, v: {"model": None, "have": {"trips": 3, "km": 50}})
+    app_module._trend_cache.clear(); app_module._eff_cache.clear()
+    assert client.get("/api/vehicle-report").get_json()["model"] is None
