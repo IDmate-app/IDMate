@@ -132,6 +132,13 @@
 
     </div><!-- end map-chart-row -->
 
+    <!-- Charging curve from the stick (loaded async, hidden without data) -->
+    <div class="chart-card" id="curveCard" style="display:none">
+      <h3>{{ t.charge_detail_curve_title }}</h3>
+      <canvas id="cCurve" style="width:100%!important;height:230px!important"></canvas>
+      <div style="font-size:0.7rem;color:var(--text-2);margin-top:0.4rem">{{ t.charge_detail_curve_note }}</div>
+    </div>
+
     {% if session.is_external %}
     <!-- Edit external session -->
     <div class="ext-edit" style="padding:0.8rem;border:1px solid var(--border);border-radius:8px;background:var(--bg-card);margin-bottom:1rem">
@@ -355,8 +362,47 @@
   </script>
   {% endif %}
 
-  {% if not session.is_external %}
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <script nonce="{{ csp_nonce }}">
+    // ── Charging curve from the stick ──
+    (function() {
+      fetch('/api/charge/sessions/{{ session.id }}/curve', {credentials: 'same-origin'})
+        .then(r => r.ok ? r.json() : {points: []})
+        .then(d => {
+          const pts = (d && d.points) || [];
+          if (pts.length < 3 || typeof Chart === 'undefined') return;
+          document.getElementById('curveCard').style.display = '';
+          const labels = pts.map(p => p.t.slice(11, 16));
+          const ds = (label, key, color, axis) => ({
+            type: 'line', label, data: pts.map(p => p[key]), borderColor: color,
+            backgroundColor: color + '22', borderWidth: 1.5, pointRadius: pts.length > 80 ? 0 : 2,
+            tension: 0.25, spanGaps: true, yAxisID: axis
+          });
+          const datasets = [
+            Object.assign(ds('{{ t.charge_detail_curve_power }}', 'p', TC.accent, 'yKw'), {fill: true}),
+            ds('{{ t.charge_detail_curve_soc }}', 's', TC.success, 'yPct')
+          ];
+          if (pts.some(p => p.bt !== null)) datasets.push(ds('{{ t.charge_detail_curve_bt }}', 'bt', TC.warn, 'yPct'));
+          new Chart(document.getElementById('cCurve'), {
+            data: {labels, datasets},
+            options: {
+              responsive: true, maintainAspectRatio: false, interaction: {mode: 'index', intersect: false},
+              plugins: { legend: { display: true, labels: { color: TC.text2, font: { size: 10 } } } },
+              scales: {
+                x: { ticks: { color: TC.text2, font: { size: 10 }, maxTicksLimit: 12 }, grid: { color: TC.borderSoft } },
+                yKw: { position: 'left', beginAtZero: true, title: { display: true, text: 'kW', color: TC.accent, font: { size: 10 } },
+                       ticks: { color: TC.text2, font: { size: 10 } }, grid: { color: TC.borderSoft } },
+                yPct: { position: 'right', beginAtZero: true, title: { display: true, text: '% / °C', color: TC.success, font: { size: 10 } },
+                        ticks: { color: TC.text2, font: { size: 10 } }, grid: { drawOnChartArea: false } }
+              }
+            }
+          });
+        })
+        .catch(() => {});
+    })();
+  </script>
+
+  {% if not session.is_external %}
   <script nonce="{{ csp_nonce }}">
     // ── Charts ──
     (function() {

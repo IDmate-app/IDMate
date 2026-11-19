@@ -24,6 +24,7 @@ from flask import (Response, Blueprint, jsonify, redirect, render_template, requ
 from flask_login import current_user, login_required
 
 from app import (ENCRYPTED_SETTINGS, _billed_floor, _decrypt_setting,
+                 _to_rfc3339, _to_rfc3339_padded, allowed_vehicle_ids,
                  _operator_icon_map, _parse_german_num, _real_consumption,
                  _settings_fernet, _translations, active_device, active_vehicle,
                  admin_required, csrf, effective_date_range, get_bat_kwh, get_db,
@@ -1197,6 +1198,96 @@ def charge_session_readings(session_id):
     ).fetchall())
     db.close()
     return jsonify([{k: v for k, v in r.items() if k != "_utc"} for r in rows])
+
+
+# ── Charging curve from the stick ────────────────────────────
+
+CURVE_FIELDS = ("p", "s", "bt", "c", "dc")
+CURVE_MAX_POINTS = 400
+
+
+def charge_curve_points(records, max_points=CURVE_MAX_POINTS):
+    """Stick rows inside a charge window -> [{t, p, s, bt}] for the chart.
+
+    records: time-sorted dicts with ``_time`` (aware datetime) and any of the
+    CURVE_FIELDS. Values are forward-filled (the stick leaves out unchanged
+    values). Only rows where the car reports charging (c or dc) count, so the
+    driving rows around a fast-charge stop stay out. Power as a positive kW
+    value (the stick sends charging power negative). Downsampled evenly."""
+    last = {}
+    pts = []
+    for r in records:
+        for k in CURVE_FIELDS:
+            v = r.get(k)
+            if v is not None:
+                last[k] = v
+        t = r.get("_time")
+        if t is None or not ((last.get("c") or 0) >= 0.5 or (last.get("dc") or 0) >= 0.5):
+            continue
+        p = last.get("p")
+        soc = _sanitize_soc(last.get("s"))
+        bt = last.get("bt")
+        pts.append({
+            "t": t.astimezone(config.LOCAL_TZ).strftime("%Y-%m-%dT%H:%M:%S"),
+            "p": round(abs(float(p)), 1) if p is not None else None,
+            "s": round(float(soc), 1) if soc is not None else None,
+            "bt": round(float(bt), 1) if bt is not None else None,
+        })
+    if len(pts) > max_points:
+        step = len(pts) / max_points
+        pts = [pts[int(i * step)] for i in range(max_points)]
+    return pts
+
+
+def _influx_charge_curve(device, start_local, end_local):
+    """Stick telemetry of a charge (power, SoC, battery temperature)."""
+    import detector
+    client = detector.get_influx(timeout_ms=5000)
+    if not client:
+        return []
+    try:
+        fields = " or ".join(f'r._field == "{f}"' for f in CURVE_FIELDS)
+        query = f'''
+        from(bucket: "{config.INFLUX_BUCKET}")
+          |> range(start: {_to_rfc3339_padded(start_local, -15)}, stop: {_to_rfc3339_padded(end_local, 15)})
+          |> filter(fn: (r) => r._measurement == "v" and r.d == "{device}")
+          |> filter(fn: (r) => {fields})
+          |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+          |> sort(columns: ["_time"])
+        '''
+        records = []
+        for table in client.query_api().query(query, org=config.INFLUX_ORG):
+            for rec in table.records:
+                row = {k: rec.values.get(k) for k in CURVE_FIELDS}
+                row["_time"] = rec.get_time()
+                records.append(row)
+        return charge_curve_points(records)
+    except Exception:
+        log.exception("charge curve: influx query failed")
+        return []
+    finally:
+        client.close()
+
+
+@charges_bp.route("/api/charge/sessions/<int:session_id>/curve")
+@login_required
+def charge_session_curve(session_id):
+    """Charging curve of a session from the stick's telemetry (JSON)."""
+    db = get_db()
+    sess = db.execute("SELECT vehicle_plate, start_time, end_time FROM charge_sessions WHERE id = ?",
+                      (session_id,)).fetchone()
+    veh = None
+    if sess:
+        veh = db.execute("SELECT id, device FROM vehicles WHERE plate = ?",
+                         (sess["vehicle_plate"],)).fetchone()
+    allowed = allowed_vehicle_ids(db, current_user)
+    db.close()
+    if not sess or not sess["start_time"]:
+        return jsonify({"points": []}), 404
+    if veh is None or not veh["device"] or (allowed is not None and veh["id"] not in allowed):
+        return jsonify({"points": []})
+    end = sess["end_time"] or sess["start_time"]
+    return jsonify({"points": _influx_charge_curve(veh["device"], sess["start_time"], end)})
 
 
 # ── Edit charge readings ─────────────────────────────────────
