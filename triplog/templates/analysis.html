@@ -36,6 +36,12 @@
     .chart-card h3{font-size:0.8rem;color:var(--text-2);margin-bottom:0.6rem;font-weight:500}
     .chart-card canvas{width:100%!important;height:250px!important}
     .chart-card.wide{grid-column:1/-1}
+    .cp-head{display:flex;justify-content:space-between;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.4rem}
+    .cp-head h3{margin:0}
+    .cp-toggle{display:flex;gap:0.3rem}
+    .cp-toggle button{padding:0.2rem 0.7rem;font-size:0.75rem;border-radius:6px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-2);cursor:pointer}
+    .cp-toggle button.active{color:var(--accent);border-color:var(--accent)}
+    .chart-card canvas.cp-canvas{height:300px!important}
 
     .loading-overlay{display:flex;align-items:center;justify-content:center;gap:0.6rem;padding:2rem;color:var(--text-2);font-size:0.85rem}
     .spinner{width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite}
@@ -246,6 +252,7 @@
     <div class="summary" id="chargeSummary"></div>
     <div class="charts" id="chartsChargeCycles"></div>
     <div class="charts" id="chartsCharge"></div>
+    <div class="charts" id="chartsChargeProfile"></div>
   </div>
 
   <!-- Tab: World Map -->
@@ -683,6 +690,7 @@
           break;
         case 'laden':
           renderChargeCycles(_cachedChargeCycles);
+          renderChargeProfile();
           await renderChargeTab(_cachedQs);
           break;
       }
@@ -772,6 +780,99 @@
           }
         }
       });
+    }
+
+    // ── Charging power profile over all charges (stick data) ──
+    let _cpKind = 'dc';
+    const CP_METRICS = [
+      { key: 'p',  label: '{{ t.analysis_cp_power }}',   color: () => TC.accent,  axis: 'y',   hidden: false },
+      { key: 'i',  label: '{{ t.analysis_cp_current }}', color: () => TC.purple,  axis: 'yAV', hidden: true },
+      { key: 'u',  label: '{{ t.analysis_cp_voltage }}', color: () => TC.teal,    axis: 'yAV', hidden: true },
+      { key: 'bt', label: '{{ t.analysis_cp_temp }}',    color: () => TC.warn,    axis: 'y',   hidden: true },
+    ];
+
+    function makeProfileChart(id, items, labels, xTitle) {
+      if (chartInstances[id]) chartInstances[id].destroy();
+      const datasets = [];
+      const pick = (m, f) => items.map(it => it[m] ? it[m][f] : null);
+      CP_METRICS.forEach(m => {
+        const c = m.color();
+        const base = { yAxisID: m.axis, hidden: m.hidden, cpGroup: m.key, pointRadius: 0, borderWidth: 0, spanGaps: true, tension: 0.25 };
+        const iMin = datasets.length;
+        datasets.push({ ...base, cpRole: 'band', label: m.label + ' min', data: pick(m.key, 'min'), fill: false });
+        datasets.push({ ...base, cpRole: 'band', label: m.label + ' max', data: pick(m.key, 'max'), fill: { target: iMin }, backgroundColor: c + '1f' });
+        const iLo = datasets.length;
+        datasets.push({ ...base, cpRole: 'band', label: m.label + ' -σ', data: items.map(it => it[m.key] ? Math.round((it[m.key].mean - it[m.key].std) * 10) / 10 : null), fill: false });
+        datasets.push({ ...base, cpRole: 'band', label: m.label + ' +σ', data: items.map(it => it[m.key] ? Math.round((it[m.key].mean + it[m.key].std) * 10) / 10 : null), fill: { target: iLo }, backgroundColor: c + '4d' });
+        datasets.push({ ...base, cpRole: 'mean', label: m.label, data: pick(m.key, 'mean'), borderColor: c, backgroundColor: c, borderWidth: 2, pointRadius: 2, fill: false, cpItems: items });
+      });
+      chartInstances[id] = new Chart(document.getElementById(id).getContext('2d'), {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: {
+              display: true,
+              labels: { color: TC.text2, font: { size: 10 }, filter: (li, data) => data.datasets[li.datasetIndex].cpRole === 'mean' },
+              onClick: (e, li, legend) => {
+                const ch = legend.chart;
+                const grp = ch.data.datasets[li.datasetIndex].cpGroup;
+                const show = !ch.isDatasetVisible(li.datasetIndex);
+                ch.data.datasets.forEach((ds, i) => { if (ds.cpGroup === grp) ch.setDatasetVisibility(i, show); });
+                ch.update();
+              }
+            },
+            tooltip: {
+              filter: (ti) => ti.dataset.cpRole === 'mean',
+              callbacks: {
+                label: (ti) => {
+                  const it = ti.dataset.cpItems[ti.dataIndex];
+                  const st = it && it[ti.dataset.cpGroup];
+                  if (!st) return null;
+                  return `${ti.dataset.label}: ${fmtNum(st.mean, 1)} (±${fmtNum(st.std, 1)}, ${fmtNum(st.min, 1)}–${fmtNum(st.max, 1)}) · n=${it.n}`;
+                }
+              }
+            }
+          },
+          scales: {
+            x: { title: { display: true, text: xTitle, color: TC.text2, font: { size: 10 } }, ticks: { color: TC.text2, font: { size: 10 }, maxTicksLimit: 20 }, grid: { color: TC.borderSoft } },
+            y: { position: 'left', beginAtZero: true, title: { display: true, text: 'kW / °C', color: TC.text2, font: { size: 10 } }, ticks: { color: TC.text2, font: { size: 10 } }, grid: { color: TC.borderSoft } },
+            yAV: { position: 'right', display: 'auto', beginAtZero: true, title: { display: true, text: 'A / V', color: TC.text2, font: { size: 10 } }, ticks: { color: TC.text2, font: { size: 10 } }, grid: { drawOnChartArea: false } }
+          }
+        }
+      });
+    }
+
+    async function renderChargeProfile(kind) {
+      if (kind) _cpKind = kind;
+      const el = document.getElementById('chartsChargeProfile');
+      el.innerHTML = '<div class="chart-card wide"><div class="no-data">{{ t.common_loading }}</div></div>';
+      let d = null;
+      try {
+        const res = await fetch('/api/charge/power-profile?type=' + _cpKind);
+        if (res.ok) d = await res.json();
+      } catch (e) { d = null; }
+      if (!d || d.error) {
+        el.innerHTML = '<div class="chart-card wide"><div class="no-data">{{ t.analysis_cp_error }}</div></div>';
+        return;
+      }
+      const counts = d.counts || {};
+      const toggle = '<div class="cp-toggle">' + ['dc', 'ac'].map(k =>
+        `<button type="button" data-cpkind="${k}" class="${k === _cpKind ? 'active' : ''}">${k.toUpperCase()} (${counts[k] || 0})</button>`).join('') + '</div>';
+      if (!d.sessions) {
+        el.innerHTML = `<div class="chart-card wide"><div class="cp-head"><h3>{{ t.analysis_cp_title_soc }}</h3>${toggle}</div><div class="no-data">{{ t.analysis_cp_none }}</div></div>`;
+      } else {
+        const note = '{{ t.analysis_cp_note }}'.replace('{n}', d.sessions);
+        el.innerHTML = `
+          <div class="chart-card wide"><div class="cp-head"><h3>{{ t.analysis_cp_title_soc }}</h3>${toggle}</div><canvas id="cChargeProfileSoc" class="cp-canvas"></canvas><div class="chart-footnote">${note}</div></div>
+          <div class="chart-card wide"><div class="cp-head"><h3>{{ t.analysis_cp_title_time }}</h3></div><canvas id="cChargeProfileTime" class="cp-canvas"></canvas><div class="chart-footnote">${note}</div></div>`;
+        const step = d.soc_step || 5;
+        makeProfileChart('cChargeProfileSoc', d.by_soc, d.by_soc.map(it => `${it.x}–${it.x + step} %`), 'SoC');
+        makeProfileChart('cChargeProfileTime', d.by_time, d.by_time.map(it => String(it.x)), '{{ t.analysis_cp_minutes }}');
+      }
+      el.querySelectorAll('[data-cpkind]').forEach(b => b.addEventListener('click', () => renderChargeProfile(b.dataset.cpkind)));
     }
 
     async function renderChargeTab(qs) {

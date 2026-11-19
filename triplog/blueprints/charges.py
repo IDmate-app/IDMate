@@ -1290,6 +1290,27 @@ def charge_session_curve(session_id):
     return jsonify({"points": _influx_charge_curve(veh["device"], sess["start_time"], end)})
 
 
+@charges_bp.route("/api/charge/power-profile")
+@login_required
+def charge_power_profile():
+    """Charging power over SoC and over time, averaged over all charges of the
+    active vehicle (stick data), with spread, min and max per step."""
+    import charge_profile
+    kind = "ac" if request.args.get("type") == "ac" else "dc"
+    db = get_db()
+    try:
+        veh = active_vehicle(db) or {}
+        device = veh.get("device") or active_device()
+        result = charge_profile.profile_for(db, device, veh.get("plate"), kind)
+    except Exception:
+        log.exception("charge power profile failed")
+        result = {"type": kind, "sessions": 0, "counts": {"dc": 0, "ac": 0},
+                  "by_soc": [], "by_time": [], "error": True}
+    finally:
+        db.close()
+    return jsonify(result)
+
+
 # ── Edit charge readings ─────────────────────────────────────
 
 @charges_bp.route("/api/charge/readings", methods=["PUT"])
