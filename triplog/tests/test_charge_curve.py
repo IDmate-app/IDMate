@@ -50,19 +50,27 @@ def test_dense_charge_rows_make_one_dc_charge():
     assert 20 < ch["energy_kwh"] < 32
 
 
-def test_curve_points_only_while_charging_positive_power_forward_filled(app_module):
+def test_curve_points_standing_rows_charging_power_positive_forward_filled(app_module):
     from blueprints import charges as ch_bp
     charge = _fast_charge(3, 2, 39, 45)
     # the stick leaves unchanged values out: drop bt from every second row
     for i, r in enumerate(charge):
         if i % 2:
             r["bt"] = None
-    rows = _drive(0, 2, 40, 39, 1000) + charge
+    # first row after waking: no charge flag yet, but standing -> shown too
+    wake = [reading(at(2, 50), v=0, s=39, p=-5.0, bt=25)]
+    rows = _drive(0, 2, 40, 39, 1000) + wake + charge
     pts = ch_bp.charge_curve_points(rows)
-    assert len(pts) == 8                      # 2 min x 4 rows, no driving rows
-    assert all(p["p"] > 0 for p in pts)
+    assert len(pts) == 9                      # wake row + 2 min x 4 rows, no driving rows
+    assert pts[0]["p"] == 5.0 and all(p["p"] > 0 for p in pts)
     assert all(p["bt"] is not None for p in pts)
     assert pts[-1]["s"] == 45
+
+
+def test_standing_car_drawing_power_is_negative(app_module):
+    from blueprints import charges as ch_bp
+    pts = ch_bp.charge_curve_points([reading(at(0, 15 * k), v=0, s=50, p=3.0) for k in range(4)])
+    assert all(p["p"] == -3.0 for p in pts)
 
 
 def test_curve_points_downsampled(app_module):
@@ -99,6 +107,7 @@ def test_curve_route_queries_the_vehicle_device(client, monkeypatch):
     assert r.status_code == 200
     assert r.get_json()["points"][0]["p"] == 105.0
     assert seen == {"device": "dev1", "start": "2026-11-19T16:13:00", "end": "2026-11-19T16:52:00"}
+    assert r.get_json()["start"] == "2026-11-19T16:13:00" and r.get_json()["end"] == "2026-11-19T16:52:00"
 
 
 def test_curve_route_unknown_session(client):

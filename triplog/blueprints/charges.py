@@ -1203,18 +1203,19 @@ def charge_session_readings(session_id):
 # ── Charging curve from the stick ────────────────────────────
 
 CURVE_MAX_POINTS = 400
-CURVE_SEARCH_PAD = timedelta(minutes=30)   # auto-detected times: look a bit around them
 
 
 def charge_curve_points(rows, start=None, end=None, max_points=CURVE_MAX_POINTS):
-    """Expanded stick rows -> [{t, p, s, bt}] for the chart.
+    """Expanded stick rows inside the charge window -> [{t, p, s, bt}].
 
-    Only rows where the car charges and stands still (charge flag, or clearly
-    negative power at standstill) — so neither the drive before nor after a
-    stop shows up. Optional start/end (aware) clip strictly. Power positive.
-    SoC and battery temperature carried over from earlier rows for display
-    only (the stick leaves unchanged values out)."""
-    import charge_profile
+    The window comes from the charge itself (detected or from the invoice);
+    every row in it while the car stands counts, with or without the charge
+    flag — the flag is polled only every 15 s and missing right after waking,
+    and rows at the edges show where data is missing. Driving rows (v >= 1)
+    stay out. Power as charging power: positive while charging, negative
+    when the standing car draws (heating). SoC and battery temperature are
+    carried over from earlier rows for display (the stick leaves unchanged
+    values out)."""
     last = {}
     pts = []
     for r in rows:
@@ -1224,14 +1225,14 @@ def charge_curve_points(rows, start=None, end=None, max_points=CURVE_MAX_POINTS)
         t = r.get("_time")
         if t is None or (start is not None and t < start) or (end is not None and t > end):
             continue
-        if not charge_profile.is_charging_row(r) or (r.get("v") or 0) >= 1.0:
+        if (r.get("v") or 0) >= 1.0:
             continue
         p = r.get("p")
         soc = _sanitize_soc(last.get("s"))
         bt = last.get("bt")
         pts.append({
             "t": t.astimezone(config.LOCAL_TZ).strftime("%Y-%m-%dT%H:%M:%S"),
-            "p": round(abs(float(p)), 1) if p is not None else None,
+            "p": round(-float(p), 1) if p is not None else None,
             "s": round(float(soc), 1) if soc is not None else None,
             "bt": round(float(bt), 1) if bt is not None else None,
         })
@@ -1248,15 +1249,14 @@ def _times_fixed(sess):
 
 
 def _influx_charge_curve(device, start_local, end_local, fixed=False):
-    """Stick telemetry of a charge (power, SoC, battery temperature)."""
+    """Stick telemetry inside the charge window (power, SoC, battery temperature)."""
     import charge_profile
     s, e = charge_profile._local(start_local), charge_profile._local(end_local)
     if s is None or e is None:
         return []
-    pad = timedelta(0) if fixed else CURVE_SEARCH_PAD
-    # a little before for SoC/temperature carried into the first point
-    rows = charge_profile.fetch_rows(device, [(s - pad - timedelta(minutes=10), e + pad)])
-    return charge_curve_points(rows, s if fixed else s - pad, e if fixed else e + pad)
+    # 10 min before: SoC/temperature carried into the first point
+    rows = charge_profile.fetch_rows(device, [(s - timedelta(minutes=10), e)])
+    return charge_curve_points(rows, s, e)
 
 
 @charges_bp.route("/api/charge/sessions/<int:session_id>/curve")
@@ -1279,7 +1279,8 @@ def charge_session_curve(session_id):
     end = sess["end_time"] or sess["start_time"]
     fixed = _times_fixed(sess)
     return jsonify({"points": _influx_charge_curve(veh["device"], sess["start_time"], end, fixed=fixed),
-                    "fixed": fixed})
+                    "fixed": fixed, "start": str(sess["start_time"]).replace(" ", "T")[:19],
+                    "end": str(end).replace(" ", "T")[:19]})
 
 
 @charges_bp.route("/api/charge/power-profile")

@@ -370,28 +370,44 @@
         .then(r => r.ok ? r.json() : {points: []})
         .then(d => {
           const pts = (d && d.points) || [];
-          if (pts.length < 3 || typeof Chart === 'undefined') return;
+          if (pts.length < 2 || typeof Chart === 'undefined') return;
           document.getElementById('curveCard').style.display = '';
           if (d.fixed) document.getElementById('curveFixed').style.display = '';
-          const labels = pts.map(p => p.t.slice(11, 16));
+          // x = time (ms); the axis spans the whole charge window, so missing
+          // data at the start or end shows as an empty stretch
+          const ms = t => Date.parse(t);            // local time without zone = browser local
+          const x0 = d.start ? ms(d.start) : ms(pts[0].t), x1 = d.end ? ms(d.end) : ms(pts[pts.length - 1].t);
+          const hhmm = v => { const z = new Date(v); return String(z.getHours()).padStart(2, '0') + ':' + String(z.getMinutes()).padStart(2, '0'); };
+          // a break in the line where the stick had no data for over 3 min (asleep)
+          const series = key => {
+            const out = []; let prev = null;
+            pts.forEach(p => {
+              if (p[key] === null) return;
+              const x = ms(p.t);
+              if (prev !== null && x - prev > 180000) out.push({x: prev + 1, y: null});
+              out.push({x, y: p[key]}); prev = x;
+            });
+            return out;
+          };
           const ds = (label, key, color, axis) => ({
-            type: 'line', label, data: pts.map(p => p[key]), borderColor: color,
+            type: 'line', label, data: series(key), borderColor: color,
             backgroundColor: color + '22', borderWidth: 1.5, pointRadius: pts.length > 80 ? 0 : 2,
-            tension: 0.25, spanGaps: true, yAxisID: axis
+            tension: 0.25, spanGaps: false, yAxisID: axis
           });
           const datasets = [
-            Object.assign(ds('{{ t.charge_detail_curve_power }}', 'p', TC.accent, 'yKw'), {fill: true}),
+            Object.assign(ds('{{ t.charge_detail_curve_power }}', 'p', TC.accent, 'yKw'), {fill: 'origin'}),
             ds('{{ t.charge_detail_curve_soc }}', 's', TC.success, 'yPct')
           ];
           if (pts.some(p => p.bt !== null)) datasets.push(ds('{{ t.charge_detail_curve_bt }}', 'bt', TC.warn, 'yPct'));
           new Chart(document.getElementById('cCurve'), {
-            data: {labels, datasets},
+            data: {datasets},
             options: {
-              responsive: true, maintainAspectRatio: false, interaction: {mode: 'index', intersect: false},
-              plugins: { legend: { display: true, labels: { color: TC.text2, font: { size: 10 } } } },
+              responsive: true, maintainAspectRatio: false, interaction: {mode: 'nearest', axis: 'x', intersect: false},
+              plugins: { legend: { display: true, labels: { color: TC.text2, font: { size: 10 } } },
+                         tooltip: { callbacks: { title: items => items.length ? hhmm(items[0].parsed.x) : '' } } },
               scales: {
-                x: { ticks: { color: TC.text2, font: { size: 10 }, maxTicksLimit: 12 }, grid: { color: TC.borderSoft } },
-                yKw: { position: 'left', beginAtZero: true, title: { display: true, text: 'kW', color: TC.accent, font: { size: 10 } },
+                x: { type: 'linear', min: x0, max: x1, ticks: { color: TC.text2, font: { size: 10 }, maxTicksLimit: 12, callback: v => hhmm(v) }, grid: { color: TC.borderSoft } },
+                yKw: { position: 'left', title: { display: true, text: 'kW', color: TC.accent, font: { size: 10 } },
                        ticks: { color: TC.text2, font: { size: 10 } }, grid: { color: TC.borderSoft } },
                 yPct: { position: 'right', beginAtZero: true, title: { display: true, text: '% / °C', color: TC.success, font: { size: 10 } },
                         ticks: { color: TC.text2, font: { size: 10 } }, grid: { drawOnChartArea: false } }
