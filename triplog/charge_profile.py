@@ -49,6 +49,42 @@ def is_charging_row(r):
     return p is not None and p <= -1.0 and (r.get("v") or 0) < 1.0
 
 
+def charging_rows(rows):
+    """Expanded rows -> only the rows where the car charges and stands still."""
+    return [r for r in rows if r.get("_time") is not None and is_charging_row(r)
+            and (r.get("v") or 0) < 1.0]
+
+
+SOC_SEEN_TOL = 2.0   # % — first/last charging row this close to the SoC before/after = stick saw the edge
+
+
+def refine_window(rows, start, end, soc_start=None, soc_end=None):
+    """Narrow a charge window (aware datetimes) to what the stick saw charging.
+
+    The beginning moves to the first charging row only if the SoC there is
+    still the SoC before the charge (else the stick was asleep when the charge
+    began and the old start stays); the end likewise to the last charging row
+    only if the SoC did not rise any further afterwards. Never widens the
+    window. Returns (start, end) or None without at least two charging rows."""
+    ch = [r for r in charging_rows(rows) if start <= r["_time"] <= end]
+    if len(ch) < 2:
+        return None
+
+    def soc_of(r):
+        v = _value(r, "s")
+        return v if v is not None and 0 <= v <= 100 else None
+
+    first, last = soc_of(ch[0]), soc_of(ch[-1])
+    new_s, new_e = start, end
+    if soc_start is not None and first is not None and first - soc_start <= SOC_SEEN_TOL:
+        new_s = ch[0]["_time"]
+    if soc_end is not None and last is not None and soc_end - last <= SOC_SEEN_TOL:
+        new_e = ch[-1]["_time"]
+    if new_e <= new_s:
+        return None
+    return new_s, new_e
+
+
 def split_sessions(rows):
     """Expanded, time-sorted rows -> list of charges (lists of charging rows)."""
     sessions, cur, last_t = [], [], None

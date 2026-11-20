@@ -1202,29 +1202,31 @@ def charge_session_readings(session_id):
 
 # ── Charging curve from the stick ────────────────────────────
 
-CURVE_FIELDS = ("p", "s", "bt", "c", "dc")
 CURVE_MAX_POINTS = 400
+CURVE_SEARCH_PAD = timedelta(minutes=30)   # auto-detected times: look a bit around them
 
 
-def charge_curve_points(records, max_points=CURVE_MAX_POINTS):
-    """Stick rows inside a charge window -> [{t, p, s, bt}] for the chart.
+def charge_curve_points(rows, start=None, end=None, max_points=CURVE_MAX_POINTS):
+    """Expanded stick rows -> [{t, p, s, bt}] for the chart.
 
-    records: time-sorted dicts with ``_time`` (aware datetime) and any of the
-    CURVE_FIELDS. Values are forward-filled (the stick leaves out unchanged
-    values). Only rows where the car reports charging (c or dc) count, so the
-    driving rows around a fast-charge stop stay out. Power as a positive kW
-    value (the stick sends charging power negative). Downsampled evenly."""
+    Only rows where the car charges and stands still (charge flag, or clearly
+    negative power at standstill) — so neither the drive before nor after a
+    stop shows up. Optional start/end (aware) clip strictly. Power positive.
+    SoC and battery temperature carried over from earlier rows for display
+    only (the stick leaves unchanged values out)."""
+    import charge_profile
     last = {}
     pts = []
-    for r in records:
-        for k in CURVE_FIELDS:
-            v = r.get(k)
-            if v is not None:
-                last[k] = v
+    for r in rows:
+        for k in ("s", "bt"):
+            if r.get(k) is not None:
+                last[k] = r[k]
         t = r.get("_time")
-        if t is None or not ((last.get("c") or 0) >= 0.5 or (last.get("dc") or 0) >= 0.5):
+        if t is None or (start is not None and t < start) or (end is not None and t > end):
             continue
-        p = last.get("p")
+        if not charge_profile.is_charging_row(r) or (r.get("v") or 0) >= 1.0:
+            continue
+        p = r.get("p")
         soc = _sanitize_soc(last.get("s"))
         bt = last.get("bt")
         pts.append({
@@ -1239,34 +1241,22 @@ def charge_curve_points(records, max_points=CURVE_MAX_POINTS):
     return pts
 
 
-def _influx_charge_curve(device, start_local, end_local):
+def _times_fixed(sess):
+    """Times entered by hand (e.g. from the invoice) are exact: no search around them."""
+    manual = {f for f in ((sess["manual_fields"] if "manual_fields" in sess.keys() else None) or "").split(",") if f}
+    return "start_time" in manual or "end_time" in manual
+
+
+def _influx_charge_curve(device, start_local, end_local, fixed=False):
     """Stick telemetry of a charge (power, SoC, battery temperature)."""
-    import detector
-    client = detector.get_influx(timeout_ms=5000)
-    if not client:
+    import charge_profile
+    s, e = charge_profile._local(start_local), charge_profile._local(end_local)
+    if s is None or e is None:
         return []
-    try:
-        fields = " or ".join(f'r._field == "{f}"' for f in CURVE_FIELDS)
-        query = f'''
-        from(bucket: "{config.INFLUX_BUCKET}")
-          |> range(start: {_to_rfc3339_padded(start_local, -15)}, stop: {_to_rfc3339_padded(end_local, 15)})
-          |> filter(fn: (r) => r._measurement == "v" and r.d == "{device}")
-          |> filter(fn: (r) => {fields})
-          |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
-          |> sort(columns: ["_time"])
-        '''
-        records = []
-        for table in client.query_api().query(query, org=config.INFLUX_ORG):
-            for rec in table.records:
-                row = {k: rec.values.get(k) for k in CURVE_FIELDS}
-                row["_time"] = rec.get_time()
-                records.append(row)
-        return charge_curve_points(records)
-    except Exception:
-        log.exception("charge curve: influx query failed")
-        return []
-    finally:
-        client.close()
+    pad = timedelta(0) if fixed else CURVE_SEARCH_PAD
+    # a little before for SoC/temperature carried into the first point
+    rows = charge_profile.fetch_rows(device, [(s - pad - timedelta(minutes=10), e + pad)])
+    return charge_curve_points(rows, s if fixed else s - pad, e if fixed else e + pad)
 
 
 @charges_bp.route("/api/charge/sessions/<int:session_id>/curve")
@@ -1274,7 +1264,7 @@ def _influx_charge_curve(device, start_local, end_local):
 def charge_session_curve(session_id):
     """Charging curve of a session from the stick's telemetry (JSON)."""
     db = get_db()
-    sess = db.execute("SELECT vehicle_plate, start_time, end_time FROM charge_sessions WHERE id = ?",
+    sess = db.execute("SELECT vehicle_plate, start_time, end_time, manual_fields FROM charge_sessions WHERE id = ?",
                       (session_id,)).fetchone()
     veh = None
     if sess:
@@ -1287,7 +1277,9 @@ def charge_session_curve(session_id):
     if veh is None or not veh["device"] or (allowed is not None and veh["id"] not in allowed):
         return jsonify({"points": []})
     end = sess["end_time"] or sess["start_time"]
-    return jsonify({"points": _influx_charge_curve(veh["device"], sess["start_time"], end)})
+    fixed = _times_fixed(sess)
+    return jsonify({"points": _influx_charge_curve(veh["device"], sess["start_time"], end, fixed=fixed),
+                    "fixed": fixed})
 
 
 @charges_bp.route("/api/charge/power-profile")
@@ -1575,9 +1567,14 @@ def update_charge_session(session_id):
     # Mark manually corrected odometer/SoC so a later rebuild keeps them instead
     # of reverting to NULL (the worker still backfills fields left empty). Clearing
     # a field drops its manual mark again.
-    if any(f in data for f in ("odometer", "soc_start", "soc_end")):
+    # Times entered by hand (from the invoice) are exact: the charging curve
+    # uses exactly them and the stick refinement no longer moves them.
+    if any(f in data for f in ("odometer", "soc_start", "soc_end", "start_time", "end_time")):
         existing = sess["manual_fields"] if "manual_fields" in sess.keys() else None
         manual = {f for f in (existing or "").split(",") if f}
+        for field in ("start_time", "end_time"):
+            if field in data and data[field] not in ("", None) and data[field] != sess[field]:
+                manual.add(field)
         for field in ("odometer", "soc_start", "soc_end"):
             if field in data:
                 v = data[field]
@@ -2505,6 +2502,52 @@ def charge_external():
 
 # ── Auto-detect external charges from trip SoC ───────────────
 
+def refine_external_times(db, plate, device, days=7):
+    """Auto-detected external charges start/end at the trips around them
+    (trip end -> next trip start), which can be much wider than the charge.
+    Narrow them to what the stick saw charging (charge_profile.refine_window):
+    only sessions without invoice data and without hand-set times. Each one
+    once, after its end is an hour old (late rows from the stick are in by
+    then); marked "refined" in manual_fields."""
+    import charge_profile
+    rows = db.execute(
+        """SELECT id, start_time, end_time, soc_start, soc_end, total_kwh, manual_fields
+           FROM charge_sessions
+           WHERE vehicle_plate = ? AND is_external = 1 AND cost_total IS NULL
+             AND start_time IS NOT NULL AND end_time IS NOT NULL
+             AND datetime(start_time) >= datetime('now', ?)
+             AND datetime(end_time) <= datetime('now', 'localtime', '-1 hour')""",
+        (plate, f"-{int(days)} days")).fetchall()
+    changed = 0
+    for r in rows:
+        manual = {f for f in (r["manual_fields"] or "").split(",") if f}
+        if manual & {"start_time", "end_time", "refined"}:
+            continue
+        s, e = charge_profile._local(r["start_time"]), charge_profile._local(r["end_time"])
+        if s is None or e is None or e <= s:
+            continue
+        tel = charge_profile.fetch_rows(device, [(s, e)])
+        win = charge_profile.refine_window(tel, s, e, r["soc_start"], r["soc_end"])
+        manual.add("refined")
+        sets, params = ["manual_fields = ?"], [",".join(sorted(manual))]
+        if win and (win[0] != s or win[1] != e):
+            ns = win[0].astimezone(config.LOCAL_TZ).strftime("%Y-%m-%dT%H:%M:%S")
+            ne = win[1].astimezone(config.LOCAL_TZ).strftime("%Y-%m-%dT%H:%M:%S")
+            dur = max(1, int((win[1] - win[0]).total_seconds() / 60))
+            sets += ["start_time = ?", "end_time = ?", "duration_minutes = ?"]
+            params += [ns, ne, dur]
+            if r["total_kwh"]:
+                sets.append("avg_kw = ?")
+                params.append(round(float(r["total_kwh"]) / (dur / 60.0), 2))
+            changed += 1
+            log.info("external charge %s: times from stick %s..%s (was %s..%s)",
+                     r["id"], ns, ne, r["start_time"], r["end_time"])
+        db.execute(f"UPDATE charge_sessions SET {', '.join(sets)} WHERE id = ?", params + [r["id"]])
+    if rows:
+        db.commit()
+    return changed
+
+
 def detect_external_from_trips(db):
     """Detect external charges from SoC increases between trips.
 
@@ -2598,6 +2641,13 @@ def detect_external_from_trips(db):
 
     if created:
         db.commit()
+
+    # Narrow auto-detected windows to the charge the stick saw (never fatal)
+    for vehicle in vehicles:
+        try:
+            refine_external_times(db, vehicle['plate'], vehicle['device'])
+        except Exception:
+            log.exception("refine external charge times failed for %s", vehicle['plate'])
 
     # Clean up duplicates: external sessions with overlapping time windows (same plate)
     # → delete the newer one (higher ID)

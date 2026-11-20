@@ -343,6 +343,7 @@
   "charge_detail_curve_soc": "SoC (%)",
   "charge_detail_curve_bt": "Battery temperature (°C)",
   "charge_detail_curve_note": "The stick only reports while someone is in the car.",
+  "charge_detail_curve_fixed": "Time range exactly as entered (invoice).",
   "charge_detail_edit_external": "Edit External Charge",
   "charge_detail_recalc_distance": "Recalculate distance",
   "charge_detail_distances_recalced": "Distances recalculated",

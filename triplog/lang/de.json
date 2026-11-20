@@ -343,6 +343,7 @@
   "charge_detail_curve_soc": "SoC (%)",
   "charge_detail_curve_bt": "Akkutemperatur (°C)",
   "charge_detail_curve_note": "Der Stick liefert nur, solange jemand im Auto ist.",
+  "charge_detail_curve_fixed": "Zeitraum genau wie eingetragen (Rechnung).",
   "charge_detail_edit_external": "Externe Ladung bearbeiten",
   "charge_detail_recalc_distance": "Distanz neu berechnen",
   "charge_detail_distances_recalced": "Distanzen neu berechnet",

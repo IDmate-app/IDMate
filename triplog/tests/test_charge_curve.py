@@ -80,6 +80,7 @@ def client(app_module, db):
                "VALUES (7, 'EV1', '2026-11-19T16:13:00', '2026-11-19T16:52:00', 1)")
     db.commit()
     app_module.app.config["TESTING"] = True
+    app_module.app.config["WTF_CSRF_ENABLED"] = False
     with app_module.app.test_client() as c:
         with c.session_transaction() as s:
             s["_user_id"] = "1"
@@ -90,7 +91,7 @@ def test_curve_route_queries_the_vehicle_device(client, monkeypatch):
     from blueprints import charges as ch_bp
     seen = {}
 
-    def fake(device, start, end):
+    def fake(device, start, end, fixed=False):
         seen.update(device=device, start=start, end=end)
         return [{"t": "2026-11-19T16:30:00", "p": 105.0, "s": 60.0, "bt": 28.0}]
     monkeypatch.setattr(ch_bp, "_influx_charge_curve", fake)
@@ -108,3 +109,63 @@ def test_charge_detail_page_has_curve_card(client, monkeypatch):
     r = client.get("/charges/7")
     assert r.status_code == 200
     assert b'id="curveCard"' in r.data and b"/api/charge/sessions/7/curve" in r.data
+
+
+def test_driving_after_the_charge_never_counts(app_module):
+    """Bug 19.11.2026: the stick leaves unchanged values out; the charge flag
+    was carried into the drive after the stop, so the chart showed driving."""
+    from blueprints import charges as ch_bp
+    rows = _fast_charge(0, 2, 60, 64)
+    rows += [reading(at(3, 30 * k), v=70, s=64, p=18.0) for k in range(10)]   # no c/dc in these rows
+    pts = ch_bp.charge_curve_points(rows)
+    assert len(pts) == 8 and all(p["p"] > 50 for p in pts)
+
+
+def test_curve_clips_strictly_to_given_times(app_module):
+    from blueprints import charges as ch_bp
+    rows = _fast_charge(0, 10, 30, 60)
+    pts = ch_bp.charge_curve_points(rows, start=at(2), end=at(4))
+    assert pts and all("T" in p["t"] for p in pts)
+    assert len(pts) == 9                       # 2 min x 4 rows + the row at 4:00
+
+
+def test_refine_window_moves_only_seen_edges():
+    import charge_profile as cp
+    rows = _drive(0, 10, 50, 40, 1000)[:-1] + _fast_charge(15, 10, 40, 60) + _drive(40, 10, 60, 50, 1013)
+    s, e = at(10), at(40)
+    # stick saw the whole charge: SoC 40 -> 60 like before/after the stop
+    ns, ne = cp.refine_window(rows, s, e, 40, 60)
+    assert ns == at(15, 15) and ne == at(15, 15 * 40)
+    # charge began while the stick slept (SoC before 30) and went on after (70): edges stay
+    assert cp.refine_window(rows, s, e, 30, 70) == (s, e)
+    # nothing seen -> None
+    assert cp.refine_window(_drive(0, 10, 50, 40, 1000), s, e, 40, 60) is None
+
+
+def test_refine_external_times_updates_auto_session_once(app_module, db, monkeypatch):
+    import charge_profile as cp
+    from blueprints import charges as ch_bp
+    db.execute("INSERT INTO vehicles (plate, device) VALUES ('EV1', 'dev1')")
+    db.execute("INSERT INTO charge_sessions (id, vehicle_plate, start_time, end_time, is_external, total_kwh, soc_start, soc_end) "
+               "VALUES (5, 'EV1', datetime('now','localtime','-3 hours'), datetime('now','localtime','-2 hours'), 1, 20, 40, 60)")
+    db.commit()
+    sess = db.execute("SELECT start_time, end_time FROM charge_sessions WHERE id = 5").fetchone()
+    s, e = cp._local(sess["start_time"].replace(" ", "T")), cp._local(sess["end_time"].replace(" ", "T"))
+    calls = []
+
+    def fake_fetch(device, windows, client=None):
+        calls.append(windows)
+        t0 = s + timedelta(minutes=10)
+        return [reading(t0 + timedelta(seconds=15 * k), v=0, s=40 + k * 0.1, p=-100.0, c=1, dc=1) for k in range(200)]
+    monkeypatch.setattr(cp, "fetch_rows", fake_fetch)
+    assert ch_bp.refine_external_times(db, "EV1", "dev1") == 1
+    r = db.execute("SELECT start_time, end_time, duration_minutes, manual_fields FROM charge_sessions WHERE id = 5").fetchone()
+    assert r["manual_fields"] == "refined" and r["duration_minutes"] == 49
+    assert ch_bp.refine_external_times(db, "EV1", "dev1") == 0 and len(calls) == 1
+
+
+def test_times_from_the_invoice_are_fixed(app_module, client, db):
+    r = client.post("/api/charge/sessions/7", json={"start_time": "2026-11-19T16:15:00", "end_time": "2026-11-19T16:50:00"})
+    assert r.status_code == 200
+    mf = db.execute("SELECT manual_fields FROM charge_sessions WHERE id = 7").fetchone()["manual_fields"]
+    assert "start_time" in mf and "end_time" in mf

@@ -136,7 +136,7 @@
     <div class="chart-card" id="curveCard" style="display:none">
       <h3>{{ t.charge_detail_curve_title }}</h3>
       <canvas id="cCurve" style="width:100%!important;height:230px!important"></canvas>
-      <div style="font-size:0.7rem;color:var(--text-2);margin-top:0.4rem">{{ t.charge_detail_curve_note }}</div>
+      <div style="font-size:0.7rem;color:var(--text-2);margin-top:0.4rem">{{ t.charge_detail_curve_note }} <span id="curveFixed" style="display:none">{{ t.charge_detail_curve_fixed }}</span></div>
     </div>
 
     {% if session.is_external %}
@@ -372,6 +372,7 @@
           const pts = (d && d.points) || [];
           if (pts.length < 3 || typeof Chart === 'undefined') return;
           document.getElementById('curveCard').style.display = '';
+          if (d.fixed) document.getElementById('curveFixed').style.display = '';
           const labels = pts.map(p => p.t.slice(11, 16));
           const ds = (label, key, color, axis) => ({
             type: 'line', label, data: pts.map(p => p[key]), borderColor: color,
