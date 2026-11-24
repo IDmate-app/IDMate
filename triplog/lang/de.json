@@ -861,6 +861,7 @@
   "read_api_none": "kein Zugang",
   "read_api_since": "Zugang seit",
   "read_api_last_used": "zuletzt benutzt",
+  "read_api_logbook_edit": "Fahrtenbuch aus der App bearbeiten (Zweck, Partner, Anlass, Notiz)",
   "read_api_never": "noch nie",
   "read_api_once": "Dieser QR-Code wird nur jetzt angezeigt. Ein neuer Code macht den bisherigen Zugang dieses Fahrzeugs sofort ungültig.",
   "read_api_confirm_recreate": "Das Gerät mit dem bisherigen Zugang verliert sofort die Verbindung. Neuen QR-Code erzeugen?",

@@ -37,6 +37,9 @@ QR content (JSON):
 | `GET /api/v1/config` | vehicle (`id`, `name`, `model`), what IDmate delivers (`modules`), poll interval drive / parked |
 | `GET /api/v1/status` | telegram `status`: latest state |
 | `GET /api/v1/trips?limit=n` | telegram `trip`: the last *n* trips (default 10, at most 100) |
+| `GET /api/v1/logbook?year=Y&month=M` | telegram `logbook`: one month of the logbook as `/trips/logbook` shows it (default: this month), see below |
+| `GET /api/v1/logbook/options` | telegram `logbook_options`: purposes (private ones marked), partners and occasions to pick from |
+| `POST /api/v1/trips/<id>` | change purpose, partner, occasion, note of a trip – only where the admin allowed it, see below |
 | `GET /api/v1/charging?limit=n` | telegram `charge`: the last *n* charges |
 | `GET /api/v1/energy-model` | telegram `energy_model`: the vehicle's own consumption by speed |
 | `GET /api/v1/rain` | telegram `rain`: rain around the vehicle's range, now and two hours ahead (see below) |
@@ -88,8 +91,8 @@ One envelope for every source a client may have (stick, OBD dongle, backend, car
 
 Trip items: `id`, `start`, `end`, `from`, `to`, `distance` (km), `soc_start`, `soc_end`, `energy` (kWh),
 `consumption` (kWh/100 km). Charge items: `id`, `start`, `end`, `at`, `dc`, `soc_start`, `soc_end`,
-`energy` (kWh), `energy_battery` (kWh), `power_avg` (kW). Logbook details (purpose, destination, notes)
-are not served.
+`energy` (kWh), `energy_battery` (kWh), `power_avg` (kW). `/trips` serves no logbook details; they come
+with `/logbook`.
 
 The charges are those of the charge overview (wallbox meter, receipts, imports, detected external
 charges), newest first; the first item is the last charge. `energy` is the grid side – what the meter
@@ -193,3 +196,34 @@ Radar data: Deutscher Wetterdienst (dwd.de, GeoNutzV), RainViewer (rainviewer.co
 
 `config.modules` names what IDmate contributes: `dashboard`, the vehicle data above. Navigation, music and
 messenger are parts of the app itself; IDmate neither delivers nor switches them.
+
+## Logbook
+
+`GET /api/v1/logbook?year=2026&month=11` gives one month of the vehicle's logbook, built exactly as the
+server's own logbook page and PDF (`/trips/logbook`): a display app shows the same rows in its own layout.
+
+| Field | Meaning |
+|---|---|
+| `year`, `month` | the month served |
+| `months` | every month with trips, `"YYYY-MM"`, newest first – for a month picker |
+| `edit` | whether this access may change trips (see below) |
+| `rows` | the logbook's lines in order, each with `kind` and the fields below |
+| `totals` | `odo_start`, `odo_end` (km), `trips`, `total`, `business`, `private`, `open`, `gaps` (km), `purposes` (km per business purpose) |
+| `items` | every trip of the month: `id`, `start`, `end`, `from`, `to`, `odo_start`, `odo_end`, `distance`, `soc_start`, `soc_end`, `purpose`, `destination`, `visit_reason`, `note`, `private` |
+
+Row kinds: `trip` – a business trip (`start`, `end`, `odo_start`, `odo_end`, `distance`, `from`, `to`, `purpose`,
+`destination` = partner, `visit_reason` = occasion, `note`, `trips` = its id); `open` – the same without a
+purpose yet (the logbook marks it); `private` – private trips in a row as one line (`start` of the first, `end`
+of the last, `distance`, `count`, `trips` = their ids, no places); `gap` – a jump in the odometer between two
+rows (`odo_start`, `odo_end`, `distance`). Private is what the purposes marked private say.
+
+### Editing from the app
+
+Off by default. *Admin → Interfaces → Read API for display devices*, per vehicle with an access: tick **Edit the
+logbook from the app**. A new QR code keeps the setting. `GET /config` and `/logbook` tell the app (`edit`).
+
+`POST /api/v1/trips/<id>` with a JSON object of any of `purpose`, `destination`, `visit_reason`, `note` (text;
+`""` clears a field; at most 100, 200, 200 and 1000 characters). Only trips of the token's vehicle; nothing
+else of a trip can be changed. Answer: telegram `trip` with the trip as `items` serves it.
+`403` editing not allowed for this access · `404` no such trip of this vehicle · `400` no or wrong fields.
+The server keeps its own logbook and trip log as they are; the app edits the same trips.

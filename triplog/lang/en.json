@@ -861,6 +861,7 @@
   "read_api_none": "no access",
   "read_api_since": "access since",
   "read_api_last_used": "last used",
+  "read_api_logbook_edit": "Edit the logbook from the app (purpose, partner, occasion, note)",
   "read_api_never": "never",
   "read_api_once": "This QR code is shown only now. A new code invalidates the previous access of this vehicle at once.",
   "read_api_confirm_recreate": "The device using the current access loses its connection at once. Create a new QR code?",

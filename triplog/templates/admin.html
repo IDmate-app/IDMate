@@ -1967,6 +1967,13 @@
         make.addEventListener('click', () => readApiKey(v, tools));
         tools.appendChild(make);
         if (v.has_key) {
+          // L-012: whether the app may change purpose, partner, occasion and note in the logbook
+          const lb = document.createElement('label');
+          lb.style.cssText = 'display:inline-flex;gap:0.3rem;align-items:center;font-size:0.8rem';
+          const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!v.logbook_edit;
+          cb.addEventListener('change', () => readApiLogbookEdit(v, cb));
+          lb.append(cb, document.createTextNode('{{ t.read_api_logbook_edit }}'));
+          tools.appendChild(lb);
           const del = document.createElement('button');
           del.className = 'btn-sm danger'; del.textContent = '{{ t.read_api_delete }}';
           del.addEventListener('click', () => readApiDelete(v));
@@ -1976,6 +1983,16 @@
         box.appendChild(row);
       });
       if (!(readApiData.vehicles || []).length) box.textContent = '—';
+    }
+
+    async function readApiLogbookEdit(v, cb) {
+      try {
+        const res = await fetch('/api/admin/read-api/' + v.id + '/logbook-edit', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: cb.checked }),
+        });
+        if (!res.ok) throw new Error();
+        v.logbook_edit = cb.checked;
+      } catch (e) { cb.checked = !cb.checked; }
     }
 
     async function saveReadApi() {

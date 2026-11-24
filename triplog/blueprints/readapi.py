@@ -12,12 +12,15 @@ Answers are telegrams, the same envelope for every source a client may have:
     {"v": 1, "src": "backend", "ts": "<ISO 8601 UTC>", "seq": n,
      "type": "status", "data": {...}}
 A field the server has no value for is left out, never sent as null or 0.
-The read API never writes and never talks to InfluxDB or Traccar on behalf of
-the client: it serves what the dashboard already has (state cache) and the
-trip and charge tables.
+The read API never talks to InfluxDB or Traccar on behalf of the client: it
+serves what the dashboard already has (state cache) and the trip and charge
+tables. It writes in one place only, and only where the admin allowed it for
+the vehicle: purpose, partner, occasion and note of a trip in the logbook
+(L-012, POST /trips/<id>). The server's own logbook stays as it is.
 """
 
 import base64
+import calendar
 import hashlib
 import hmac
 import io
@@ -34,7 +37,8 @@ import bms_learn as bl
 import detector
 import fahrzeugmodell as fm
 from app import (DisplayUser, _get_charge_efficiency, _is_rate_limited, _record_attempt,
-                 _vehicle_state, admin_required, get_bat_kwh, get_db, log, qrcode)
+                 _vehicle_state, admin_required, csrf, get_bat_kwh, get_db, get_preset_values,
+                 get_purpose_meta, log, qrcode)
 from blueprints import bms
 
 API_VERSION = 1
@@ -46,7 +50,10 @@ LIMIT_MAX = 100
 # What IDmate contributes to a display device: the vehicle data. Navigation,
 # music and messenger are the app's own and are neither delivered nor
 # switched from here.
-MODULES = ("dashboard",)
+MODULES = ("dashboard", "logbook")
+# Logbook (L-012): the fields a display app may change, when allowed, and how
+# long each may be.
+LOGBOOK_FIELDS = {"purpose": 100, "destination": 200, "visit_reason": 200, "note": 1000}
 # Energy model (/energy-model): speeds of the consumption table, and the
 # windows of "what the car really used lately".
 MODEL_SPEEDS = range(30, 161, 10)
@@ -133,7 +140,7 @@ def _vehicle_for_request(db):
     row = None
     if token:
         row = db.execute(
-            "SELECT k.id AS key_id, k.token_hash, k.last_used_at, v.id, v.plate, v.name, v.model, v.device "
+            "SELECT k.id AS key_id, k.token_hash, k.last_used_at, k.logbook_edit, v.id, v.plate, v.name, v.model, v.device "
             "FROM read_api_keys k JOIN vehicles v ON v.id = k.vehicle_id "
             "WHERE k.token_hash = ?", (_hash(token),)).fetchone()
     if row is None or not hmac.compare_digest(row["token_hash"], _hash(token)):
@@ -262,6 +269,7 @@ def capabilities():
         "status": {f: INTERVAL_DRIVE_S for f in fields},
         "trip": {"list": 0},
         "charge": {"list": 0},
+        "logbook": {"list": 0, "edit": bool(v["logbook_edit"])},
     }))
 
 
@@ -276,6 +284,7 @@ def config_():
                            "model": v["model"]}),
         "modules": list(MODULES),
         "interval": {"drive": INTERVAL_DRIVE_S, "park": INTERVAL_PARK_S},
+        "logbook": {"edit": bool(v["logbook_edit"])},
     })
 
 
@@ -305,6 +314,152 @@ def trips():
         "energy": _num(r, "energy_kwh", 2), "consumption": _num(r, "consumption", 1),
     }) for r in rows]
     return jsonify(_telegram(v["device"], "trip", {"items": items}))
+
+
+# ── Logbook (L-012) ───────────────────────────────────────────────────────────
+
+def _month():
+    """year/month from the query, else the current month."""
+    now = datetime.now()
+    try:
+        year = int(request.args.get("year", now.year))
+        month = int(request.args.get("month", now.month))
+    except ValueError:
+        abort(400)
+    if not (2000 <= year <= 2100 and 1 <= month <= 12):
+        abort(400)
+    return year, month
+
+
+def _round(v, digits=1):
+    return None if v is None else round(v, digits)
+
+
+def _trip_item(r, private):
+    """One trip with its logbook fields, for the app to show and edit."""
+    purpose = r["purpose"] or ""
+    return _clean({
+        "id": r["id"], "start": _utc(r["start_time"]), "end": _utc(r["end_time"]),
+        "from": r["start_address"], "to": r["end_address"],
+        "odo_start": _round(r["odo_start"]), "odo_end": _round(r["odo_end"]),
+        "distance": _round(r["distance_km"]),
+        "soc_start": _round(r["soc_start"]), "soc_end": _round(r["soc_end"]),
+        "purpose": purpose, "destination": r["destination"], "visit_reason": r["visit_reason"],
+        "note": r["note"], "private": purpose in private if purpose else None,
+    })
+
+
+def _logbook_row(r):
+    """A row of the server's monthly logbook (fahrtenbuch.monat_daten), with
+    English keys: kind trip (business, with purpose) / open (no purpose yet) /
+    private (private trips in a row as one line) / gap (odometer jump)."""
+    kind = {"fahrt": "trip", "offen": "open", "privat": "private", "luecke": "gap"}[r["art"]]
+    row = {"kind": kind, "odo_start": _round(r.get("odo_start")), "odo_end": _round(r.get("odo_end")),
+           "distance": _round(r.get("km"))}
+    if kind != "gap":
+        row.update({"start": _utc(r.get("von")), "end": _utc(r.get("bis")), "trips": r.get("ids", [])})
+    if kind == "private":
+        row["count"] = r.get("anzahl")
+    if kind in ("trip", "open"):
+        row.update({"from": r.get("start"), "to": r.get("ziel"), "purpose": r.get("zweck"),
+                    "destination": r.get("partner"), "visit_reason": r.get("anlass"), "note": r.get("notiz")})
+    return _clean(row)
+
+
+@readapi_bp.route("/logbook")
+def logbook():
+    """The month of the server's logbook (/trips/logbook) as the app shows it:
+    its rows and totals, every trip of the month with its logbook fields, the
+    months that have trips, and whether the app may edit."""
+    import fahrtenbuch
+    year, month = _month()
+    db = get_db()
+    v = _vehicle_for_request(db)
+    device = v["device"]
+    data = fahrtenbuch.monat_daten(db, device, year, month)
+    private = {r[0] for r in db.execute("SELECT name FROM purpose_meta WHERE is_private = 1")}
+    last = calendar.monthrange(year, month)[1]
+    trips_ = db.execute(
+        "SELECT * FROM trips WHERE device = ? AND start_time >= ? AND start_time <= ? ORDER BY start_time",
+        (device, f"{year:04d}-{month:02d}-01T00:00:00", f"{year:04d}-{month:02d}-{last:02d}T23:59:59")).fetchall()
+    months = [r[0] for r in db.execute(
+        "SELECT DISTINCT substr(start_time, 1, 7) FROM trips WHERE device = ? "
+        "AND start_time GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]*' ORDER BY 1 DESC", (device,))]
+    db.close()
+    s = data["summen"]
+    totals = _clean({
+        "odo_start": _round(s.get("odo_anfang")), "odo_end": _round(s.get("odo_ende")),
+        "trips": s.get("fahrten"), "total": _round(s.get("gesamt")), "business": _round(s.get("dienstlich")),
+        "private": _round(s.get("privat")), "open": _round(s.get("offen")), "gaps": _round(s.get("luecken")),
+        "purposes": {k: _round(km) for k, km in sorted(s.get("zwecke", {}).items())},
+    })
+    return jsonify(_telegram(device, "logbook", {
+        "year": year, "month": month, "edit": bool(v["logbook_edit"]), "months": months,
+        "rows": [_logbook_row(r) for r in data["rows"]], "totals": totals,
+        "items": [_trip_item(r, private) for r in trips_],
+    }))
+
+
+@readapi_bp.route("/logbook/options")
+def logbook_options():
+    """What the app offers to pick from: the vehicle's purposes (with private
+    ones marked), partners and occasions - the same lists as the trip log."""
+    db = get_db()
+    v = _vehicle_for_request(db)
+    device = v["device"]
+    purposes = [{"name": p["name"], "private": bool(p["is_private"])}
+                for p in get_purpose_meta(db, device=device)]
+    out = {"edit": bool(v["logbook_edit"]), "purposes": purposes,
+           "destinations": get_preset_values(db, "destination", device=device),
+           "visit_reasons": get_preset_values(db, "visit_reason", device=device)}
+    db.close()
+    return jsonify(_telegram(device, "logbook_options", out))
+
+
+@readapi_bp.route("/trips/<int:trip_id>", methods=["POST"])
+@csrf.exempt
+def logbook_edit(trip_id):
+    """Purpose, partner (destination), occasion (visit_reason) and note of one
+    trip of the token's vehicle - only where the admin allowed the app to edit
+    the logbook. Body: any of those fields; "" clears one. Answers the trip as
+    the logbook serves it."""
+    db = get_db()
+    v = _vehicle_for_request(db)
+    if not v["logbook_edit"]:
+        db.close()
+        return jsonify({"error": "logbook editing not allowed for this access"}), 403
+    trip = db.execute("SELECT id FROM trips WHERE id = ? AND device = ?", (trip_id, v["device"])).fetchone()
+    if trip is None:
+        db.close()
+        abort(404)
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        db.close()
+        return jsonify({"error": "JSON object expected"}), 400
+    sets, params = [], []
+    for field, most in LOGBOOK_FIELDS.items():
+        if field not in body:
+            continue
+        val = body[field]
+        if val is not None and not isinstance(val, str):
+            db.close()
+            return jsonify({"error": f"{field}: text expected"}), 400
+        val = (val or "").strip()
+        if len(val) > most:
+            db.close()
+            return jsonify({"error": f"{field}: at most {most} characters"}), 400
+        sets.append(f"{field} = ?")
+        params.append(val or None)
+    if not sets:
+        db.close()
+        return jsonify({"error": "no fields"}), 400
+    db.execute(f"UPDATE trips SET {', '.join(sets)} WHERE id = ?", params + [trip_id])
+    db.commit()
+    log.info("Read API: logbook of trip %s changed from the app (%s)", trip_id, v["device"])
+    private = {r[0] for r in db.execute("SELECT name FROM purpose_meta WHERE is_private = 1")}
+    row = db.execute("SELECT * FROM trips WHERE id = ?", (trip_id,)).fetchone()
+    db.close()
+    return jsonify(_telegram(v["device"], "trip", _trip_item(row, private)))
 
 
 @readapi_bp.route("/charging")
@@ -486,7 +641,7 @@ def admin_get():
     db = get_db()
     rows = db.execute(
         "SELECT v.id, v.plate, v.name, v.device, k.created_at, k.last_used_at, "
-        "k.id AS key_id FROM vehicles v LEFT JOIN read_api_keys k ON k.vehicle_id = v.id "
+        "k.id AS key_id, k.logbook_edit FROM vehicles v LEFT JOIN read_api_keys k ON k.vehicle_id = v.id "
         "WHERE v.device IS NOT NULL AND v.device != '' ORDER BY v.plate").fetchall()
     out = {
         "enabled": _enabled(db),
@@ -496,6 +651,7 @@ def admin_get():
             "id": r["id"], "name": r["name"] or r["plate"], "plate": r["plate"],
             "device": r["device"], "has_key": r["key_id"] is not None,
             "created_at": r["created_at"], "last_used_at": r["last_used_at"],
+            "logbook_edit": bool(r["logbook_edit"]),
         } for r in rows],
     }
     db.close()
@@ -531,9 +687,11 @@ def admin_key_create(vehicle_id):
         db.close()
         return jsonify({"error": "vehicle not found"}), 404
     token = secrets.token_urlsafe(32)
+    # a new code keeps whether the app may edit the logbook
+    old = db.execute("SELECT logbook_edit FROM read_api_keys WHERE vehicle_id = ?", (vehicle_id,)).fetchone()
     db.execute("DELETE FROM read_api_keys WHERE vehicle_id = ?", (vehicle_id,))
-    db.execute("INSERT INTO read_api_keys (vehicle_id, token_hash, created_at) "
-               "VALUES (?, ?, ?)", (vehicle_id, _hash(token), _now_iso()))
+    db.execute("INSERT INTO read_api_keys (vehicle_id, token_hash, created_at, logbook_edit) "
+               "VALUES (?, ?, ?, ?)", (vehicle_id, _hash(token), _now_iso(), old["logbook_edit"] if old else 0))
     db.commit()
     url = _base_url(db) + "/api/v1"
     db.close()
@@ -552,3 +710,20 @@ def admin_key_delete(vehicle_id):
     db.commit()
     db.close()
     return jsonify({"ok": True})
+
+
+@readapi_admin_bp.route("/api/admin/read-api/<int:vehicle_id>/logbook-edit", methods=["POST"])
+@admin_required
+def admin_logbook_edit(vehicle_id):
+    """Body: {"on": bool} - whether the app with this vehicle's access may edit
+    the logbook (L-012). Needs an access."""
+    data = request.get_json(force=True, silent=True) or {}
+    on = 1 if data.get("on") else 0
+    db = get_db()
+    n = db.execute("UPDATE read_api_keys SET logbook_edit = ? WHERE vehicle_id = ?", (on, vehicle_id)).rowcount
+    db.commit()
+    db.close()
+    if not n:
+        return jsonify({"error": "no access for this vehicle"}), 404
+    log.info("Read API: logbook editing %s for vehicle %s", "allowed" if on else "off", vehicle_id)
+    return jsonify({"ok": True, "logbook_edit": bool(on)})

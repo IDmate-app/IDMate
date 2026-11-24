@@ -1116,6 +1116,14 @@ def m085_api_usage(db, log):
     log.info("Migration: api_usage added")
 
 
+def m086_read_api_logbook(db, log):
+    """Logbook from a display app (L-012): per vehicle access, whether the app
+    may change purpose, partner, occasion and note of a trip. Off by default."""
+    if "logbook_edit" not in _cols(db, "read_api_keys"):
+        db.execute("ALTER TABLE read_api_keys ADD COLUMN logbook_edit INTEGER NOT NULL DEFAULT 0")
+        log.info("Migration: read_api_keys.logbook_edit added")
+
+
 MIGRATIONS = [
     (1,  "trips_is_gpx",            m001_trips_is_gpx),
     (2,  "trips_odo",              m002_trips_odo),
@@ -1202,6 +1210,7 @@ MIGRATIONS = [
     (83, "trip_rain",              m083_trip_rain),
     (84, "trip_rain_checked",      m084_trip_rain_checked),
     (85, "api_usage",              m085_api_usage),
+    (86, "read_api_logbook",       m086_read_api_logbook),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

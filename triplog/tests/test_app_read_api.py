@@ -173,7 +173,9 @@ def test_config_names_what_idmate_delivers(env):
     tok = _key(adm, vids[0])["token"]
     anon = app_module.app.test_client()
     cfg = anon.get("/api/v1/config", headers=_hdr(tok)).get_json()
-    assert cfg["modules"] == ["dashboard"]
+    # the dashboard and the logbook (L-012) are IDmate's; editing the logbook is off until the admin allows it
+    assert cfg["modules"] == ["dashboard", "logbook"]
+    assert cfg["logbook"] == {"edit": False}
     assert cfg["interval"] == {"drive": 10, "park": 60}
     assert adm.post(f"/api/admin/read-api/{vids[0]}/modules", json={"modules": ["music"]}).status_code in (404, 405)
     page = adm.get("/admin").get_data(as_text=True)
