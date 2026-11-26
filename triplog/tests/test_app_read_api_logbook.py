@@ -90,7 +90,7 @@ def test_options_purposes_partners_occasions(env):
     app_module, db, adm, vids, tok, _ = env
     c = app_module.app.test_client()
     d = c.get("/api/v1/logbook/options", headers=_hdr(tok)).get_json()["data"]
-    assert {"name": "Privat", "private": True} in d["purposes"]
+    assert {"name": "Privat", "private": True} in [{k: x[k] for k in ("name", "private")} for x in d["purposes"]]
     assert d["purposes"][0]["name"] == "Kunde"           # the pinned main purpose first
     assert d["edit"] is False and d["destinations"] == [] and d["visit_reasons"] == []
 
@@ -200,3 +200,32 @@ def test_thin_keeps_ends_and_caps():
     pts = [[50 + i * 0.001, 12.0] for i in range(5000)]
     out = ra._thin(pts)
     assert len(out) == ra.ROUTE_MAX_POINTS and out[0] == pts[0] and out[-1] == pts[-1]
+
+
+# ── L-014: what the app offers, as the server's trip list does ───────────────
+
+def test_options_carry_main_colour_and_30_day_use(env):
+    app_module, db, adm, vids, tok, _ = env
+    from datetime import datetime, timedelta
+    c = app_module.app.test_client()
+    before = c.get("/api/v1/logbook/options", headers=_hdr(tok)).get_json()["data"]["usage_30d"]
+    db.execute("UPDATE purpose_meta SET color = '#ff0000' WHERE name = 'Kunde'")
+    recent = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%S")
+    old = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%dT%H:%M:%S")
+    for start, p, d, r in [(recent, "Kunde", "Firma A", "Termin"), (recent, "Kunde", "Firma A", None),
+                           (recent, "Privat", None, None), (old, "Kunde", "Firma B", "Messe")]:
+        db.execute("INSERT INTO trips (device, start_time, end_time, purpose, destination, visit_reason) VALUES (?,?,?,?,?,?)",
+                   ("dev1", start, start, p, d, r))
+    db.execute("INSERT INTO trips (device, start_time, end_time, purpose) VALUES ('dev2', ?, ?, 'Kunde')", (recent, recent))
+    db.commit()
+    d = c.get("/api/v1/logbook/options", headers=_hdr(tok)).get_json()["data"]
+    meta = {p["name"]: p for p in d["purposes"]}
+    assert meta["Kunde"]["main"] is True and meta["Kunde"]["color"] == "#ff0000"
+    assert meta["Privat"]["main"] is False and meta["Privat"]["private"] is True
+    u = d["usage_30d"]
+    def grew(field):
+        return {k: n - before[field].get(k, 0) for k, n in u[field].items() if n != before[field].get(k, 0)}
+    # only this vehicle, only the last 30 days (the 60 days old trip and the other car's are not counted)
+    assert grew("purpose") == {"Kunde": 2, "Privat": 1}
+    assert grew("destination") == {"Firma A": 2}
+    assert grew("visit_reason") == {"Termin": 1}

@@ -38,7 +38,7 @@ QR content (JSON):
 | `GET /api/v1/status` | telegram `status`: latest state |
 | `GET /api/v1/trips?limit=n` | telegram `trip`: the last *n* trips (default 10, at most 100) |
 | `GET /api/v1/logbook?year=Y&month=M` | telegram `logbook`: one month of the logbook as `/trips/logbook` shows it (default: this month), see below |
-| `GET /api/v1/logbook/options` | telegram `logbook_options`: purposes (private ones marked), partners and occasions to pick from |
+| `GET /api/v1/logbook/options` | telegram `logbook_options`: purposes (private and main ones marked, with their colour), partners and occasions to pick from, and how often each was used lately (see below) |
 | `POST /api/v1/trips/<id>` | change purpose, partner, occasion, note of a trip – only where the admin allowed it, see below |
 | `GET /api/v1/trips/<id>/route` | telegram `route`: the way one trip went, for a map in the app, see below |
 | `GET /api/v1/charging?limit=n` | telegram `charge`: the last *n* charges |
@@ -217,6 +217,14 @@ Row kinds: `trip` – a business trip (`start`, `end`, `odo_start`, `odo_end`, `
 purpose yet (the logbook marks it); `private` – private trips in a row as one line (`start` of the first, `end`
 of the last, `distance`, `count`, `trips` = their ids, no places); `gap` – a jump in the odometer between two
 rows (`odo_start`, `odo_end`, `distance`). Private is what the purposes marked private say.
+
+### What to pick from
+
+`GET /api/v1/logbook/options` gives what the server's own trip list offers when trips are assigned: `purposes`
+(`name`, `private`, `main` – the pinned main purpose of its quick button –, `color`), `destinations` and
+`visit_reasons` (alphabetically), and `usage_30d`: for `purpose`, `destination` and `visit_reason` how often each
+value was used on this vehicle in the last 30 days (`{"value": count}`). The trip list shows the used ones first,
+most used on top with their count, then the rest alphabetically; an app does the same.
 
 ### Editing from the app
 

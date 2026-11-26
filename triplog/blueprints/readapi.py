@@ -58,6 +58,8 @@ LOGBOOK_FIELDS = {"purpose": 100, "destination": 200, "visit_reason": 200, "note
 # The way of a trip (L-013): at most this many points to the app, none closer
 # together than about this (degrees, ~10 m).
 ROUTE_MAX_POINTS = 1500
+# The pickers' "most used lately" (L-014): the same window as the server's trip list.
+USAGE_DAYS = 30
 ROUTE_MIN_STEP = 0.0001
 # Energy model (/energy-model): speeds of the consumption table, and the
 # windows of "what the car really used lately".
@@ -437,11 +439,22 @@ def logbook_options():
     db = get_db()
     v = _vehicle_for_request(db)
     device = v["device"]
-    purposes = [{"name": p["name"], "private": bool(p["is_private"])}
+    # L-014: as the server's own trip list offers them - the pinned main purpose (its quick button), each purpose's
+    # colour, and how often each value was used on this vehicle in the last 30 days (most used first in its pickers)
+    purposes = [_clean({"name": p["name"], "private": bool(p["is_private"]), "main": bool(p.get("is_main")),
+                        "color": p.get("color")})
                 for p in get_purpose_meta(db, device=device)]
+    since = (datetime.now() - timedelta(days=USAGE_DAYS)).strftime("%Y-%m-%dT%H:%M:%S")
+    usage = {}
+    for field in ("purpose", "destination", "visit_reason"):
+        usage[field] = {r[0]: r[1] for r in db.execute(
+            f"""SELECT {field}, COUNT(*) FROM trips
+                WHERE device = ? AND start_time >= ? AND COALESCE({field}, '') <> ''
+                GROUP BY {field}""", (device, since))}
     out = {"edit": bool(v["logbook_edit"]), "purposes": purposes,
            "destinations": get_preset_values(db, "destination", device=device),
-           "visit_reasons": get_preset_values(db, "visit_reason", device=device)}
+           "visit_reasons": get_preset_values(db, "visit_reason", device=device),
+           "usage_30d": usage}
     db.close()
     return jsonify(_telegram(device, "logbook_options", out))
 
