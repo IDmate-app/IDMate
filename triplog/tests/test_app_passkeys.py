@@ -83,3 +83,13 @@ def test_list_and_delete_only_own(client, db):
     assert client.delete("/api/passkeys/b", base_url=BASE).get_json()["ok"] is False
     assert client.delete("/api/passkeys/a", base_url=BASE).get_json()["ok"] is True
     assert db.execute("SELECT COUNT(*) FROM passkeys").fetchone()[0] == 1
+
+
+def test_foreign_origin_message_names_both_addresses(client):
+    """After a proxy change the scheme/host the server sees can differ from the
+    browser's address: the message says which, so the proxy can be fixed."""
+    r = client.post("/api/passkeys/register/begin", json={"label": "x"},
+                    headers={"Origin": "https://idmate.example.org"})
+    assert r.status_code == 400
+    msg = r.get_json()["error"]
+    assert "https://idmate.example.org" in msg and "http://localhost" in msg

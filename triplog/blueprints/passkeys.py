@@ -61,6 +61,14 @@ def _rp():
     return request.host.split(":")[0], origin
 
 
+def _wrong_origin_msg(t):
+    """The mismatch spelled out: the address the browser is on and the one the
+    server sees behind the reverse proxy (missing X-Forwarded-Proto/-Host)."""
+    seen = f"{request.scheme}://{request.host}"
+    sent = (request.headers.get("Origin") or "").rstrip("/")
+    return t["passkey_wrong_origin"] + " " + t["passkey_origin_detail"].format(sent or "?", seen)
+
+
 def _handle(db, uid):
     row = db.execute("SELECT webauthn_handle FROM users WHERE id = ?", (uid,)).fetchone()
     if row and row["webauthn_handle"]:
@@ -105,7 +113,7 @@ def register_begin():
         return _fail(t["passkey_unavailable"], 501)
     rp_id, origin = _rp()
     if not rp_id:
-        return _fail(t["passkey_wrong_origin"])
+        return _fail(_wrong_origin_msg(t))
     data = request.get_json(silent=True) or {}
     db = get_db()
     try:
@@ -195,7 +203,7 @@ def login_begin():
         return _fail(t["passkey_unavailable"], 501)
     rp_id, origin = _rp()
     if not rp_id:
-        return _fail(t["passkey_wrong_origin"])
+        return _fail(_wrong_origin_msg(t))
     if _is_rate_limited(request.remote_addr):
         return _fail(t["login_too_many_attempts"].format(s=60), 429)
     # Discoverable passkeys: no user name, the browser lists what it holds.

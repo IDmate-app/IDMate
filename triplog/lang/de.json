@@ -10,6 +10,7 @@
   "login_code_apple_hint": "Apple Passwörter schlägt den Code hier vor, wenn er im selben Eintrag wie das IDmate-Passwort steht (Passwörter → Eintrag öffnen → „Bestätigungscode einrichten“). Am iPhone ins Feld tippen, der Code erscheint über der Tastatur.",
   "passkey_unavailable": "Passkeys sind auf diesem Server nicht verfügbar (Python-Paket webauthn fehlt).",
   "passkey_wrong_origin": "Passkeys funktionieren nur über die Adresse, unter der IDmate aufgerufen wird.",
+  "passkey_origin_detail": "(Browser: {0} · Server sieht: {1}. Der Reverse-Proxy muss Host und X-Forwarded-Proto weitergeben.)",
   "passkey_reauth": "Zum Hinzufügen eines Passkeys bitte das Passwort oder einen 2FA-Code eingeben.",
   "passkey_expired": "Vorgang abgelaufen. Bitte erneut versuchen.",
   "passkey_rejected": "Passkey nicht angenommen.",
