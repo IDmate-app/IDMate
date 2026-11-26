@@ -953,45 +953,17 @@ def export_gpx():
     )
 
 
-@trips_bp.route("/api/trips/<int:trip_id>/route")
-def trip_route(trip_id):
-    """Load GPS points of a trip from InfluxDB + matched geofence locations."""
-    db = get_db()
-    trip = db.execute("SELECT * FROM trips WHERE id = ?", (trip_id,)).fetchone()
-    if not trip:
-        db.close()
-        return jsonify({"points": [], "locations": []})
-
-    # Geofence matches for start/end
-    locs = []
-    start_loc = match_location(db, trip["start_lat"], trip["start_lon"])
-    end_loc = match_location(db, trip["end_lat"], trip["end_lon"])
-    if start_loc:
-        sk = start_loc.keys()
-        locs.append({"lat": start_loc["lat"], "lon": start_loc["lon"],
-                      "name": start_loc["name"], "icon": start_loc["icon"] or "pin",
-                      "color": start_loc["color"] if "color" in sk else None,
-                      "icon_color": start_loc["icon_color"] if "icon_color" in sk else None,
-                      "pos": "start"})
-    if end_loc:
-        ek = end_loc.keys()
-        locs.append({"lat": end_loc["lat"], "lon": end_loc["lon"],
-                      "name": end_loc["name"], "icon": end_loc["icon"] or "pin",
-                      "color": end_loc["color"] if "color" in ek else None,
-                      "icon_color": end_loc["icon_color"] if "icon_color" in ek else None,
-                      "pos": "end"})
-    # GPX-imported trips: waypoints from SQLite instead of InfluxDB
+def route_points(db, trip):
+    """The way a trip went, as [[lat, lon], …] in driving order: the GPX
+    waypoints of an imported trip, else the stick's positions from InfluxDB
+    (GPS jumps filtered). Empty when there is none. Shared by the trip page
+    and the read API's route (L-013)."""
     if trip["is_gpx"]:
         wps = db.execute(
             "SELECT lat, lon FROM gpx_waypoints WHERE trip_id = ? ORDER BY seq",
-            (trip_id,)
+            (trip["id"],)
         ).fetchall()
-        db.close()
-        points = [[round(w["lat"], 6), round(w["lon"], 6)] for w in wps]
-        return jsonify({"points": points, "locations": locs})
-
-    db.close()
-
+        return [[round(w["lat"], 6), round(w["lon"], 6)] for w in wps]
     points = []
     client = detector.get_influx()
     if client:
@@ -1021,9 +993,41 @@ def trip_route(trip_id):
                 if lat and lon and lat != 0 and lon != 0:
                     points.append([round(lat, 6), round(lon, 6)])
         except Exception:
-            log.exception("Error loading GPS route for trip %d", trip_id)
+            log.exception("Error loading GPS route for trip %d", trip["id"])
         finally:
             client.close()
+    return points
+
+
+@trips_bp.route("/api/trips/<int:trip_id>/route")
+def trip_route(trip_id):
+    """Load GPS points of a trip from InfluxDB + matched geofence locations."""
+    db = get_db()
+    trip = db.execute("SELECT * FROM trips WHERE id = ?", (trip_id,)).fetchone()
+    if not trip:
+        db.close()
+        return jsonify({"points": [], "locations": []})
+
+    # Geofence matches for start/end
+    locs = []
+    start_loc = match_location(db, trip["start_lat"], trip["start_lon"])
+    end_loc = match_location(db, trip["end_lat"], trip["end_lon"])
+    if start_loc:
+        sk = start_loc.keys()
+        locs.append({"lat": start_loc["lat"], "lon": start_loc["lon"],
+                      "name": start_loc["name"], "icon": start_loc["icon"] or "pin",
+                      "color": start_loc["color"] if "color" in sk else None,
+                      "icon_color": start_loc["icon_color"] if "icon_color" in sk else None,
+                      "pos": "start"})
+    if end_loc:
+        ek = end_loc.keys()
+        locs.append({"lat": end_loc["lat"], "lon": end_loc["lon"],
+                      "name": end_loc["name"], "icon": end_loc["icon"] or "pin",
+                      "color": end_loc["color"] if "color" in ek else None,
+                      "icon_color": end_loc["icon_color"] if "icon_color" in ek else None,
+                      "pos": "end"})
+    points = route_points(db, trip)
+    db.close()
 
     flux_start = _to_rfc3339(trip["start_time"])
     flux_stop = _to_rfc3339_padded(trip["end_time"])

@@ -40,6 +40,7 @@ QR content (JSON):
 | `GET /api/v1/logbook?year=Y&month=M` | telegram `logbook`: one month of the logbook as `/trips/logbook` shows it (default: this month), see below |
 | `GET /api/v1/logbook/options` | telegram `logbook_options`: purposes (private ones marked), partners and occasions to pick from |
 | `POST /api/v1/trips/<id>` | change purpose, partner, occasion, note of a trip – only where the admin allowed it, see below |
+| `GET /api/v1/trips/<id>/route` | telegram `route`: the way one trip went, for a map in the app, see below |
 | `GET /api/v1/charging?limit=n` | telegram `charge`: the last *n* charges |
 | `GET /api/v1/energy-model` | telegram `energy_model`: the vehicle's own consumption by speed |
 | `GET /api/v1/rain` | telegram `rain`: rain around the vehicle's range, now and two hours ahead (see below) |
@@ -227,3 +228,20 @@ logbook from the app**. A new QR code keeps the setting. `GET /config` and `/log
 else of a trip can be changed. Answer: telegram `trip` with the trip as `items` serves it.
 `403` editing not allowed for this access · `404` no such trip of this vehicle · `400` no or wrong fields.
 The server keeps its own logbook and trip log as they are; the app edits the same trips.
+
+Every trip in `items` also carries what it used, as the trip list and the trip page show it: `energy` (kWh),
+`consumption` (kWh/100 km) and `t_ext` (°C, outside temperature during the trip) – left out where unknown.
+
+### The way of a trip
+
+`GET /api/v1/trips/<id>/route` gives the way one trip of the token's vehicle went, for a map in the app – the
+same points the trip page draws. Asked when the app opens a trip, not polled: it is the one request of the
+read API that reads InfluxDB (imported GPX trips come from their waypoints).
+
+| Field | Meaning |
+|---|---|
+| `id` | the trip |
+| `points` | `[[lat, lon], …]` in driving order; points closer than about 10 m to the last one left out, at most 1500 (evenly spread), first and last kept; left out when the server has none |
+| `start`, `end` | `lat`, `lon` and `name` (the geocoded address) where the trip began and ended, where known |
+
+`404` no such trip of this vehicle.

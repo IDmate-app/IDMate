@@ -12,9 +12,10 @@ Answers are telegrams, the same envelope for every source a client may have:
     {"v": 1, "src": "backend", "ts": "<ISO 8601 UTC>", "seq": n,
      "type": "status", "data": {...}}
 A field the server has no value for is left out, never sent as null or 0.
-The read API never talks to InfluxDB or Traccar on behalf of the client: it
+The read API does not poll InfluxDB or Traccar on behalf of the client: it
 serves what the dashboard already has (state cache) and the trip and charge
-tables. It writes in one place only, and only where the admin allowed it for
+tables. One exception, asked for one trip when the app opens it: the way the
+trip went (GET /trips/<id>/route, L-013), which only InfluxDB holds. It writes in one place only, and only where the admin allowed it for
 the vehicle: purpose, partner, occasion and note of a trip in the logbook
 (L-012, POST /trips/<id>). The server's own logbook stays as it is.
 """
@@ -54,6 +55,10 @@ MODULES = ("dashboard", "logbook")
 # Logbook (L-012): the fields a display app may change, when allowed, and how
 # long each may be.
 LOGBOOK_FIELDS = {"purpose": 100, "destination": 200, "visit_reason": 200, "note": 1000}
+# The way of a trip (L-013): at most this many points to the app, none closer
+# together than about this (degrees, ~10 m).
+ROUTE_MAX_POINTS = 1500
+ROUTE_MIN_STEP = 0.0001
 # Energy model (/energy-model): speeds of the consumption table, and the
 # windows of "what the car really used lately".
 MODEL_SPEEDS = range(30, 161, 10)
@@ -344,9 +349,34 @@ def _trip_item(r, private):
         "odo_start": _round(r["odo_start"]), "odo_end": _round(r["odo_end"]),
         "distance": _round(r["distance_km"]),
         "soc_start": _round(r["soc_start"]), "soc_end": _round(r["soc_end"]),
+        # what the trip used, as the server's trip list and trip page show it (L-013)
+        "energy": _round(r["energy_kwh"], 2), "consumption": _round(r["consumption"]),
+        "t_ext": _round(_col(r, "temp_c")),
         "purpose": purpose, "destination": r["destination"], "visit_reason": r["visit_reason"],
         "note": r["note"], "private": purpose in private if purpose else None,
     })
+
+
+def _col(r, name):
+    """A column that older databases may lack."""
+    return r[name] if name in r.keys() else None
+
+
+def _thin(points):
+    """The way for the app: no two points closer than ROUTE_MIN_STEP, at most
+    ROUTE_MAX_POINTS (evenly spread); first and last kept."""
+    if len(points) < 3:
+        return points
+    out = [points[0]]
+    for p in points[1:-1]:
+        q = out[-1]
+        if abs(p[0] - q[0]) >= ROUTE_MIN_STEP or abs(p[1] - q[1]) >= ROUTE_MIN_STEP:
+            out.append(p)
+    out.append(points[-1])
+    if len(out) > ROUTE_MAX_POINTS:
+        step = (len(out) - 1) / (ROUTE_MAX_POINTS - 1)
+        out = [out[round(i * step)] for i in range(ROUTE_MAX_POINTS)]
+    return out
 
 
 def _logbook_row(r):
@@ -414,6 +444,29 @@ def logbook_options():
            "visit_reasons": get_preset_values(db, "visit_reason", device=device)}
     db.close()
     return jsonify(_telegram(device, "logbook_options", out))
+
+
+@readapi_bp.route("/trips/<int:trip_id>/route")
+def trip_route(trip_id):
+    """The way one trip of the token's vehicle went (L-013), for the app's map:
+    the points in driving order, thinned, with where it started and ended. The
+    server's own trip page reads the same points (blueprints.trips.route_points)."""
+    from blueprints.trips import route_points
+    db = get_db()
+    v = _vehicle_for_request(db)
+    trip = db.execute("SELECT * FROM trips WHERE id = ? AND device = ?", (trip_id, v["device"])).fetchone()
+    if trip is None:
+        db.close()
+        abort(404)
+    points = _thin(route_points(db, trip))
+    db.close()
+    def end(lat, lon, name):
+        return _clean({"lat": lat, "lon": lon, "name": name}) if lat is not None and lon is not None else None
+    return jsonify(_telegram(v["device"], "route", _clean({
+        "id": trip_id, "points": points,
+        "start": end(trip["start_lat"], trip["start_lon"], trip["start_address"]),
+        "end": end(trip["end_lat"], trip["end_lon"], trip["end_address"]),
+    })))
 
 
 @readapi_bp.route("/trips/<int:trip_id>", methods=["POST"])

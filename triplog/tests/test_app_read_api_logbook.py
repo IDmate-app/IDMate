@@ -146,3 +146,57 @@ def test_new_code_keeps_permission_and_config_tells_it(env):
     assert cfg["logbook"] == {"edit": True} and "logbook" in cfg["modules"]
     assert c.get("/api/v1/config", headers=_hdr(tok)).status_code == 401   # the old code is gone
     assert adm.post(f"/api/admin/read-api/{vids[1] + 99}/logbook-edit", json={"on": True}).status_code == 404
+
+
+# ── L-013: the way of a trip and what it used ────────────────────────────────
+
+def test_items_carry_energy_and_consumption(env):
+    app_module, db, adm, vids, tok, _ = env
+    tid = _trip_id(db, "2026-11-03T08:00:00")
+    db.execute("UPDATE trips SET energy_kwh = 5.123, consumption = 17.08, temp_c = 4.4 WHERE id = ?", (tid,))
+    db.commit()
+    d = app_module.app.test_client().get("/api/v1/logbook?year=2026&month=11", headers=_hdr(tok)).get_json()["data"]
+    item = {i["id"]: i for i in d["items"]}[tid]
+    assert item["energy"] == 5.12 and item["consumption"] == 17.1 and item["t_ext"] == 4.4
+    # a trip without them leaves them out (never null)
+    other = {i["id"]: i for i in d["items"]}[_trip_id(db, "2026-11-05T10:00:00")]
+    assert "energy" not in other and "consumption" not in other
+
+
+def test_route_of_a_gpx_trip(env):
+    app_module, db, adm, vids, tok, tok2 = env
+    tid = _trip_id(db, "2026-11-03T08:00:00")
+    db.execute("UPDATE trips SET is_gpx = 1, start_lat = 50.1, start_lon = 12.1, end_lat = 50.2, end_lon = 12.3 WHERE id = ?", (tid,))
+    pts = [(50.1, 12.1), (50.10001, 12.10001), (50.15, 12.2), (50.2, 12.3)]   # the second ~1 m from the first
+    for i, (la, lo) in enumerate(pts):
+        db.execute("INSERT INTO gpx_waypoints (trip_id, seq, lat, lon) VALUES (?, ?, ?, ?)", (tid, i, la, lo))
+    db.commit()
+    c = app_module.app.test_client()
+    r = c.get(f"/api/v1/trips/{tid}/route", headers=_hdr(tok))
+    assert r.status_code == 200
+    j = r.get_json()
+    assert j["type"] == "route"
+    d = j["data"]
+    assert d["id"] == tid
+    assert d["points"] == [[50.1, 12.1], [50.15, 12.2], [50.2, 12.3]]     # the near point thinned out
+    assert d["start"] == {"lat": 50.1, "lon": 12.1, "name": "Zuhause"}
+    assert d["end"]["name"] == "Firma A"
+    # another vehicle's trip, or none: 404; no token: 401
+    assert c.get(f"/api/v1/trips/{tid}/route", headers=_hdr(tok2)).status_code == 404
+    assert c.get("/api/v1/trips/999999/route", headers=_hdr(tok)).status_code == 404
+    assert c.get(f"/api/v1/trips/{tid}/route").status_code == 401
+
+
+def test_route_without_points_is_empty(env):
+    app_module, db, adm, vids, tok, _ = env
+    tid = _trip_id(db, "2026-11-05T10:00:00")
+    d = app_module.app.test_client().get(f"/api/v1/trips/{tid}/route", headers=_hdr(tok)).get_json()["data"]
+    assert d["id"] == tid and d.get("points", []) == []
+
+
+def test_thin_keeps_ends_and_caps():
+    import importlib
+    ra = importlib.import_module("blueprints.readapi")
+    pts = [[50 + i * 0.001, 12.0] for i in range(5000)]
+    out = ra._thin(pts)
+    assert len(out) == ra.ROUTE_MAX_POINTS and out[0] == pts[0] and out[-1] == pts[-1]
