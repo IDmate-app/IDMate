@@ -92,7 +92,8 @@ One envelope for every source a client may have (stick, OBD dongle, backend, car
 
 Trip items: `id`, `start`, `end`, `from`, `to`, `distance` (km), `soc_start`, `soc_end`, `energy` (kWh),
 `consumption` (kWh/100 km). Charge items: `id`, `start`, `end`, `at`, `dc`, `soc_start`, `soc_end`,
-`energy` (kWh), `energy_battery` (kWh), `power_avg` (kW). `/trips` serves no logbook details; they come
+`energy` (kWh), `energy_battery` (kWh), `power_avg` (kW), `home` (true for a wallbox charge), `lat`, `lon`
+(where the car stood), `operator`, `cost` (the receipt's total). `/trips` serves no logbook details; they come
 with `/logbook`.
 
 The charges are those of the charge overview (wallbox meter, receipts, imports, detected external

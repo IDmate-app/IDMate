@@ -537,12 +537,15 @@ def charging():
     shown nowhere in IDmate, so a client read other charges and other
     energies than the pages do.
     energy is the grid side (metered or billed, what the overview lists),
-    energy_battery what reached the battery (energy book)."""
+    energy_battery what reached the battery (energy book). home marks a
+    wallbox charge; lat/lon (where the car stood), operator and cost (the
+    receipt's total) let the app name and rate the charger (Mate's charge
+    list, IDMate L-015)."""
     db = get_db()
     v = _vehicle_for_request(db)
     rows = db.execute(
         "SELECT id, session_number, is_external, start_time, end_time, total_kwh, avg_kw, "
-        "soc_start, soc_end, location_name, cost_total, note FROM charge_sessions "
+        "soc_start, soc_end, location_name, cost_total, note, lat, lon, operator FROM charge_sessions "
         "WHERE vehicle_plate = ? ORDER BY datetime(start_time) DESC LIMIT ?",
         (v["plate"], _limit())).fetchall()
     eff_ac = _get_charge_efficiency(db, v["plate"])
@@ -562,6 +565,10 @@ def charging():
             "energy": round(e["grid"], 2) if e.get("grid") else None,
             "energy_battery": round(e["batt"], 2) if e.get("batt") else None,
             "power_avg": _num(r, "avg_kw", 1),
+            "home": True if not s["is_external"] else None,
+            "lat": _num(r, "lat", 5), "lon": _num(r, "lon", 5),
+            "operator": s["operator"] or None,
+            "cost": _num(r, "cost_total", 2),
         }))
     return jsonify(_telegram(v["device"], "charge", {"items": items}))
 

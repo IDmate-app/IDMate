@@ -243,6 +243,25 @@ def test_charging_is_the_charge_book_not_the_detectors_raw_table(env):
     assert set(items[2]) == {"id", "start"}                                   # nothing known: nothing sent
 
 
+def test_charging_says_where_and_what_it_cost(env):
+    """Mate's charge list names and rates the charger (IDMate L-015): where the
+    car stood, the operator and the receipt's total come along; a wallbox
+    charge is marked home, an external one is not."""
+    app_module, db, adm, vids = env
+    adm.post("/api/admin/read-api", json={"enabled": True})
+    tok = _key(adm, vids[0])["token"]
+    cols = "vehicle_plate, is_external, start_time, end_time, total_kwh, avg_kw, lat, lon, operator, cost_total"
+    db.execute(f"INSERT INTO charge_sessions ({cols}) VALUES "
+               "('A-1', 1, '2026-07-03T09:00:00', '2026-07-03T09:25:00', 42.0, 100.8, 52.5200123, 13.4049876, 'EnBW', 24.784), "
+               "('A-1', 0, '2026-07-05T18:00:00', '2026-07-05T23:00:00', 30.0, 6.0, NULL, NULL, '', NULL)")
+    db.commit()
+    items = app_module.app.test_client().get("/api/v1/charging", headers=_hdr(tok)).get_json()["data"]["items"]
+    home, road = items
+    assert home["home"] is True and "lat" not in home and "operator" not in home and "cost" not in home
+    assert "home" not in road and road["operator"] == "EnBW" and road["cost"] == 24.78
+    assert road["lat"] == 52.52001 and road["lon"] == 13.40499
+
+
 def test_wrong_tokens_are_rate_limited(env):
     app_module, db, adm, vids = env
     adm.post("/api/admin/read-api", json={"enabled": True})
